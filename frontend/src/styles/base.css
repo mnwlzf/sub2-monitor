@@ -24,6 +24,15 @@ body {
   min-height: 100vh;
 }
 
+.embedded-shell {
+  min-height: auto;
+  background: transparent;
+}
+
+.embedded-shell .content {
+  padding: 14px;
+}
+
 .sidebar {
   border-right: 1px solid #e5e7eb;
   background: #ffffff;
@@ -104,6 +113,10 @@ body {
   gap: 16px;
 }
 
+.embedded-shell .platforms-page {
+  gap: 12px;
+}
+
 .page-hero {
   display: flex;
   align-items: flex-end;
@@ -118,6 +131,13 @@ body {
   box-shadow: 0 12px 30px rgba(15, 23, 42, 0.05);
 }
 
+.embedded-shell .page-hero {
+  align-items: center;
+  border-radius: 8px;
+  padding: 14px 16px;
+  box-shadow: none;
+}
+
 .eyebrow {
   margin-bottom: 8px;
   color: #2563eb;
@@ -127,16 +147,28 @@ body {
   text-transform: uppercase;
 }
 
+.embedded-shell .eyebrow {
+  display: none;
+}
+
 .page-hero h2 {
   margin: 0;
   color: #0f172a;
   font-size: 24px;
 }
 
+.embedded-shell .page-hero h2 {
+  font-size: 20px;
+}
+
 .page-hero p {
   margin: 6px 0 0;
   color: #64748b;
   font-size: 13px;
+}
+
+.embedded-shell .page-hero p {
+  margin-top: 4px;
 }
 
 .hero-meta {
@@ -154,6 +186,10 @@ body {
   background: rgba(255, 255, 255, 0.75);
 }
 
+.embedded-shell .hero-chip {
+  display: none;
+}
+
 .hero-chip span {
   display: block;
   color: #64748b;
@@ -167,10 +203,19 @@ body {
   font-size: 18px;
 }
 
+.hero-chip .bad {
+  color: #dc2626;
+}
+
 .stats-grid {
   display: grid;
   grid-template-columns: repeat(6, minmax(0, 1fr));
   gap: 12px;
+}
+
+.embedded-shell .stats-grid {
+  grid-template-columns: repeat(6, minmax(110px, 1fr));
+  gap: 10px;
 }
 
 .stat-card {
@@ -180,6 +225,13 @@ body {
   background: #ffffff;
   padding: 16px;
   box-shadow: 0 10px 24px rgba(15, 23, 42, 0.04);
+}
+
+.embedded-shell .stat-card {
+  min-height: 76px;
+  border-radius: 8px;
+  padding: 12px 14px;
+  box-shadow: none;
 }
 
 .stat-card span {
@@ -193,6 +245,11 @@ body {
   margin-top: 10px;
   color: #111827;
   font-size: 28px;
+}
+
+.embedded-shell .stat-card strong {
+  margin-top: 6px;
+  font-size: 24px;
 }
 
 .stat-card .ok {
@@ -209,6 +266,11 @@ body {
   border-radius: 14px;
   background: #ffffff;
   box-shadow: 0 14px 32px rgba(15, 23, 42, 0.05);
+}
+
+.embedded-shell .table-card {
+  border-radius: 8px;
+  box-shadow: none;
 }
 
 .platform-table {
@@ -229,6 +291,11 @@ body {
   background: #f8fbff !important;
 }
 
+.embedded-shell .compare-table .el-table__cell {
+  padding-top: 10px;
+  padding-bottom: 10px;
+}
+
 .platform-cell,
 .status-cell,
 .credential-cell,
@@ -236,6 +303,10 @@ body {
 .switch-cell {
   display: grid;
   gap: 6px;
+}
+
+.embedded-shell .platform-cell .muted {
+  display: none;
 }
 
 .platform-badges {
@@ -281,6 +352,11 @@ body {
   background: linear-gradient(180deg, #ffffff, #f8fafc);
 }
 
+.embedded-shell .account-compare-item {
+  border-radius: 8px;
+  padding: 9px 10px;
+}
+
 .account-compare-name {
   display: flex;
   align-items: center;
@@ -314,6 +390,10 @@ body {
   padding: 8px 10px;
   border-radius: 10px;
   background: #f8fafc;
+}
+
+.embedded-shell .metric-stack div {
+  border-radius: 8px;
 }
 
 .metric-stack strong {

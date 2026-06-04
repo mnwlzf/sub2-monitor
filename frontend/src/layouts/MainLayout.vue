@@ -1,6 +1,6 @@
 <template>
-  <el-container class="app-shell">
-    <el-aside class="sidebar" width="232px">
+  <el-container :class="['app-shell', { 'embedded-shell': isEmbedded }]">
+    <el-aside v-if="!isEmbedded" class="sidebar" width="232px">
       <div class="brand">
         <div class="brand-mark">S2</div>
         <div>
@@ -17,7 +17,7 @@
     </el-aside>
 
     <el-container>
-      <el-header class="topbar">
+      <el-header v-if="!isEmbedded" class="topbar">
         <div>
           <h1>中转平台服务数据</h1>
           <p>监控为 sub2api 提供密钥的平台状态、额度、延迟和可用性。</p>
@@ -32,4 +32,15 @@
 
 <script setup lang="ts">
 import { Monitor } from '@element-plus/icons-vue'
+import { ref } from 'vue'
+
+function detectEmbedded() {
+  try {
+    return window.self !== window.top || new URLSearchParams(window.location.search).has('embedded')
+  } catch {
+    return true
+  }
+}
+
+const isEmbedded = ref(detectEmbedded())
 </script>

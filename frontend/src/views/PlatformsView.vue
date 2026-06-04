@@ -60,7 +60,7 @@
             </div>
           </template>
         </el-table-column>
-        <el-table-column label="状态" width="120">
+        <el-table-column v-if="!isEmbedded" label="状态" width="120">
           <template #default="{ row }">
             <div class="status-cell">
               <el-tag :type="statusType(row.status)" effect="light">{{ statusText(row.status) }}</el-tag>
@@ -68,12 +68,12 @@
             </div>
           </template>
         </el-table-column>
-        <el-table-column label="地址" min-width="230" show-overflow-tooltip>
+        <el-table-column v-if="!isEmbedded" label="地址" min-width="230" show-overflow-tooltip>
           <template #default="{ row }">
             <span class="mono-url">{{ row.base_url }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="凭据" width="110">
+        <el-table-column v-if="!isEmbedded" label="凭据" width="110">
           <template #default="{ row }">
             <div class="credential-cell">
               <el-tag :type="row.has_api_key ? 'success' : 'info'" effect="plain">
@@ -381,6 +381,7 @@ const detail = ref<PlatformDetail | null>(null)
 const loading = ref(false)
 const saving = ref(false)
 const monitoring = ref(false)
+const isEmbedded = ref(detectEmbedded())
 const dialogVisible = ref(false)
 const detailVisible = ref(false)
 const accountDialogVisible = ref(false)
@@ -427,6 +428,14 @@ const rules: FormRules = {
   auth_header_name: [{ required: true, message: '请输入鉴权 Header', trigger: 'blur' }],
   balance_cron: [{ required: true, message: '请输入余额 Cron', trigger: 'blur' }],
   rate_cron: [{ required: true, message: '请输入倍率 Cron', trigger: 'blur' }],
+}
+
+function detectEmbedded() {
+  try {
+    return window.self !== window.top || new URLSearchParams(window.location.search).has('embedded')
+  } catch {
+    return true
+  }
 }
 
 function resetForm() {

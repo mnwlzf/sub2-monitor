@@ -4,7 +4,6 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.api.deps import current_user, verify_csrf
 from app.core.database import get_db
 from app.core.security import encrypt_secret, utcnow
 from app.models.monitor import PlatformAccountMonitor, PlatformGroupMonitor
@@ -35,7 +34,7 @@ from app.services.monitoring import (
 )
 from app.services.provider_strategy import newapi_site_strategy_registry, provider_registry
 
-router = APIRouter(tags=["platforms"], dependencies=[Depends(current_user)])
+router = APIRouter(tags=["platforms"])
 
 
 def platform_payload(payload: PlatformCreate | PlatformUpdate) -> dict:
@@ -120,7 +119,6 @@ def get_platform(platform_id: int, db: Session = Depends(get_db)) -> RelayPlatfo
     "/platforms",
     response_model=PlatformResponse,
     status_code=status.HTTP_201_CREATED,
-    dependencies=[Depends(verify_csrf)],
 )
 def create_platform(payload: PlatformCreate, db: Session = Depends(get_db)) -> RelayPlatform:
     try:
@@ -142,7 +140,6 @@ def create_platform(payload: PlatformCreate, db: Session = Depends(get_db)) -> R
 @router.patch(
     "/platforms/{platform_id}",
     response_model=PlatformResponse,
-    dependencies=[Depends(verify_csrf)],
 )
 def update_platform(
     platform_id: int,
@@ -172,7 +169,7 @@ def update_platform(
     return platform
 
 
-@router.delete("/platforms/{platform_id}", dependencies=[Depends(verify_csrf)])
+@router.delete("/platforms/{platform_id}")
 def delete_platform(platform_id: int, db: Session = Depends(get_db)) -> dict[str, bool]:
     platform = db.get(RelayPlatform, platform_id)
     if platform is None:
@@ -185,7 +182,6 @@ def delete_platform(platform_id: int, db: Session = Depends(get_db)) -> dict[str
 @router.post(
     "/platforms/{platform_id}/monitor/run",
     response_model=MonitorRunResponse,
-    dependencies=[Depends(verify_csrf)],
 )
 async def run_monitor(platform_id: int, db: Session = Depends(get_db)) -> MonitorRunResponse:
     try:
@@ -205,7 +201,6 @@ async def run_monitor(platform_id: int, db: Session = Depends(get_db)) -> Monito
 @router.post(
     "/platforms/{platform_id}/monitor/balance/run",
     response_model=MonitorRunResponse,
-    dependencies=[Depends(verify_csrf)],
 )
 async def run_balance_monitor(platform_id: int, db: Session = Depends(get_db)) -> MonitorRunResponse:
     try:
@@ -225,7 +220,6 @@ async def run_balance_monitor(platform_id: int, db: Session = Depends(get_db)) -
 @router.post(
     "/platforms/{platform_id}/monitor/rate/run",
     response_model=MonitorRunResponse,
-    dependencies=[Depends(verify_csrf)],
 )
 async def run_rate_monitor(platform_id: int, db: Session = Depends(get_db)) -> MonitorRunResponse:
     try:
@@ -246,7 +240,6 @@ async def run_rate_monitor(platform_id: int, db: Session = Depends(get_db)) -> M
     "/platforms/{platform_id}/accounts",
     response_model=AccountMonitorResponse,
     status_code=status.HTTP_201_CREATED,
-    dependencies=[Depends(verify_csrf)],
 )
 def create_account_monitor(
     platform_id: int,
@@ -264,7 +257,6 @@ def create_account_monitor(
 @router.patch(
     "/platforms/{platform_id}/accounts/{monitor_id}",
     response_model=AccountMonitorResponse,
-    dependencies=[Depends(verify_csrf)],
 )
 def update_account_monitor(
     platform_id: int,
@@ -290,7 +282,6 @@ def update_account_monitor(
 
 @router.delete(
     "/platforms/{platform_id}/accounts/{monitor_id}",
-    dependencies=[Depends(verify_csrf)],
 )
 def delete_account_monitor(platform_id: int, monitor_id: int, db: Session = Depends(get_db)) -> dict[str, bool]:
     item = db.scalar(
@@ -310,7 +301,6 @@ def delete_account_monitor(platform_id: int, monitor_id: int, db: Session = Depe
     "/platforms/{platform_id}/groups",
     response_model=GroupMonitorResponse,
     status_code=status.HTTP_201_CREATED,
-    dependencies=[Depends(verify_csrf)],
 )
 def create_group_monitor(
     platform_id: int,
@@ -328,7 +318,6 @@ def create_group_monitor(
 @router.patch(
     "/platforms/{platform_id}/groups/{monitor_id}",
     response_model=GroupMonitorResponse,
-    dependencies=[Depends(verify_csrf)],
 )
 def update_group_monitor(
     platform_id: int,
@@ -354,7 +343,6 @@ def update_group_monitor(
 
 @router.delete(
     "/platforms/{platform_id}/groups/{monitor_id}",
-    dependencies=[Depends(verify_csrf)],
 )
 def delete_group_monitor(platform_id: int, monitor_id: int, db: Session = Depends(get_db)) -> dict[str, bool]:
     item = db.scalar(
@@ -373,7 +361,6 @@ def delete_group_monitor(platform_id: int, monitor_id: int, db: Session = Depend
 @router.post(
     "/platforms/{platform_id}/snapshots",
     response_model=PlatformResponse,
-    dependencies=[Depends(verify_csrf)],
 )
 def add_platform_snapshot(
     platform_id: int,

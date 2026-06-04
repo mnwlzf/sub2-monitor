@@ -4,6 +4,7 @@ import vue from '@vitejs/plugin-vue'
 import { defineConfig } from 'vite'
 
 export default defineConfig({
+  base: process.env.SUB_MONITOR_BASE_PATH || '/',
   plugins: [vue()],
   resolve: {
     alias: {
@@ -20,4 +21,3 @@ export default defineConfig({
     },
   },
 })
-

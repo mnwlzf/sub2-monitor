@@ -22,10 +22,6 @@
           <h1>中转平台服务数据</h1>
           <p>监控为 sub2api 提供密钥的平台状态、额度、延迟和可用性。</p>
         </div>
-        <div class="account">
-          <span>{{ auth.user?.username }}</span>
-          <el-button :icon="SwitchButton" @click="handleLogout">退出</el-button>
-        </div>
       </el-header>
       <el-main class="content">
         <router-view />
@@ -35,19 +31,5 @@
 </template>
 
 <script setup lang="ts">
-import { Monitor, SwitchButton } from '@element-plus/icons-vue'
-import { ElMessage } from 'element-plus'
-import { useRouter } from 'vue-router'
-
-import { useAuthStore } from '@/stores/auth'
-
-const auth = useAuthStore()
-const router = useRouter()
-
-async function handleLogout() {
-  await auth.logout()
-  ElMessage.success('已退出登录')
-  await router.replace({ name: 'login' })
-}
+import { Monitor } from '@element-plus/icons-vue'
 </script>
-

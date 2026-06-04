@@ -1,0 +1,33 @@
+services:
+  sub-monitor:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SUB_MONITOR_BASE_PATH: ${SUB_MONITOR_BASE_PATH:-/sub-monitor/}
+    container_name: sub-monitor
+    restart: unless-stopped
+    ports:
+      - "${SUB_MONITOR_BIND_HOST:-0.0.0.0}:${SUB_MONITOR_PORT:-18080}:8000"
+    environment:
+      - SUB2_MONITOR_ENV=${SUB2_MONITOR_ENV:-production}
+      - SUB2_MONITOR_HOST=0.0.0.0
+      - SUB2_MONITOR_PORT=8000
+      - SUB2_MONITOR_DATABASE_URL=${SUB2_MONITOR_DATABASE_URL:-sqlite:////app/data/sub2-monitor.db}
+      - SUB2_MONITOR_SECRET_KEY=${SUB2_MONITOR_SECRET_KEY:-public-noauth-mode}
+      - SUB2_MONITOR_BOOTSTRAP_USERNAME=${SUB2_MONITOR_BOOTSTRAP_USERNAME:-admin}
+      - SUB2_MONITOR_BOOTSTRAP_PASSWORD=${SUB2_MONITOR_BOOTSTRAP_PASSWORD:-disabled-in-noauth-mode}
+      - SUB2_MONITOR_CORS_ORIGINS=${SUB2_MONITOR_CORS_ORIGINS:-*}
+    volumes:
+      - sub_monitor_data:/app/data
+    networks:
+      - sub2api-network
+
+volumes:
+  sub_monitor_data:
+    driver: local
+
+networks:
+  sub2api-network:
+    external: true
+    name: app_sub2api-network

@@ -174,10 +174,6 @@ class YunjinNewApiSiteStrategy(NewApiSiteStrategy):
         if not password:
             return AccountBalanceResult(error="云锦账号余额监控密码解密失败或为空")
 
-        login_payload = {
-            "username": account.username,
-            "password": password,
-        }
         site_url = self.site_url(platform)
         request_headers = {
             "Accept": "application/json, text/plain, */*",
@@ -201,7 +197,10 @@ class YunjinNewApiSiteStrategy(NewApiSiteStrategy):
             login_response, login_endpoint = await self.post_first_available(
                 client,
                 self.LOGIN_ENDPOINTS,
-                json=login_payload,
+                json={
+                    "username": account.username,
+                    "password": password,
+                },
             )
             if login_response.status_code >= 400:
                 return AccountBalanceResult(

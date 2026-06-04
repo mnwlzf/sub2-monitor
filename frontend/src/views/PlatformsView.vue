@@ -1,5 +1,24 @@
 <template>
   <div class="platforms-page">
+    <section class="page-hero">
+      <div>
+        <div class="eyebrow">平台监控</div>
+        <h2>平台列表</h2>
+        <p>按 sub2api / newapi 策略采集账号余额和指定分组倍率。</p>
+      </div>
+      <div class="hero-meta">
+        <div class="hero-chip">
+          <span>总平台</span>
+          <strong>{{ stats?.total_platforms ?? '-' }}</strong>
+        </div>
+        <div class="hero-chip">
+          <span>异常</span>
+          <strong class="bad">{{ (stats?.degraded_platforms ?? 0) + (stats?.down_platforms ?? 0) }}</strong>
+        </div>
+        <el-button :icon="Plus" type="primary" @click="openCreate">新增平台</el-button>
+      </div>
+    </section>
+
     <section class="stats-grid">
       <div class="stat-card">
         <span>平台总数</span>
@@ -27,101 +46,118 @@
       </div>
     </section>
 
-    <section class="toolbar">
-      <div>
-        <h2>平台列表</h2>
-        <p>按 sub2api / newapi 策略采集账号余额和指定分组倍率。</p>
-      </div>
-      <el-button :icon="Plus" type="primary" @click="openCreate">新增平台</el-button>
+    <section class="table-card">
+      <el-table v-loading="loading" :data="platforms" class="platform-table compare-table" row-key="id">
+        <el-table-column label="平台" min-width="240">
+          <template #default="{ row }">
+            <div class="platform-cell">
+              <div class="platform-name">{{ row.name }}</div>
+              <div class="platform-badges">
+                <el-tag size="small" effect="plain">{{ providerLabel(row.provider_type) }}</el-tag>
+                <el-tag size="small" effect="light" type="info">{{ siteStrategyLabel(row) }}</el-tag>
+              </div>
+              <div class="muted">{{ row.base_url }}</div>
+            </div>
+          </template>
+        </el-table-column>
+        <el-table-column label="状态" width="120">
+          <template #default="{ row }">
+            <div class="status-cell">
+              <el-tag :type="statusType(row.status)" effect="light">{{ statusText(row.status) }}</el-tag>
+              <span class="status-subtext">{{ row.enabled ? '启用中' : '已停用' }}</span>
+            </div>
+          </template>
+        </el-table-column>
+        <el-table-column label="地址" min-width="230" show-overflow-tooltip>
+          <template #default="{ row }">
+            <span class="mono-url">{{ row.base_url }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="凭据" width="110">
+          <template #default="{ row }">
+            <div class="credential-cell">
+              <el-tag :type="row.has_api_key ? 'success' : 'info'" effect="plain">
+                {{ row.has_api_key ? '已配置' : '未配置' }}
+              </el-tag>
+              <span class="status-subtext">{{ row.has_api_key ? 'API Key' : '待补充' }}</span>
+            </div>
+          </template>
+        </el-table-column>
+        <el-table-column label="账号概览" min-width="320">
+          <template #default="{ row }">
+            <div class="account-compare-list">
+              <div
+                v-for="account in row.account_monitors.slice(0, 3)"
+                :key="account.id"
+                class="account-compare-item"
+              >
+                <div class="account-compare-name">
+                  <span>{{ account.name }}</span>
+                  <el-tag
+                    :type="account.last_error ? 'danger' : account.checked_at ? 'success' : 'info'"
+                    effect="light"
+                    size="small"
+                  >
+                    {{ account.last_error ? '异常' : account.checked_at ? '正常' : '未采集' }}
+                  </el-tag>
+                </div>
+                <div class="account-compare-metrics">
+                  <span><em>余额</em> {{ formatMoney(account.balance) }}</span>
+                  <span><em>消耗</em> {{ formatMoney(account.quota_used) }}</span>
+                </div>
+              </div>
+              <div v-if="row.account_monitors.length === 0" class="muted">未配置账号</div>
+              <div v-else-if="row.account_monitors.length > 3" class="muted">
+                还有 {{ row.account_monitors.length - 3 }} 个账号，进入监控项查看
+              </div>
+            </div>
+          </template>
+        </el-table-column>
+        <el-table-column label="指标" width="150">
+          <template #default="{ row }">
+            <div class="metric-stack">
+              <div>
+                <span class="metric-label">账号数</span>
+                <strong>{{ row.account_monitors.length }}</strong>
+              </div>
+              <div>
+                <span class="metric-label">总余额</span>
+                <strong>{{ formatMoney(row.balance) }}</strong>
+              </div>
+              <div>
+                <span class="metric-label">总消耗</span>
+                <strong>{{ formatMoney(row.quota_used) }}</strong>
+              </div>
+            </div>
+          </template>
+        </el-table-column>
+        <el-table-column label="最后采集" width="170">
+          <template #default="{ row }">
+            <div class="time-cell">
+              <span>{{ formatTime(row.checked_at) }}</span>
+              <span class="status-subtext">采集时间</span>
+            </div>
+          </template>
+        </el-table-column>
+        <el-table-column label="启用" width="90">
+          <template #default="{ row }">
+            <div class="switch-cell">
+              <el-switch :model-value="row.enabled" @change="toggleEnabled(row)" />
+            </div>
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" width="132" fixed="right">
+          <template #default="{ row }">
+            <div class="table-actions">
+              <el-button :icon="Setting" circle title="监控项" @click="openDetail(row)" />
+              <el-button :icon="Refresh" circle title="采集" @click="runMonitor(row)" />
+              <el-button :icon="Edit" circle title="编辑" @click="openEdit(row)" />
+              <el-button :icon="Delete" circle plain title="删除" type="danger" @click="remove(row)" />
+            </div>
+          </template>
+        </el-table-column>
+      </el-table>
     </section>
-
-    <el-table v-loading="loading" :data="platforms" class="platform-table compare-table" row-key="id">
-      <el-table-column label="平台" min-width="210">
-        <template #default="{ row }">
-          <div class="platform-name">{{ row.name }}</div>
-          <div class="muted">{{ providerLabel(row.provider_type) }} / {{ siteStrategyLabel(row) }}</div>
-        </template>
-      </el-table-column>
-      <el-table-column label="状态" width="120">
-        <template #default="{ row }">
-          <el-tag :type="statusType(row.status)" effect="light">{{ statusText(row.status) }}</el-tag>
-        </template>
-      </el-table-column>
-      <el-table-column prop="base_url" label="地址" min-width="230" show-overflow-tooltip />
-      <el-table-column label="凭据" width="110">
-        <template #default="{ row }">
-          <el-tag :type="row.has_api_key ? 'success' : 'info'" effect="plain">
-            {{ row.has_api_key ? '已配置' : '未配置' }}
-          </el-tag>
-        </template>
-      </el-table-column>
-      <el-table-column label="账号概览" min-width="320">
-        <template #default="{ row }">
-          <div class="account-compare-list">
-            <div
-              v-for="account in row.account_monitors.slice(0, 3)"
-              :key="account.id"
-              class="account-compare-item"
-            >
-              <div class="account-compare-name">
-                <span>{{ account.name }}</span>
-                <el-tag
-                  :type="account.last_error ? 'danger' : account.checked_at ? 'success' : 'info'"
-                  effect="light"
-                  size="small"
-                >
-                  {{ account.last_error ? '异常' : account.checked_at ? '正常' : '未采集' }}
-                </el-tag>
-              </div>
-              <div class="account-compare-metrics">
-                <span>余额 {{ formatMoney(account.balance) }}</span>
-                <span>消耗 {{ formatMoney(account.quota_used) }}</span>
-              </div>
-            </div>
-            <div v-if="row.account_monitors.length === 0" class="muted">未配置账号</div>
-            <div v-else-if="row.account_monitors.length > 3" class="muted">
-              还有 {{ row.account_monitors.length - 3 }} 个账号，进入监控项查看
-            </div>
-          </div>
-        </template>
-      </el-table-column>
-      <el-table-column label="指标" width="150">
-        <template #default="{ row }">
-          <div class="metric-stack">
-            <div>
-              <span class="metric-label">账号数</span>
-              <strong>{{ row.account_monitors.length }}</strong>
-            </div>
-            <div>
-              <span class="metric-label">总余额</span>
-              <strong>{{ formatMoney(row.balance) }}</strong>
-            </div>
-            <div>
-              <span class="metric-label">总消耗</span>
-              <strong>{{ formatMoney(row.quota_used) }}</strong>
-            </div>
-          </div>
-        </template>
-      </el-table-column>
-      <el-table-column label="最后采集" width="170">
-        <template #default="{ row }">{{ formatTime(row.checked_at) }}</template>
-      </el-table-column>
-      <el-table-column label="启用" width="90">
-        <template #default="{ row }">
-          <el-switch :model-value="row.enabled" @change="toggleEnabled(row)" />
-        </template>
-      </el-table-column>
-      <el-table-column label="操作" width="132" fixed="right">
-        <template #default="{ row }">
-          <div class="table-actions">
-            <el-button :icon="Setting" circle title="监控项" @click="openDetail(row)" />
-            <el-button :icon="Refresh" circle title="采集" @click="runMonitor(row)" />
-            <el-button :icon="Edit" circle title="编辑" @click="openEdit(row)" />
-            <el-button :icon="Delete" circle title="删除" type="danger" plain @click="remove(row)" />
-          </div>
-        </template>
-      </el-table-column>
-    </el-table>
 
     <el-dialog v-model="dialogVisible" :title="editing ? '编辑平台' : '新增平台'" width="620px">
       <el-form ref="formRef" :model="form" :rules="rules" label-width="112px">

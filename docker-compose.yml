@@ -17,7 +17,7 @@ services:
       - SUB2_MONITOR_SECRET_KEY=${SUB2_MONITOR_SECRET_KEY:-public-noauth-mode}
       - SUB2_MONITOR_BOOTSTRAP_USERNAME=${SUB2_MONITOR_BOOTSTRAP_USERNAME:-admin}
       - SUB2_MONITOR_BOOTSTRAP_PASSWORD=${SUB2_MONITOR_BOOTSTRAP_PASSWORD:-disabled-in-noauth-mode}
-      - SUB2_MONITOR_CORS_ORIGINS=${SUB2_MONITOR_CORS_ORIGINS:-*}
+      - SUB2_MONITOR_CORS_ORIGINS=${SUB2_MONITOR_CORS_ORIGINS:-["*"]}
     volumes:
       - sub_monitor_data:/app/data
     networks:

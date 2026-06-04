@@ -139,7 +139,7 @@ export interface MonitorRunResult {
 }
 
 export const http = axios.create({
-  baseURL: '/api',
+  baseURL: `${import.meta.env.BASE_URL}api`,
   withCredentials: true,
   timeout: 15000,
 })

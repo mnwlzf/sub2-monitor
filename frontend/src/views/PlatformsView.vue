@@ -46,7 +46,7 @@
       </div>
     </section>
 
-    <section class="table-card">
+    <section v-if="!isEmbedded" class="table-card">
       <el-table v-loading="loading" :data="platforms" class="platform-table compare-table" row-key="id">
         <el-table-column label="平台" min-width="240">
           <template #default="{ row }">
@@ -157,6 +157,85 @@
           </template>
         </el-table-column>
       </el-table>
+    </section>
+
+    <section v-else v-loading="loading" class="embedded-platform-list">
+      <article v-for="row in platforms" :key="row.id" class="embedded-platform-card">
+        <header class="embedded-platform-header">
+          <div class="embedded-platform-title">
+            <div>
+              <strong>{{ row.name }}</strong>
+              <span>{{ row.base_url }}</span>
+            </div>
+            <div class="platform-badges">
+              <el-tag size="small" effect="plain">{{ providerLabel(row.provider_type) }}</el-tag>
+              <el-tag size="small" effect="light" type="info">{{ siteStrategyLabel(row) }}</el-tag>
+              <el-tag :type="statusType(row.status)" effect="light" size="small">
+                {{ statusText(row.status) }}
+              </el-tag>
+            </div>
+          </div>
+          <div class="embedded-platform-controls">
+            <el-switch :model-value="row.enabled" @change="toggleEnabled(row)" />
+            <div class="table-actions">
+              <el-button :icon="Setting" circle title="监控项" @click="openDetail(row)" />
+              <el-button :icon="Refresh" circle title="采集" @click="runMonitor(row)" />
+              <el-button :icon="Edit" circle title="编辑" @click="openEdit(row)" />
+              <el-button :icon="Delete" circle plain title="删除" type="danger" @click="remove(row)" />
+            </div>
+          </div>
+        </header>
+
+        <div class="embedded-platform-body">
+          <div class="embedded-account-panel">
+            <div class="embedded-section-label">账号概览</div>
+            <div v-if="row.account_monitors.length > 0" class="embedded-account-list">
+              <div
+                v-for="account in row.account_monitors.slice(0, 2)"
+                :key="account.id"
+                class="embedded-account-row"
+              >
+                <div>
+                  <strong>{{ account.name }}</strong>
+                  <span>余额 {{ formatMoney(account.balance) }} / 消耗 {{ formatMoney(account.quota_used) }}</span>
+                </div>
+                <el-tag
+                  :type="account.last_error ? 'danger' : account.checked_at ? 'success' : 'info'"
+                  effect="light"
+                  size="small"
+                >
+                  {{ account.last_error ? '异常' : account.checked_at ? '正常' : '未采集' }}
+                </el-tag>
+              </div>
+              <div v-if="row.account_monitors.length > 2" class="muted">
+                还有 {{ row.account_monitors.length - 2 }} 个账号
+              </div>
+            </div>
+            <div v-else class="embedded-empty">未配置账号</div>
+          </div>
+
+          <div class="embedded-metrics">
+            <div>
+              <span>账号数</span>
+              <strong>{{ row.account_monitors.length }}</strong>
+            </div>
+            <div>
+              <span>总余额</span>
+              <strong>{{ formatMoney(row.balance) }}</strong>
+            </div>
+            <div>
+              <span>总消耗</span>
+              <strong>{{ formatMoney(row.quota_used) }}</strong>
+            </div>
+            <div>
+              <span>最后采集</span>
+              <strong>{{ formatTime(row.checked_at) }}</strong>
+            </div>
+          </div>
+        </div>
+      </article>
+
+      <el-empty v-if="!loading && platforms.length === 0" description="暂无平台" />
     </section>
 
     <el-dialog v-model="dialogVisible" :title="editing ? '编辑平台' : '新增平台'" width="620px">

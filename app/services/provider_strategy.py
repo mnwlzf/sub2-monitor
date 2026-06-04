@@ -154,6 +154,8 @@ class GenericNewApiSiteStrategy(NewApiSiteStrategy):
 
 class YunjinNewApiSiteStrategy(NewApiSiteStrategy):
     DEFAULT_QUOTA_PER_UNIT = 500_000
+    LOGIN_ENDPOINTS = ("api/user/login?turnstile=", "api/user/login")
+    PRICING_ENDPOINTS = ("api/pricing", "pricing")
 
     site_strategy = "yunjin"
     label = "云锦"
@@ -180,8 +182,8 @@ class YunjinNewApiSiteStrategy(NewApiSiteStrategy):
         request_headers = {
             "Accept": "application/json, text/plain, */*",
             "Cache-Control": "no-store",
-            "Origin": site_url,
-            "Referer": f"{site_url}/login",
+            "Origin": self.site_origin(platform),
+            "Referer": f"{site_url}login",
             "User-Agent": (
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                 "AppleWebKit/537.36 (KHTML, like Gecko) "
@@ -195,14 +197,18 @@ class YunjinNewApiSiteStrategy(NewApiSiteStrategy):
             timeout=provider.timeout_seconds,
         ) as client:
             quota_per_unit = await self.fetch_quota_per_unit(provider, client)
-            await client.get("/login")
-            login_response = await client.post(
-                "/api/user/login?turnstile=",
+            await client.get("login")
+            login_response, login_endpoint = await self.post_first_available(
+                client,
+                self.LOGIN_ENDPOINTS,
                 json=login_payload,
             )
             if login_response.status_code >= 400:
                 return AccountBalanceResult(
-                    error=f"yunjin login endpoint returned HTTP {login_response.status_code}"
+                    error=(
+                        "yunjin login endpoint returned "
+                        f"HTTP {login_response.status_code}: {login_endpoint}"
+                    )
                 )
             login_payload_json = self.safe_json(login_response)
             if isinstance(login_payload_json, dict) and login_payload_json.get("success") is False:
@@ -214,7 +220,7 @@ class YunjinNewApiSiteStrategy(NewApiSiteStrategy):
                 return AccountBalanceResult(error="yunjin login response missing data.id")
 
             self_response = await client.get(
-                "/api/user/self",
+                "api/user/self",
                 headers={"New-Api-User": str(user_id)},
             )
             if self_response.status_code >= 400:
@@ -242,10 +248,16 @@ class YunjinNewApiSiteStrategy(NewApiSiteStrategy):
             base_url=self.site_url(platform),
             timeout=provider.timeout_seconds,
         ) as client:
-            response = await client.get("/api/pricing")
+            response, pricing_endpoint = await self.get_first_available(
+                client,
+                self.PRICING_ENDPOINTS,
+            )
         if response.status_code >= 400:
             return GroupRateResult(
-                error=f"yunjin pricing endpoint returned HTTP {response.status_code}"
+                error=(
+                    "yunjin pricing endpoint returned "
+                    f"HTTP {response.status_code}: {pricing_endpoint}"
+                )
             )
         payload = self.safe_json(response)
         if not isinstance(payload, dict) or not isinstance(payload.get("group_ratio"), dict):
@@ -265,7 +277,27 @@ class YunjinNewApiSiteStrategy(NewApiSiteStrategy):
         parts = urlsplit(platform.base_url)
         if not parts.scheme or not parts.netloc:
             return platform.base_url.rstrip("/")
+        path = YunjinNewApiSiteStrategy.site_base_path(parts.path)
+        return urlunsplit((parts.scheme, parts.netloc, path, "", "")).rstrip("/") + "/"
+
+    @staticmethod
+    def site_origin(platform: RelayPlatform) -> str:
+        parts = urlsplit(platform.base_url)
+        if not parts.scheme or not parts.netloc:
+            return platform.base_url.rstrip("/")
         return urlunsplit((parts.scheme, parts.netloc, "", "", "")).rstrip("/")
+
+    @staticmethod
+    def site_base_path(path: str) -> str:
+        path = path.strip("/")
+        if not path:
+            return ""
+        parts = path.split("/")
+        if parts[-1] in {"login", "register", "pricing"}:
+            parts = parts[:-1]
+        if parts and parts[-1] == "api":
+            parts = parts[:-1]
+        return "/" + "/".join(parts) if parts else ""
 
     @staticmethod
     def safe_json(response: httpx.Response) -> Any:
@@ -282,7 +314,7 @@ class YunjinNewApiSiteStrategy(NewApiSiteStrategy):
         client: httpx.AsyncClient,
     ) -> float:
         try:
-            response = await client.get("/api/status")
+            response = await client.get("api/status")
         except httpx.HTTPError:
             return self.DEFAULT_QUOTA_PER_UNIT
         if response.status_code >= 400:
@@ -303,6 +335,37 @@ class YunjinNewApiSiteStrategy(NewApiSiteStrategy):
         if isinstance(user_id, int | str) and str(user_id):
             return user_id
         return None
+
+    @staticmethod
+    async def get_first_available(
+        client: httpx.AsyncClient,
+        endpoints: tuple[str, ...],
+    ) -> tuple[httpx.Response, str]:
+        last_response: httpx.Response | None = None
+        for endpoint in endpoints:
+            response = await client.get(endpoint)
+            if response.status_code != 404:
+                return response, endpoint
+            last_response = response
+        if last_response is None:
+            raise ValueError("no endpoints configured")
+        return last_response, endpoints[-1]
+
+    @staticmethod
+    async def post_first_available(
+        client: httpx.AsyncClient,
+        endpoints: tuple[str, ...],
+        **kwargs: Any,
+    ) -> tuple[httpx.Response, str]:
+        last_response: httpx.Response | None = None
+        for endpoint in endpoints:
+            response = await client.post(endpoint, **kwargs)
+            if response.status_code != 404:
+                return response, endpoint
+            last_response = response
+        if last_response is None:
+            raise ValueError("no endpoints configured")
+        return last_response, endpoints[-1]
 
 
 class NewApiSiteStrategyRegistry:

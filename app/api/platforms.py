@@ -1,0 +1,398 @@
+from fastapi import APIRouter, Depends, HTTPException, status
+from croniter import croniter
+from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import Session
+
+from app.api.deps import current_user, verify_csrf
+from app.core.database import get_db
+from app.core.security import encrypt_secret, utcnow
+from app.models.monitor import PlatformAccountMonitor, PlatformGroupMonitor
+from app.models.platform import PlatformStatus, RelayPlatform
+from app.models.snapshot import PlatformSnapshot
+from app.schemas.platform import (
+    AccountMonitorCreate,
+    AccountMonitorResponse,
+    AccountMonitorUpdate,
+    DashboardStats,
+    GroupMonitorCreate,
+    GroupMonitorResponse,
+    GroupMonitorUpdate,
+    MonitorRunResponse,
+    PlatformCreate,
+    PlatformDetailResponse,
+    PlatformResponse,
+    PlatformUpdate,
+    SiteStrategyOption,
+    ProviderOption,
+    SnapshotCreate,
+)
+from app.services.monitoring import (
+    get_platform_detail,
+    run_platform_balance_monitor,
+    run_platform_monitor,
+    run_platform_rate_monitor,
+)
+from app.services.provider_strategy import newapi_site_strategy_registry, provider_registry
+
+router = APIRouter(tags=["platforms"], dependencies=[Depends(current_user)])
+
+
+def platform_payload(payload: PlatformCreate | PlatformUpdate) -> dict:
+    data = payload.model_dump(exclude_unset=True, mode="json")
+    if "api_key" in data:
+        api_key = data.pop("api_key")
+        if api_key:
+            data["api_key_encrypted"] = encrypt_secret(api_key)
+    return data
+
+
+def account_payload(payload: AccountMonitorCreate | AccountMonitorUpdate) -> dict:
+    data = payload.model_dump(exclude_unset=True)
+    if "password" in data:
+        password = data.pop("password")
+        if password:
+            data["password_encrypted"] = encrypt_secret(password)
+    return data
+
+
+def update_next_run_times(platform: RelayPlatform, fields: set[str]) -> None:
+    now = utcnow()
+    if "balance_cron" in fields:
+        platform.balance_next_run_at = croniter(platform.balance_cron, now).get_next(type(now))
+    if "rate_cron" in fields:
+        platform.rate_next_run_at = croniter(platform.rate_cron, now).get_next(type(now))
+
+
+def validate_strategy(provider_type: str, site_strategy: str) -> None:
+    provider_registry.get(provider_type)
+    if provider_type == "newapi":
+        newapi_site_strategy_registry.get(site_strategy)
+
+
+def detail_or_404(db: Session, platform_id: int) -> RelayPlatform:
+    platform = get_platform_detail(db, platform_id)
+    if platform is None:
+        raise HTTPException(status_code=404, detail="Platform not found")
+    return platform
+
+
+@router.get("/dashboard", response_model=DashboardStats)
+def dashboard(db: Session = Depends(get_db)) -> DashboardStats:
+    platforms = db.scalars(select(RelayPlatform)).all()
+    account_monitor_count = len(db.scalars(select(PlatformAccountMonitor.id)).all())
+    group_monitor_count = len(db.scalars(select(PlatformGroupMonitor.id)).all())
+    latencies = [item.latency_ms for item in platforms if item.latency_ms is not None]
+    return DashboardStats(
+        total_platforms=len(platforms),
+        enabled_platforms=sum(1 for item in platforms if item.enabled),
+        healthy_platforms=sum(1 for item in platforms if item.status == PlatformStatus.healthy),
+        degraded_platforms=sum(1 for item in platforms if item.status == PlatformStatus.degraded),
+        down_platforms=sum(1 for item in platforms if item.status == PlatformStatus.down),
+        total_keys=sum(item.key_count for item in platforms),
+        account_monitor_count=account_monitor_count,
+        group_monitor_count=group_monitor_count,
+        average_latency_ms=round(sum(latencies) / len(latencies)) if latencies else None,
+    )
+
+
+@router.get("/providers", response_model=list[ProviderOption])
+def provider_options() -> list[dict[str, str]]:
+    return provider_registry.options()
+
+
+@router.get("/site-strategies", response_model=list[SiteStrategyOption])
+def site_strategy_options() -> list[dict[str, str]]:
+    return newapi_site_strategy_registry.options()
+
+
+@router.get("/platforms", response_model=list[PlatformResponse])
+def list_platforms(db: Session = Depends(get_db)) -> list[RelayPlatform]:
+    return list(db.scalars(select(RelayPlatform).order_by(RelayPlatform.created_at.desc())).all())
+
+
+@router.get("/platforms/{platform_id}", response_model=PlatformDetailResponse)
+def get_platform(platform_id: int, db: Session = Depends(get_db)) -> RelayPlatform:
+    return detail_or_404(db, platform_id)
+
+
+@router.post(
+    "/platforms",
+    response_model=PlatformResponse,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(verify_csrf)],
+)
+def create_platform(payload: PlatformCreate, db: Session = Depends(get_db)) -> RelayPlatform:
+    try:
+        validate_strategy(payload.provider_type, payload.site_strategy)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    platform = RelayPlatform(**platform_payload(payload))
+    update_next_run_times(platform, {"balance_cron", "rate_cron"})
+    db.add(platform)
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Platform name already exists") from exc
+    db.refresh(platform)
+    return platform
+
+
+@router.patch(
+    "/platforms/{platform_id}",
+    response_model=PlatformResponse,
+    dependencies=[Depends(verify_csrf)],
+)
+def update_platform(
+    platform_id: int,
+    payload: PlatformUpdate,
+    db: Session = Depends(get_db),
+) -> RelayPlatform:
+    platform = db.get(RelayPlatform, platform_id)
+    if platform is None:
+        raise HTTPException(status_code=404, detail="Platform not found")
+    data = platform_payload(payload)
+    provider_type = data.get("provider_type", platform.provider_type)
+    site_strategy = data.get("site_strategy", platform.site_strategy)
+    try:
+        validate_strategy(provider_type, site_strategy)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    for field, value in data.items():
+        setattr(platform, field, value)
+    update_next_run_times(platform, set(data))
+    db.add(platform)
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Platform name already exists") from exc
+    db.refresh(platform)
+    return platform
+
+
+@router.delete("/platforms/{platform_id}", dependencies=[Depends(verify_csrf)])
+def delete_platform(platform_id: int, db: Session = Depends(get_db)) -> dict[str, bool]:
+    platform = db.get(RelayPlatform, platform_id)
+    if platform is None:
+        raise HTTPException(status_code=404, detail="Platform not found")
+    db.delete(platform)
+    db.commit()
+    return {"ok": True}
+
+
+@router.post(
+    "/platforms/{platform_id}/monitor/run",
+    response_model=MonitorRunResponse,
+    dependencies=[Depends(verify_csrf)],
+)
+async def run_monitor(platform_id: int, db: Session = Depends(get_db)) -> MonitorRunResponse:
+    try:
+        platform = await run_platform_monitor(db, platform_id)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail="Platform not found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    detail = detail_or_404(db, platform.id)
+    return {
+        "platform": detail,
+        "account_monitors": detail.account_monitors,
+        "group_monitors": detail.group_monitors,
+    }
+
+
+@router.post(
+    "/platforms/{platform_id}/monitor/balance/run",
+    response_model=MonitorRunResponse,
+    dependencies=[Depends(verify_csrf)],
+)
+async def run_balance_monitor(platform_id: int, db: Session = Depends(get_db)) -> MonitorRunResponse:
+    try:
+        platform = await run_platform_balance_monitor(db, platform_id)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail="Platform not found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    detail = detail_or_404(db, platform.id)
+    return {
+        "platform": detail,
+        "account_monitors": detail.account_monitors,
+        "group_monitors": detail.group_monitors,
+    }
+
+
+@router.post(
+    "/platforms/{platform_id}/monitor/rate/run",
+    response_model=MonitorRunResponse,
+    dependencies=[Depends(verify_csrf)],
+)
+async def run_rate_monitor(platform_id: int, db: Session = Depends(get_db)) -> MonitorRunResponse:
+    try:
+        platform = await run_platform_rate_monitor(db, platform_id)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail="Platform not found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    detail = detail_or_404(db, platform.id)
+    return {
+        "platform": detail,
+        "account_monitors": detail.account_monitors,
+        "group_monitors": detail.group_monitors,
+    }
+
+
+@router.post(
+    "/platforms/{platform_id}/accounts",
+    response_model=AccountMonitorResponse,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(verify_csrf)],
+)
+def create_account_monitor(
+    platform_id: int,
+    payload: AccountMonitorCreate,
+    db: Session = Depends(get_db),
+) -> PlatformAccountMonitor:
+    detail_or_404(db, platform_id)
+    item = PlatformAccountMonitor(platform_id=platform_id, **account_payload(payload))
+    db.add(item)
+    db.commit()
+    db.refresh(item)
+    return item
+
+
+@router.patch(
+    "/platforms/{platform_id}/accounts/{monitor_id}",
+    response_model=AccountMonitorResponse,
+    dependencies=[Depends(verify_csrf)],
+)
+def update_account_monitor(
+    platform_id: int,
+    monitor_id: int,
+    payload: AccountMonitorUpdate,
+    db: Session = Depends(get_db),
+) -> PlatformAccountMonitor:
+    item = db.scalar(
+        select(PlatformAccountMonitor).where(
+            PlatformAccountMonitor.id == monitor_id,
+            PlatformAccountMonitor.platform_id == platform_id,
+        )
+    )
+    if item is None:
+        raise HTTPException(status_code=404, detail="Account monitor not found")
+    for field, value in account_payload(payload).items():
+        setattr(item, field, value)
+    db.add(item)
+    db.commit()
+    db.refresh(item)
+    return item
+
+
+@router.delete(
+    "/platforms/{platform_id}/accounts/{monitor_id}",
+    dependencies=[Depends(verify_csrf)],
+)
+def delete_account_monitor(platform_id: int, monitor_id: int, db: Session = Depends(get_db)) -> dict[str, bool]:
+    item = db.scalar(
+        select(PlatformAccountMonitor).where(
+            PlatformAccountMonitor.id == monitor_id,
+            PlatformAccountMonitor.platform_id == platform_id,
+        )
+    )
+    if item is None:
+        raise HTTPException(status_code=404, detail="Account monitor not found")
+    db.delete(item)
+    db.commit()
+    return {"ok": True}
+
+
+@router.post(
+    "/platforms/{platform_id}/groups",
+    response_model=GroupMonitorResponse,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(verify_csrf)],
+)
+def create_group_monitor(
+    platform_id: int,
+    payload: GroupMonitorCreate,
+    db: Session = Depends(get_db),
+) -> PlatformGroupMonitor:
+    detail_or_404(db, platform_id)
+    item = PlatformGroupMonitor(platform_id=platform_id, **payload.model_dump())
+    db.add(item)
+    db.commit()
+    db.refresh(item)
+    return item
+
+
+@router.patch(
+    "/platforms/{platform_id}/groups/{monitor_id}",
+    response_model=GroupMonitorResponse,
+    dependencies=[Depends(verify_csrf)],
+)
+def update_group_monitor(
+    platform_id: int,
+    monitor_id: int,
+    payload: GroupMonitorUpdate,
+    db: Session = Depends(get_db),
+) -> PlatformGroupMonitor:
+    item = db.scalar(
+        select(PlatformGroupMonitor).where(
+            PlatformGroupMonitor.id == monitor_id,
+            PlatformGroupMonitor.platform_id == platform_id,
+        )
+    )
+    if item is None:
+        raise HTTPException(status_code=404, detail="Group monitor not found")
+    for field, value in payload.model_dump(exclude_unset=True).items():
+        setattr(item, field, value)
+    db.add(item)
+    db.commit()
+    db.refresh(item)
+    return item
+
+
+@router.delete(
+    "/platforms/{platform_id}/groups/{monitor_id}",
+    dependencies=[Depends(verify_csrf)],
+)
+def delete_group_monitor(platform_id: int, monitor_id: int, db: Session = Depends(get_db)) -> dict[str, bool]:
+    item = db.scalar(
+        select(PlatformGroupMonitor).where(
+            PlatformGroupMonitor.id == monitor_id,
+            PlatformGroupMonitor.platform_id == platform_id,
+        )
+    )
+    if item is None:
+        raise HTTPException(status_code=404, detail="Group monitor not found")
+    db.delete(item)
+    db.commit()
+    return {"ok": True}
+
+
+@router.post(
+    "/platforms/{platform_id}/snapshots",
+    response_model=PlatformResponse,
+    dependencies=[Depends(verify_csrf)],
+)
+def add_platform_snapshot(
+    platform_id: int,
+    payload: SnapshotCreate,
+    db: Session = Depends(get_db),
+) -> RelayPlatform:
+    platform = db.get(RelayPlatform, platform_id)
+    if platform is None:
+        raise HTTPException(status_code=404, detail="Platform not found")
+    snapshot = PlatformSnapshot(platform_id=platform.id, **payload.model_dump(mode="json"))
+    platform.status = payload.status
+    platform.balance = payload.balance
+    platform.quota_used = payload.quota_used
+    platform.quota_limit = payload.quota_limit
+    platform.latency_ms = payload.latency_ms
+    platform.last_error = payload.error_message
+    platform.checked_at = utcnow()
+    db.add(snapshot)
+    db.add(platform)
+    db.commit()
+    db.refresh(platform)
+    return platform

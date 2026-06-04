@@ -1,0 +1,76 @@
+from collections.abc import Generator
+from pathlib import Path
+
+from sqlalchemy import create_engine, inspect, text
+from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
+
+from app.core.config import get_settings
+
+
+class Base(DeclarativeBase):
+    pass
+
+
+settings = get_settings()
+
+if settings.database_url.startswith("sqlite:///"):
+    sqlite_path = settings.database_url.removeprefix("sqlite:///")
+    if sqlite_path.startswith("./"):
+        sqlite_path = sqlite_path[2:]
+    Path(sqlite_path).parent.mkdir(parents=True, exist_ok=True)
+
+engine = create_engine(
+    settings.database_url,
+    connect_args={"check_same_thread": False} if settings.database_url.startswith("sqlite") else {},
+)
+SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+
+
+def get_db() -> Generator[Session, None, None]:
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+
+def ensure_schema() -> None:
+    Base.metadata.create_all(bind=engine)
+    if not settings.database_url.startswith("sqlite"):
+        return
+
+    inspector = inspect(engine)
+    table_names = set(inspector.get_table_names())
+    if "relay_platforms" not in table_names:
+        return
+
+    existing_columns = {column["name"] for column in inspector.get_columns("relay_platforms")}
+    column_sql = {
+        "site_strategy": "ALTER TABLE relay_platforms ADD COLUMN site_strategy VARCHAR(64) NOT NULL DEFAULT 'generic'",
+        "auth_header_name": "ALTER TABLE relay_platforms ADD COLUMN auth_header_name VARCHAR(64) NOT NULL DEFAULT 'Authorization'",
+        "auth_header_prefix": "ALTER TABLE relay_platforms ADD COLUMN auth_header_prefix VARCHAR(32) NOT NULL DEFAULT 'Bearer'",
+        "api_key_encrypted": "ALTER TABLE relay_platforms ADD COLUMN api_key_encrypted TEXT",
+        "balance_cron": "ALTER TABLE relay_platforms ADD COLUMN balance_cron VARCHAR(64) NOT NULL DEFAULT '*/10 * * * *'",
+        "rate_cron": "ALTER TABLE relay_platforms ADD COLUMN rate_cron VARCHAR(64) NOT NULL DEFAULT '0 * * * *'",
+        "balance_last_run_at": "ALTER TABLE relay_platforms ADD COLUMN balance_last_run_at DATETIME",
+        "balance_next_run_at": "ALTER TABLE relay_platforms ADD COLUMN balance_next_run_at DATETIME",
+        "rate_last_run_at": "ALTER TABLE relay_platforms ADD COLUMN rate_last_run_at DATETIME",
+        "rate_next_run_at": "ALTER TABLE relay_platforms ADD COLUMN rate_next_run_at DATETIME",
+    }
+    with engine.begin() as conn:
+        for column, statement in column_sql.items():
+            if column not in existing_columns:
+                conn.execute(text(statement))
+
+    if "platform_account_monitors" in table_names:
+        account_columns = {
+            column["name"] for column in inspector.get_columns("platform_account_monitors")
+        }
+        account_column_sql = {
+            "username": "ALTER TABLE platform_account_monitors ADD COLUMN username VARCHAR(160)",
+            "password_encrypted": "ALTER TABLE platform_account_monitors ADD COLUMN password_encrypted TEXT",
+        }
+        with engine.begin() as conn:
+            for column, statement in account_column_sql.items():
+                if column not in account_columns:
+                    conn.execute(text(statement))

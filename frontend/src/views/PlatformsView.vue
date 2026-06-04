@@ -1,0 +1,681 @@
+<template>
+  <div class="platforms-page">
+    <section class="stats-grid">
+      <div class="stat-card">
+        <span>平台总数</span>
+        <strong>{{ stats?.total_platforms ?? '-' }}</strong>
+      </div>
+      <div class="stat-card">
+        <span>启用平台</span>
+        <strong>{{ stats?.enabled_platforms ?? '-' }}</strong>
+      </div>
+      <div class="stat-card">
+        <span>健康</span>
+        <strong class="ok">{{ stats?.healthy_platforms ?? '-' }}</strong>
+      </div>
+      <div class="stat-card">
+        <span>异常</span>
+        <strong class="bad">{{ (stats?.degraded_platforms ?? 0) + (stats?.down_platforms ?? 0) }}</strong>
+      </div>
+      <div class="stat-card">
+        <span>账号监控</span>
+        <strong>{{ stats?.account_monitor_count ?? '-' }}</strong>
+      </div>
+      <div class="stat-card">
+        <span>分组监控</span>
+        <strong>{{ stats?.group_monitor_count ?? '-' }}</strong>
+      </div>
+    </section>
+
+    <section class="toolbar">
+      <div>
+        <h2>平台列表</h2>
+        <p>按 sub2api / newapi 策略采集账号余额和指定分组倍率。</p>
+      </div>
+      <el-button :icon="Plus" type="primary" @click="openCreate">新增平台</el-button>
+    </section>
+
+    <el-table v-loading="loading" :data="platforms" class="platform-table compare-table" row-key="id">
+      <el-table-column label="平台" min-width="210">
+        <template #default="{ row }">
+          <div class="platform-name">{{ row.name }}</div>
+          <div class="muted">{{ providerLabel(row.provider_type) }} / {{ siteStrategyLabel(row) }}</div>
+        </template>
+      </el-table-column>
+      <el-table-column label="状态" width="120">
+        <template #default="{ row }">
+          <el-tag :type="statusType(row.status)" effect="light">{{ statusText(row.status) }}</el-tag>
+        </template>
+      </el-table-column>
+      <el-table-column prop="base_url" label="地址" min-width="230" show-overflow-tooltip />
+      <el-table-column label="凭据" width="110">
+        <template #default="{ row }">
+          <el-tag :type="row.has_api_key ? 'success' : 'info'" effect="plain">
+            {{ row.has_api_key ? '已配置' : '未配置' }}
+          </el-tag>
+        </template>
+      </el-table-column>
+      <el-table-column label="账号概览" min-width="320">
+        <template #default="{ row }">
+          <div class="account-compare-list">
+            <div
+              v-for="account in row.account_monitors.slice(0, 3)"
+              :key="account.id"
+              class="account-compare-item"
+            >
+              <div class="account-compare-name">
+                <span>{{ account.name }}</span>
+                <el-tag
+                  :type="account.last_error ? 'danger' : account.checked_at ? 'success' : 'info'"
+                  effect="light"
+                  size="small"
+                >
+                  {{ account.last_error ? '异常' : account.checked_at ? '正常' : '未采集' }}
+                </el-tag>
+              </div>
+              <div class="account-compare-metrics">
+                <span>余额 {{ formatMoney(account.balance) }}</span>
+                <span>消耗 {{ formatMoney(account.quota_used) }}</span>
+              </div>
+            </div>
+            <div v-if="row.account_monitors.length === 0" class="muted">未配置账号</div>
+            <div v-else-if="row.account_monitors.length > 3" class="muted">
+              还有 {{ row.account_monitors.length - 3 }} 个账号，进入监控项查看
+            </div>
+          </div>
+        </template>
+      </el-table-column>
+      <el-table-column label="指标" width="150">
+        <template #default="{ row }">
+          <div class="metric-stack">
+            <div>
+              <span class="metric-label">账号数</span>
+              <strong>{{ row.account_monitors.length }}</strong>
+            </div>
+            <div>
+              <span class="metric-label">总余额</span>
+              <strong>{{ formatMoney(row.balance) }}</strong>
+            </div>
+            <div>
+              <span class="metric-label">总消耗</span>
+              <strong>{{ formatMoney(row.quota_used) }}</strong>
+            </div>
+          </div>
+        </template>
+      </el-table-column>
+      <el-table-column label="最后采集" width="170">
+        <template #default="{ row }">{{ formatTime(row.checked_at) }}</template>
+      </el-table-column>
+      <el-table-column label="启用" width="90">
+        <template #default="{ row }">
+          <el-switch :model-value="row.enabled" @change="toggleEnabled(row)" />
+        </template>
+      </el-table-column>
+      <el-table-column label="操作" width="132" fixed="right">
+        <template #default="{ row }">
+          <div class="table-actions">
+            <el-button :icon="Setting" circle title="监控项" @click="openDetail(row)" />
+            <el-button :icon="Refresh" circle title="采集" @click="runMonitor(row)" />
+            <el-button :icon="Edit" circle title="编辑" @click="openEdit(row)" />
+            <el-button :icon="Delete" circle title="删除" type="danger" plain @click="remove(row)" />
+          </div>
+        </template>
+      </el-table-column>
+    </el-table>
+
+    <el-dialog v-model="dialogVisible" :title="editing ? '编辑平台' : '新增平台'" width="620px">
+      <el-form ref="formRef" :model="form" :rules="rules" label-width="112px">
+        <el-form-item label="平台名称" prop="name">
+          <el-input v-model="form.name" placeholder="例如 主站 Sub2API" />
+        </el-form-item>
+        <el-form-item label="服务商类型" prop="provider_type">
+          <el-select v-model="form.provider_type" class="full-width">
+            <el-option
+              v-for="provider in providers"
+              :key="provider.value"
+              :label="provider.label"
+              :value="provider.value"
+            />
+          </el-select>
+        </el-form-item>
+        <el-form-item v-if="form.provider_type === 'newapi'" label="站点策略" prop="site_strategy">
+          <el-select v-model="form.site_strategy" class="full-width">
+            <el-option
+              v-for="strategy in siteStrategies"
+              :key="strategy.value"
+              :label="strategy.label"
+              :value="strategy.value"
+            >
+              <span>{{ strategy.label }}</span>
+              <span class="select-hint">{{ strategy.description }}</span>
+            </el-option>
+          </el-select>
+        </el-form-item>
+        <el-form-item label="站点地址" prop="base_url">
+          <el-input v-model="form.base_url" placeholder="https://relayai.tech/login" />
+        </el-form-item>
+        <el-form-item label="鉴权 Header" prop="auth_header_name">
+          <el-input v-model="form.auth_header_name" />
+        </el-form-item>
+        <el-form-item label="鉴权前缀" prop="auth_header_prefix">
+          <el-input v-model="form.auth_header_prefix" placeholder="Bearer" />
+        </el-form-item>
+        <el-form-item label="管理 API Key">
+          <el-input
+            v-model="form.api_key"
+            placeholder="留空则不修改已有凭据"
+            show-password
+            type="password"
+          />
+        </el-form-item>
+        <el-form-item label="余额 Cron" prop="balance_cron">
+          <el-input v-model="form.balance_cron" placeholder="*/10 * * * *" />
+        </el-form-item>
+        <el-form-item label="倍率 Cron" prop="rate_cron">
+          <el-input v-model="form.rate_cron" placeholder="0 * * * *" />
+        </el-form-item>
+        <el-form-item label="启用">
+          <el-switch v-model="form.enabled" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="dialogVisible = false">取消</el-button>
+        <el-button :loading="saving" type="primary" @click="save">保存</el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog v-model="detailVisible" :title="detail ? `监控项 - ${detail.name}` : '监控项'" width="980px">
+      <div v-if="detail" class="monitor-config">
+        <section>
+          <div class="monitor-section-title">
+            <div>
+              <h3>账号余额监控</h3>
+              <p>配置一个或多个平台账号，用策略读取余额和额度剩余。</p>
+            </div>
+            <el-button :icon="Plus" @click="accountDialogVisible = true">添加账号</el-button>
+          </div>
+          <el-table :data="detail.account_monitors" size="small">
+            <el-table-column prop="name" label="名称" min-width="150" />
+            <el-table-column prop="external_account_id" label="平台账号 ID" min-width="160" />
+            <el-table-column label="余额" width="120">
+              <template #default="{ row }">{{ row.balance ?? '-' }}</template>
+            </el-table-column>
+            <el-table-column label="已消耗" width="120">
+              <template #default="{ row }">{{ formatMoney(row.quota_used) }}</template>
+            </el-table-column>
+            <el-table-column label="额度上限" width="120">
+              <template #default="{ row }">{{ formatMoney(row.quota_limit) }}</template>
+            </el-table-column>
+            <el-table-column label="最后采集" width="170">
+              <template #default="{ row }">{{ formatTime(row.checked_at) }}</template>
+            </el-table-column>
+            <el-table-column prop="last_error" label="错误" min-width="180" show-overflow-tooltip />
+            <el-table-column label="操作" width="90">
+              <template #default="{ row }">
+                <el-button :icon="Delete" link type="danger" @click="removeAccount(row.id)">删除</el-button>
+              </template>
+            </el-table-column>
+          </el-table>
+        </section>
+
+        <section>
+          <div class="monitor-section-title">
+            <div>
+              <h3>分组倍率监控</h3>
+              <p>配置指定分组，云锦策略填写 codex 即读取 group_ratio.codex。</p>
+            </div>
+            <el-button :icon="Plus" @click="groupDialogVisible = true">添加分组</el-button>
+          </div>
+          <el-table :data="detail.group_monitors" size="small">
+            <el-table-column prop="name" label="名称" min-width="150" />
+            <el-table-column prop="external_group_id" label="平台分组 ID" min-width="160" />
+            <el-table-column label="倍率" width="100">
+              <template #default="{ row }">{{ row.rate_multiplier ?? '-' }}</template>
+            </el-table-column>
+            <el-table-column label="RPM" width="100">
+              <template #default="{ row }">{{ row.rpm_limit ?? '-' }}</template>
+            </el-table-column>
+            <el-table-column label="最后采集" width="170">
+              <template #default="{ row }">{{ formatTime(row.checked_at) }}</template>
+            </el-table-column>
+            <el-table-column prop="last_error" label="错误" min-width="180" show-overflow-tooltip />
+            <el-table-column label="操作" width="90">
+              <template #default="{ row }">
+                <el-button :icon="Delete" link type="danger" @click="removeGroup(row.id)">删除</el-button>
+              </template>
+            </el-table-column>
+          </el-table>
+        </section>
+      </div>
+      <template #footer>
+        <el-button @click="detailVisible = false">关闭</el-button>
+        <el-button :icon="Refresh" :loading="monitoring" @click="runDetailBalanceMonitor">采集余额</el-button>
+        <el-button :icon="Refresh" :loading="monitoring" type="primary" @click="runDetailRateMonitor">采集倍率</el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog v-model="accountDialogVisible" title="添加账号余额监控" width="520px">
+      <el-form :model="accountForm" label-width="110px">
+        <el-form-item label="显示名称">
+          <el-input v-model="accountForm.name" />
+        </el-form-item>
+        <el-form-item label="平台账号 ID">
+          <el-input v-model="accountForm.external_account_id" />
+        </el-form-item>
+        <el-form-item label="登录账号">
+          <el-input v-model="accountForm.username" autocomplete="username" />
+        </el-form-item>
+        <el-form-item label="登录密码">
+          <el-input
+            v-model="accountForm.password"
+            autocomplete="new-password"
+            placeholder="留空则不修改已有密码"
+            show-password
+            type="password"
+          />
+        </el-form-item>
+        <el-form-item label="启用">
+          <el-switch v-model="accountForm.enabled" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="accountDialogVisible = false">取消</el-button>
+        <el-button type="primary" @click="saveAccount">保存</el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog v-model="groupDialogVisible" title="添加分组倍率监控" width="520px">
+      <el-form :model="groupForm" label-width="110px">
+        <el-form-item label="显示名称">
+          <el-input v-model="groupForm.name" />
+        </el-form-item>
+        <el-form-item label="平台分组 ID">
+          <el-input v-model="groupForm.external_group_id" />
+        </el-form-item>
+        <el-form-item label="启用">
+          <el-switch v-model="groupForm.enabled" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="groupDialogVisible = false">取消</el-button>
+        <el-button type="primary" @click="saveGroup">保存</el-button>
+      </template>
+    </el-dialog>
+  </div>
+</template>
+
+<script setup lang="ts">
+import { Delete, Edit, Plus, Refresh, Setting } from '@element-plus/icons-vue'
+import type { FormInstance, FormRules } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import { onMounted, reactive, ref } from 'vue'
+
+import {
+  createAccountMonitor,
+  createGroupMonitor,
+  createPlatform,
+  deleteAccountMonitor,
+  deleteGroupMonitor,
+  deletePlatform,
+  fetchDashboard,
+  fetchPlatform,
+  fetchPlatforms,
+  fetchProviders,
+  fetchSiteStrategies,
+  runPlatformBalanceMonitor,
+  runPlatformMonitor,
+  runPlatformRateMonitor,
+  updatePlatform,
+  type AccountMonitorPayload,
+  type DashboardStats,
+  type GroupMonitorPayload,
+  type PlatformDetail,
+  type PlatformPayload,
+  type PlatformStatus,
+  type ProviderOption,
+  type RelayPlatform,
+  type SiteStrategyOption,
+} from '@/api/client'
+
+const providers = ref<ProviderOption[]>([])
+const siteStrategies = ref<SiteStrategyOption[]>([])
+const platforms = ref<PlatformDetail[]>([])
+const stats = ref<DashboardStats | null>(null)
+const detail = ref<PlatformDetail | null>(null)
+const loading = ref(false)
+const saving = ref(false)
+const monitoring = ref(false)
+const dialogVisible = ref(false)
+const detailVisible = ref(false)
+const accountDialogVisible = ref(false)
+const groupDialogVisible = ref(false)
+const editing = ref<RelayPlatform | null>(null)
+const formRef = ref<FormInstance>()
+
+const form = reactive<PlatformPayload>({
+  name: '',
+  base_url: '',
+  provider_type: 'sub2api',
+  site_strategy: 'generic',
+  auth_header_name: 'Authorization',
+  auth_header_prefix: 'Bearer',
+  api_key: null,
+  balance_cron: '*/10 * * * *',
+  rate_cron: '0 * * * *',
+  enabled: true,
+  key_count: 0,
+  balance: null,
+  quota_used: null,
+  quota_limit: null,
+})
+
+const accountForm = reactive<AccountMonitorPayload>({
+  name: '',
+  external_account_id: '',
+  username: null,
+  password: null,
+  enabled: true,
+})
+
+const groupForm = reactive<GroupMonitorPayload>({
+  name: '',
+  external_group_id: '',
+  enabled: true,
+})
+
+const rules: FormRules = {
+  name: [{ required: true, message: '请输入平台名称', trigger: 'blur' }],
+  base_url: [{ required: true, message: '请输入站点地址', trigger: 'blur' }],
+  provider_type: [{ required: true, message: '请选择服务商类型', trigger: 'change' }],
+  site_strategy: [{ required: true, message: '请选择站点策略', trigger: 'change' }],
+  auth_header_name: [{ required: true, message: '请输入鉴权 Header', trigger: 'blur' }],
+  balance_cron: [{ required: true, message: '请输入余额 Cron', trigger: 'blur' }],
+  rate_cron: [{ required: true, message: '请输入倍率 Cron', trigger: 'blur' }],
+}
+
+function resetForm() {
+  Object.assign(form, {
+    name: '',
+    base_url: '',
+    provider_type: 'sub2api',
+    site_strategy: 'generic',
+    auth_header_name: 'Authorization',
+    auth_header_prefix: 'Bearer',
+    api_key: null,
+    balance_cron: '*/10 * * * *',
+    rate_cron: '0 * * * *',
+    enabled: true,
+    key_count: 0,
+    balance: null,
+    quota_used: null,
+    quota_limit: null,
+  })
+}
+
+function resetAccountForm() {
+  Object.assign(accountForm, {
+    name: '',
+    external_account_id: '',
+    username: null,
+    password: null,
+    enabled: true,
+  })
+}
+
+function resetGroupForm() {
+  Object.assign(groupForm, { name: '', external_group_id: '', enabled: true })
+}
+
+function openCreate() {
+  editing.value = null
+  resetForm()
+  dialogVisible.value = true
+}
+
+function openEdit(row: RelayPlatform) {
+  editing.value = row
+  Object.assign(form, {
+    name: row.name,
+    base_url: row.base_url,
+    provider_type: row.provider_type,
+    site_strategy: row.site_strategy,
+    auth_header_name: row.auth_header_name,
+    auth_header_prefix: row.auth_header_prefix,
+    api_key: null,
+    balance_cron: row.balance_cron,
+    rate_cron: row.rate_cron,
+    enabled: row.enabled,
+    key_count: row.key_count,
+    balance: row.balance,
+    quota_used: row.quota_used,
+    quota_limit: row.quota_limit,
+  })
+  dialogVisible.value = true
+}
+
+async function openDetail(row: RelayPlatform) {
+  detail.value = await fetchPlatform(row.id)
+  detailVisible.value = true
+}
+
+async function load() {
+  loading.value = true
+  try {
+    const [providerRows, siteStrategyRows, dashboard, rows] = await Promise.all([
+      fetchProviders(),
+      fetchSiteStrategies(),
+      fetchDashboard(),
+      fetchPlatforms(),
+    ])
+    const details = await Promise.all(rows.map((row) => fetchPlatform(row.id)))
+    providers.value = providerRows
+    siteStrategies.value = siteStrategyRows
+    stats.value = dashboard
+    platforms.value = details
+  } finally {
+    loading.value = false
+  }
+}
+
+async function reloadDetail() {
+  if (!detail.value) {
+    return
+  }
+  detail.value = await fetchPlatform(detail.value.id)
+}
+
+async function save() {
+  await formRef.value?.validate()
+  saving.value = true
+  try {
+    const payload = { ...form }
+    if (payload.provider_type !== 'newapi') {
+      payload.site_strategy = 'generic'
+    }
+    if (!payload.api_key) {
+      delete payload.api_key
+    }
+    if (editing.value) {
+      await updatePlatform(editing.value.id, payload)
+    } else {
+      await createPlatform(payload)
+    }
+    ElMessage.success('已保存')
+    dialogVisible.value = false
+    await load()
+  } finally {
+    saving.value = false
+  }
+}
+
+async function toggleEnabled(row: RelayPlatform) {
+  await updatePlatform(row.id, { enabled: !row.enabled })
+  await load()
+}
+
+async function remove(row: RelayPlatform) {
+  await ElMessageBox.confirm(`确认删除平台「${row.name}」？`, '删除确认', { type: 'warning' })
+  await deletePlatform(row.id)
+  ElMessage.success('已删除')
+  await load()
+}
+
+async function runMonitor(row: RelayPlatform) {
+  monitoring.value = true
+  try {
+    await runPlatformMonitor(row.id)
+    ElMessage.success('采集完成')
+    await load()
+  } finally {
+    monitoring.value = false
+  }
+}
+
+async function runDetailMonitor() {
+  if (!detail.value) {
+    return
+  }
+  monitoring.value = true
+  try {
+    await runPlatformMonitor(detail.value.id)
+    ElMessage.success('采集完成')
+    await reloadDetail()
+    await load()
+  } finally {
+    monitoring.value = false
+  }
+}
+
+async function runDetailBalanceMonitor() {
+  if (!detail.value) {
+    return
+  }
+  monitoring.value = true
+  try {
+    await runPlatformBalanceMonitor(detail.value.id)
+    ElMessage.success('余额采集完成')
+    await reloadDetail()
+    await load()
+  } finally {
+    monitoring.value = false
+  }
+}
+
+async function runDetailRateMonitor() {
+  if (!detail.value) {
+    return
+  }
+  monitoring.value = true
+  try {
+    await runPlatformRateMonitor(detail.value.id)
+    ElMessage.success('倍率采集完成')
+    await reloadDetail()
+    await load()
+  } finally {
+    monitoring.value = false
+  }
+}
+
+async function saveAccount() {
+  if (!detail.value || !accountForm.name) {
+    ElMessage.error('请填写账号名称')
+    return
+  }
+  if (!accountForm.external_account_id && !accountForm.username) {
+    ElMessage.error('请填写平台账号 ID 或登录账号')
+    return
+  }
+  const payload = {
+    ...accountForm,
+    external_account_id: accountForm.external_account_id || accountForm.username || accountForm.name,
+  }
+  if (!payload.password) {
+    delete payload.password
+  }
+  await createAccountMonitor(detail.value.id, payload)
+  resetAccountForm()
+  accountDialogVisible.value = false
+  await reloadDetail()
+  await load()
+}
+
+async function removeAccount(monitorId: number) {
+  if (!detail.value) {
+    return
+  }
+  await deleteAccountMonitor(detail.value.id, monitorId)
+  await reloadDetail()
+  await load()
+}
+
+async function saveGroup() {
+  if (!detail.value || !groupForm.name || !groupForm.external_group_id) {
+    ElMessage.error('请填写分组名称和平台分组 ID')
+    return
+  }
+  await createGroupMonitor(detail.value.id, groupForm)
+  resetGroupForm()
+  groupDialogVisible.value = false
+  await reloadDetail()
+  await load()
+}
+
+async function removeGroup(monitorId: number) {
+  if (!detail.value) {
+    return
+  }
+  await deleteGroupMonitor(detail.value.id, monitorId)
+  await reloadDetail()
+  await load()
+}
+
+function providerLabel(providerType: string) {
+  return providers.value.find((item) => item.value === providerType)?.label ?? providerType
+}
+
+function siteStrategyLabel(row: RelayPlatform) {
+  if (row.provider_type !== 'newapi') {
+    return '默认'
+  }
+  return siteStrategies.value.find((item) => item.value === row.site_strategy)?.label ?? row.site_strategy
+}
+
+function statusType(status: PlatformStatus) {
+  return {
+    healthy: 'success',
+    degraded: 'warning',
+    down: 'danger',
+    unknown: 'info',
+  }[status]
+}
+
+function statusText(status: PlatformStatus) {
+  return {
+    healthy: '健康',
+    degraded: '降级',
+    down: '不可用',
+    unknown: '未知',
+  }[status]
+}
+
+function formatMoney(value: number | null) {
+  if (value === null) {
+    return '-'
+  }
+  return Number(value.toFixed(6)).toString()
+}
+
+function formatTime(value: string | null) {
+  if (!value) {
+    return '-'
+  }
+  const normalized = /[zZ]|[+-]\d{2}:\d{2}$/.test(value) ? value : `${value}Z`
+  const date = new Date(normalized)
+  if (Number.isNaN(date.getTime())) {
+    return value
+  }
+  return date.toLocaleString('zh-CN', { hour12: false })
+}
+
+onMounted(load)
+</script>

@@ -1,0 +1,216 @@
+from datetime import datetime
+
+from croniter import CroniterBadCronError, croniter
+from pydantic import BaseModel, ConfigDict, Field, HttpUrl
+from pydantic import field_validator
+
+from app.models.platform import PlatformStatus
+
+
+class ProviderOption(BaseModel):
+    value: str
+    label: str
+    description: str
+
+
+class SiteStrategyOption(BaseModel):
+    value: str
+    label: str
+    provider_type: str
+    description: str
+
+
+class PlatformBase(BaseModel):
+    name: str = Field(min_length=1, max_length=80)
+    base_url: HttpUrl
+    provider_type: str = Field(default="sub2api", max_length=64)
+    site_strategy: str = Field(default="generic", max_length=64)
+    auth_header_name: str = Field(default="Authorization", max_length=64)
+    auth_header_prefix: str = Field(default="Bearer", max_length=32)
+    api_key: str | None = Field(default=None, max_length=4096)
+    balance_cron: str = Field(default="*/10 * * * *", max_length=64)
+    rate_cron: str = Field(default="0 * * * *", max_length=64)
+    enabled: bool = True
+    key_count: int = Field(default=0, ge=0)
+    balance: float | None = None
+    quota_used: float | None = Field(default=None, ge=0)
+    quota_limit: float | None = Field(default=None, ge=0)
+
+    @field_validator("balance_cron", "rate_cron")
+    @classmethod
+    def validate_cron(cls, value: str) -> str:
+        value = value.strip()
+        try:
+            croniter(value)
+        except CroniterBadCronError as exc:
+            raise ValueError("cron 表达式无效") from exc
+        return value
+
+
+class PlatformCreate(PlatformBase):
+    pass
+
+
+class PlatformUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=80)
+    base_url: HttpUrl | None = None
+    provider_type: str | None = Field(default=None, max_length=64)
+    site_strategy: str | None = Field(default=None, max_length=64)
+    auth_header_name: str | None = Field(default=None, max_length=64)
+    auth_header_prefix: str | None = Field(default=None, max_length=32)
+    api_key: str | None = Field(default=None, max_length=4096)
+    balance_cron: str | None = Field(default=None, max_length=64)
+    rate_cron: str | None = Field(default=None, max_length=64)
+    enabled: bool | None = None
+    key_count: int | None = Field(default=None, ge=0)
+    balance: float | None = None
+    quota_used: float | None = Field(default=None, ge=0)
+    quota_limit: float | None = Field(default=None, ge=0)
+    status: PlatformStatus | None = None
+    latency_ms: int | None = Field(default=None, ge=0)
+    last_error: str | None = None
+
+    @field_validator("balance_cron", "rate_cron")
+    @classmethod
+    def validate_cron(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        value = value.strip()
+        try:
+            croniter(value)
+        except CroniterBadCronError as exc:
+            raise ValueError("cron 表达式无效") from exc
+        return value
+
+
+class PlatformResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    name: str
+    base_url: str
+    provider_type: str
+    site_strategy: str
+    auth_header_name: str
+    auth_header_prefix: str
+    has_api_key: bool
+    balance_cron: str
+    rate_cron: str
+    balance_last_run_at: datetime | None
+    balance_next_run_at: datetime | None
+    rate_last_run_at: datetime | None
+    rate_next_run_at: datetime | None
+    status: PlatformStatus
+    enabled: bool
+    key_count: int
+    balance: float | None
+    quota_used: float | None
+    quota_limit: float | None
+    latency_ms: int | None
+    last_error: str | None
+    checked_at: datetime | None
+    created_at: datetime
+    updated_at: datetime
+
+
+class SnapshotCreate(BaseModel):
+    status: PlatformStatus
+    balance: float | None = None
+    quota_used: float | None = Field(default=None, ge=0)
+    quota_limit: float | None = Field(default=None, ge=0)
+    latency_ms: int | None = Field(default=None, ge=0)
+    error_message: str | None = None
+
+
+class AccountMonitorBase(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    external_account_id: str = Field(min_length=1, max_length=120)
+    username: str | None = Field(default=None, max_length=160)
+    password: str | None = Field(default=None, max_length=4096)
+    enabled: bool = True
+
+
+class AccountMonitorCreate(AccountMonitorBase):
+    pass
+
+
+class AccountMonitorUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=120)
+    external_account_id: str | None = Field(default=None, min_length=1, max_length=120)
+    username: str | None = Field(default=None, max_length=160)
+    password: str | None = Field(default=None, max_length=4096)
+    enabled: bool | None = None
+
+
+class AccountMonitorResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    platform_id: int
+    name: str
+    external_account_id: str
+    username: str | None
+    has_password: bool
+    enabled: bool
+    balance: float | None
+    quota_used: float | None
+    quota_limit: float | None
+    last_error: str | None
+    checked_at: datetime | None
+    created_at: datetime
+    updated_at: datetime
+
+
+class GroupMonitorBase(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    external_group_id: str = Field(min_length=1, max_length=120)
+    enabled: bool = True
+
+
+class GroupMonitorCreate(GroupMonitorBase):
+    pass
+
+
+class GroupMonitorUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=120)
+    external_group_id: str | None = Field(default=None, min_length=1, max_length=120)
+    enabled: bool | None = None
+
+
+class GroupMonitorResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    platform_id: int
+    name: str
+    external_group_id: str
+    enabled: bool
+    rate_multiplier: float | None
+    rpm_limit: int | None
+    last_error: str | None
+    checked_at: datetime | None
+    created_at: datetime
+    updated_at: datetime
+
+
+class PlatformDetailResponse(PlatformResponse):
+    account_monitors: list[AccountMonitorResponse]
+    group_monitors: list[GroupMonitorResponse]
+
+
+class MonitorRunResponse(BaseModel):
+    platform: PlatformResponse
+    account_monitors: list[AccountMonitorResponse]
+    group_monitors: list[GroupMonitorResponse]
+
+
+class DashboardStats(BaseModel):
+    total_platforms: int
+    enabled_platforms: int
+    healthy_platforms: int
+    degraded_platforms: int
+    down_platforms: int
+    total_keys: int
+    account_monitor_count: int
+    group_monitor_count: int
+    average_latency_ms: int | None

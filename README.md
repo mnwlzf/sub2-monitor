@@ -1,0 +1,69 @@
+# Sub2 Monitor
+
+用于监控为 `sub2api` 提供密钥的各个中转平台信息。项目是单体部署形态：一个 Python/FastAPI 服务同时提供后端 API 和 Vue3 + Element Plus 前端页面。
+
+## 技术栈
+
+- 后端：FastAPI、SQLAlchemy、SQLite、Argon2 密码哈希
+- 前端：Vue3、Vite、TypeScript、Element Plus、Pinia、Vue Router
+- 鉴权：服务端会话、HttpOnly Cookie、CSRF Token、登录后才能访问所有业务 API 和前端页面
+- Python 管理：uv
+
+## 初始化
+
+```powershell
+cd E:\study\Sub2\sub2-monitor
+Copy-Item .env.example .env
+# 编辑 .env，至少修改 SUB2_MONITOR_SECRET_KEY 和 SUB2_MONITOR_BOOTSTRAP_PASSWORD
+uv sync
+cd frontend
+npm install
+```
+
+首次启动时，如果数据库里没有用户，会自动创建 `.env` 中的 `SUB2_MONITOR_BOOTSTRAP_USERNAME` 用户。
+
+## 开发运行
+
+后端：
+
+```powershell
+cd E:\study\Sub2\sub2-monitor
+uv run uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
+```
+
+前端开发服务器：
+
+```powershell
+cd E:\study\Sub2\sub2-monitor\frontend
+npm run dev
+```
+
+访问 `http://localhost:5173`。Vite 会把 `/api` 请求代理到后端。
+
+## 单体部署运行
+
+```powershell
+cd E:\study\Sub2\sub2-monitor\frontend
+npm run build
+cd ..
+uv run uvicorn app.main:app --host 0.0.0.0 --port 8000
+```
+
+访问 `http://服务器IP:8000`，FastAPI 会直接托管 `frontend/dist`。
+
+## 当前已实现
+
+- 登录、退出、获取当前用户
+- 所有业务 API 需要登录
+- CSRF 防护用于登录、退出、写操作
+- 平台基础信息 CRUD
+- 平台监控快照接口预留
+- 仪表盘统计接口
+
+## GitHub Actions
+
+仓库包含 `.github/workflows/ci.yml`，在推送到 `main` / `master` 或提交 Pull Request 时会自动执行：
+
+- 后端 `uv run ruff check app`
+- 前端 `npm ci`
+- 前端 `npm run build`

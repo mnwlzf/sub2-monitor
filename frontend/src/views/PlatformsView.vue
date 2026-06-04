@@ -195,17 +195,31 @@
                 :key="account.id"
                 class="embedded-account-row"
               >
-                <div>
-                  <strong>{{ account.name }}</strong>
-                  <span>余额 {{ formatMoney(account.balance) }} / 消耗 {{ formatMoney(account.quota_used) }}</span>
+                <div class="embedded-account-main">
+                  <div class="embedded-account-name">
+                    <strong>{{ account.name }}</strong>
+                    <el-tag
+                      :type="account.last_error ? 'danger' : account.checked_at ? 'success' : 'info'"
+                      effect="light"
+                      size="small"
+                    >
+                      {{ account.last_error ? '异常' : account.checked_at ? '正常' : '未采集' }}
+                    </el-tag>
+                  </div>
+                  <div v-if="account.last_error" class="embedded-account-error">
+                    {{ account.last_error }}
+                  </div>
                 </div>
-                <el-tag
-                  :type="account.last_error ? 'danger' : account.checked_at ? 'success' : 'info'"
-                  effect="light"
-                  size="small"
-                >
-                  {{ account.last_error ? '异常' : account.checked_at ? '正常' : '未采集' }}
-                </el-tag>
+                <div class="embedded-account-values">
+                  <div>
+                    <span>余额</span>
+                    <strong>{{ formatMoney(account.balance) }}</strong>
+                  </div>
+                  <div>
+                    <span>消耗</span>
+                    <strong>{{ formatMoney(account.quota_used) }}</strong>
+                  </div>
+                </div>
               </div>
               <div v-if="row.account_monitors.length > 2" class="muted">
                 还有 {{ row.account_monitors.length - 2 }} 个账号

@@ -686,22 +686,73 @@ body {
 
 .embedded-account-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 12px;
+  grid-template-columns: minmax(160px, 1fr) minmax(240px, 0.8fr);
+  gap: 16px;
   align-items: center;
+  border: 1px solid #e8edf5;
+  border-radius: 8px;
+  background: #fbfdff;
+  padding: 10px 12px;
 }
 
-.embedded-account-row strong {
+.embedded-account-main {
+  min-width: 0;
+}
+
+.embedded-account-name {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.embedded-account-name strong {
   display: block;
+  overflow: hidden;
   color: #0f172a;
   font-size: 14px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.embedded-account-row span {
+.embedded-account-error {
   display: block;
-  margin-top: 2px;
+  overflow: hidden;
+  margin-top: 6px;
+  color: #dc2626;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.embedded-account-values {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.embedded-account-values div {
+  min-width: 0;
+  border-radius: 6px;
+  background: #ffffff;
+  padding: 8px 10px;
+}
+
+.embedded-account-values span {
+  display: block;
   color: #64748b;
   font-size: 12px;
+}
+
+.embedded-account-values strong {
+  display: block;
+  overflow: hidden;
+  margin-top: 3px;
+  color: #0f172a;
+  font-size: 15px;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .embedded-empty {
@@ -774,5 +825,9 @@ body {
   .embedded-platform-controls {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .embedded-account-row {
+    grid-template-columns: 1fr;
   }
 }

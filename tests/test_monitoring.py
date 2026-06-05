@@ -16,6 +16,7 @@ from app.services.provider_strategy import (
     AccountBalanceResult,
     DiscoveredGroupRateResult,
     GroupRateResult,
+    KeyGroupMonitorResult,
     provider_registry,
 )
 
@@ -81,6 +82,9 @@ class FakeCatalogProvider:
                 rate_multiplier=0.8,
             ),
         ]
+
+    async def fetch_key_group_catalog(self, platform: RelayPlatform):
+        return [KeyGroupMonitorResult(external_group_id="7", name="codex")]
 
     async def fetch_group_rate(
         self,
@@ -207,6 +211,40 @@ def test_rate_monitor_records_key_group_from_stored_summaries(monkeypatch) -> No
         assert len(snapshots) == 1
         assert snapshots[0].group_monitor_id == group.id
         assert snapshots[0].rate_multiplier == 0.12
+    finally:
+        db.close()
+
+
+def test_rate_monitor_fetches_key_group_without_stored_summaries(monkeypatch) -> None:
+    monkeypatch.setitem(provider_registry._strategies, "fake-catalog", FakeCatalogProvider())
+    db = make_session()
+    try:
+        platform = RelayPlatform(
+            name="Fake Fresh Catalog",
+            base_url="https://example.com",
+            provider_type="fake-catalog",
+            rate_cron="*/5 * * * *",
+            balance_cron="*/10 * * * *",
+            status=PlatformStatus.unknown,
+        )
+        db.add(platform)
+        db.flush()
+        db.add(
+            PlatformAccountMonitor(
+                platform_id=platform.id,
+                name="Main",
+                external_account_id="user@example.com",
+                enabled=True,
+            )
+        )
+        db.commit()
+
+        asyncio.run(run_platform_rate_monitor(db, platform.id))
+
+        groups = db.scalars(select(PlatformGroupMonitor)).all()
+        assert len(groups) == 1
+        assert groups[0].external_group_id == "7"
+        assert groups[0].name == "codex"
     finally:
         db.close()
 

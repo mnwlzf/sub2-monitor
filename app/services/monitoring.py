@@ -14,6 +14,7 @@ from app.models.snapshot import (
 )
 from app.services.provider_strategy import (
     DiscoveredGroupRateResult,
+    KeyGroupMonitorResult,
     provider_registry,
 )
 
@@ -115,6 +116,13 @@ async def run_platform_rate_monitor(db: Session, platform_id: int) -> RelayPlatf
     strategy = provider_registry.get(platform.provider_type)
     errors: list[str] = []
     sync_key_group_monitors(db, platform)
+    try:
+        key_group_catalog = await strategy.fetch_key_group_catalog(platform)
+    except Exception as exc:  # noqa: BLE001
+        key_group_catalog = None
+        errors.append(f"key group catalog fetch failed: {exc}")
+    if key_group_catalog is not None:
+        sync_key_group_monitors(db, platform, key_group_catalog)
 
     discovered_catalog: list[DiscoveredGroupRateResult] | None
     try:
@@ -228,8 +236,16 @@ def update_platform_status(platform: RelayPlatform, errors: list[str]) -> None:
     platform.status = PlatformStatus.degraded if errors else PlatformStatus.healthy
 
 
-def sync_key_group_monitors(db: Session, platform: RelayPlatform) -> None:
-    candidates = key_group_monitor_candidates(platform.account_monitors)
+def sync_key_group_monitors(
+    db: Session,
+    platform: RelayPlatform,
+    key_groups: list[KeyGroupMonitorResult] | None = None,
+) -> None:
+    candidates = (
+        key_group_monitor_candidates_from_results(key_groups)
+        if key_groups is not None
+        else key_group_monitor_candidates(platform.account_monitors)
+    )
     if not candidates:
         return
 
@@ -273,6 +289,19 @@ def key_group_monitor_candidates(
                 continue
             name = (key_summary.get("group_name") or f"分组 {external_group_id}").strip()
             candidates.setdefault(external_group_id, name[:120] or f"分组 {external_group_id}")
+    return candidates
+
+
+def key_group_monitor_candidates_from_results(
+    key_groups: list[KeyGroupMonitorResult],
+) -> dict[str, str]:
+    candidates: dict[str, str] = {}
+    for key_group in key_groups:
+        external_group_id = key_group.external_group_id.strip()
+        if not external_group_id or external_group_id == "0":
+            continue
+        name = key_group.name.strip() or f"分组 {external_group_id}"
+        candidates.setdefault(external_group_id, name[:120])
     return candidates
 
 

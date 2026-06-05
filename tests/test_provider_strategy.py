@@ -120,6 +120,30 @@ def test_sub2api_group_catalog_applies_user_rate_overrides() -> None:
     assert groups[1].rate_multiplier == 0.5
 
 
+def test_sub2api_key_group_catalog_reads_key_group_bindings() -> None:
+    groups = Sub2ApiStrategy.parse_key_group_catalog(
+        {
+            "items": [
+                {
+                    "id": 101,
+                    "name": "prod-key",
+                    "group_id": 7,
+                    "group": {"id": 7, "name": "codex"},
+                },
+                {
+                    "id": 102,
+                    "name": "no-group",
+                    "group_id": None,
+                },
+            ]
+        }
+    )
+
+    assert len(groups) == 1
+    assert groups[0].external_group_id == "7"
+    assert groups[0].name == "codex"
+
+
 def test_sub2api_fetch_account_balance_logs_in_and_reads_user_usage(monkeypatch) -> None:
     class StubAsyncClient:
         def __init__(self, *args, **kwargs) -> None:

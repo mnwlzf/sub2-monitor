@@ -36,6 +36,12 @@ class DiscoveredGroupRateResult:
     error: str | None = None
 
 
+@dataclass(frozen=True)
+class KeyGroupMonitorResult:
+    external_group_id: str
+    name: str
+
+
 class ProviderStrategy(ABC):
     provider_type: str
     label: str
@@ -65,6 +71,13 @@ class ProviderStrategy(ABC):
         platform: RelayPlatform,
     ) -> list[DiscoveredGroupRateResult] | None:
         """Fetch all discoverable groups from a provider platform if supported."""
+        return None
+
+    async def fetch_key_group_catalog(
+        self,
+        platform: RelayPlatform,
+    ) -> list[KeyGroupMonitorResult] | None:
+        """Fetch groups currently bound to user API keys if supported."""
         return None
 
     def auth_headers(self, platform: RelayPlatform) -> dict[str, str]:
@@ -662,6 +675,33 @@ class Sub2ApiStrategy(ProviderStrategy):
 
         return self.parse_group_catalog_payload(groups_payload, rates_payload)
 
+    async def fetch_key_group_catalog(
+        self,
+        platform: RelayPlatform,
+    ) -> list[KeyGroupMonitorResult] | None:
+        account = self.first_login_account(platform)
+        if account is None:
+            return None
+
+        email = self.account_email(account)
+        password = decrypt_secret(account.password_encrypted)
+        if not email or not password:
+            return None
+
+        async with self.api_client(platform) as client:
+            _, login_error = await self.login(client, email, password)
+            if login_error:
+                raise ValueError(login_error)
+
+            keys_payload, keys_error = await self.get_sub2api_data(
+                client,
+                "keys?page=1&page_size=100",
+            )
+            if keys_error:
+                raise ValueError(keys_error)
+
+        return self.parse_key_group_catalog(keys_payload)
+
     def api_client(self, platform: RelayPlatform) -> httpx.AsyncClient:
         return httpx.AsyncClient(
             base_url=f"{self.api_base_url(platform)}/",
@@ -888,6 +928,20 @@ class Sub2ApiStrategy(ProviderStrategy):
                 }
             )
         return tuple(summaries)
+
+    @classmethod
+    def parse_key_group_catalog(cls, keys_payload: Any) -> list[KeyGroupMonitorResult]:
+        key_groups: dict[str, str] = {}
+        for summary in cls.api_key_summaries(keys_payload):
+            external_group_id = (summary.get("group_id") or "").strip()
+            if not external_group_id or external_group_id == "0":
+                continue
+            name = (summary.get("group_name") or f"分组 {external_group_id}").strip()
+            key_groups.setdefault(external_group_id, name or f"分组 {external_group_id}")
+        return [
+            KeyGroupMonitorResult(external_group_id=external_group_id, name=name)
+            for external_group_id, name in key_groups.items()
+        ]
 
     @staticmethod
     def number_from_value(value: Any) -> float | None:

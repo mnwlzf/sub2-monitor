@@ -899,8 +899,22 @@ body {
   gap: 12px;
 }
 
+.embedded-trends-section {
+  border: 1px solid #e8edf5;
+  border-radius: 8px;
+  background: #f8fbff;
+  padding: 12px;
+}
+
 .embedded-trend-panel {
   min-width: 0;
+}
+
+.embedded-trend-title {
+  margin-bottom: 8px;
+  color: #334155;
+  font-size: 12px;
+  font-weight: 700;
 }
 
 .embedded-trend-grid {

@@ -187,6 +187,81 @@
         </header>
 
         <div class="embedded-platform-body">
+          <div class="embedded-trends-section">
+            <div class="embedded-section-label">趋势分析</div>
+            <div class="embedded-trends">
+              <div class="embedded-trend-panel">
+                <div class="embedded-trend-title">余额变化</div>
+                <div class="embedded-trend-grid">
+                  <div
+                    v-for="series in platformBalanceHistory[row.id] ?? []"
+                    :key="series.account_id"
+                    class="embedded-trend-card"
+                  >
+                    <div class="embedded-trend-head">
+                      <span>{{ series.account_name }}</span>
+                      <strong>{{ latestBalance(series) }}</strong>
+                    </div>
+                    <svg class="embedded-trend-chart" viewBox="0 0 320 96" role="img">
+                      <polyline
+                        v-if="chartPath(balanceChartValues(series), 56)"
+                        :points="chartPath(balanceChartValues(series), 56)"
+                        class="trend-line balance-line"
+                      />
+                      <g v-for="point in chartPoints(balanceChartValues(series), 56)" :key="point.key">
+                        <circle :cx="point.x" :cy="point.y" r="2.2" class="trend-dot balance-dot" />
+                      </g>
+                    </svg>
+                    <div v-if="!hasChartData(balanceChartValues(series))" class="embedded-trend-empty">
+                      暂无历史
+                    </div>
+                  </div>
+                  <div
+                    v-if="!historyLoading && (platformBalanceHistory[row.id] ?? []).length === 0"
+                    class="embedded-empty"
+                  >
+                    暂无账号余额历史
+                  </div>
+                </div>
+              </div>
+
+              <div class="embedded-trend-panel">
+                <div class="embedded-trend-title">倍率变化</div>
+                <div class="embedded-trend-grid">
+                  <div
+                    v-for="series in platformRateHistory[row.id] ?? []"
+                    :key="series.group_id"
+                    class="embedded-trend-card"
+                  >
+                    <div class="embedded-trend-head">
+                      <span>{{ series.group_name }}</span>
+                      <strong>{{ latestRate(series) }}</strong>
+                    </div>
+                    <svg class="embedded-trend-chart" viewBox="0 0 320 96" role="img">
+                      <polyline
+                        v-if="chartPath(rateChartValues(series), 56)"
+                        :points="chartPath(rateChartValues(series), 56)"
+                        class="trend-line rate-line"
+                      />
+                      <g v-for="point in chartPoints(rateChartValues(series), 56)" :key="point.key">
+                        <circle :cx="point.x" :cy="point.y" r="2.2" class="trend-dot rate-dot" />
+                      </g>
+                    </svg>
+                    <div v-if="!hasChartData(rateChartValues(series))" class="embedded-trend-empty">
+                      暂无历史
+                    </div>
+                  </div>
+                  <div
+                    v-if="!historyLoading && (platformRateHistory[row.id] ?? []).length === 0"
+                    class="embedded-empty"
+                  >
+                    暂无分组倍率历史
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
           <div class="embedded-account-panel">
             <div class="embedded-section-label">账号概览</div>
             <div v-if="row.account_monitors.length > 0" class="embedded-account-list">
@@ -244,78 +319,6 @@
             <div>
               <span>最后采集</span>
               <strong>{{ formatTime(row.checked_at) }}</strong>
-            </div>
-          </div>
-
-          <div class="embedded-trends">
-            <div class="embedded-trend-panel">
-              <div class="embedded-section-label">余额变化</div>
-              <div class="embedded-trend-grid">
-                <div
-                  v-for="series in platformBalanceHistory[row.id] ?? []"
-                  :key="series.account_id"
-                  class="embedded-trend-card"
-                >
-                  <div class="embedded-trend-head">
-                    <span>{{ series.account_name }}</span>
-                    <strong>{{ latestBalance(series) }}</strong>
-                  </div>
-                  <svg class="embedded-trend-chart" viewBox="0 0 320 96" role="img">
-                    <polyline
-                      v-if="chartPath(balanceChartValues(series), 56)"
-                      :points="chartPath(balanceChartValues(series), 56)"
-                      class="trend-line balance-line"
-                    />
-                    <g v-for="point in chartPoints(balanceChartValues(series), 56)" :key="point.key">
-                      <circle :cx="point.x" :cy="point.y" r="2.2" class="trend-dot balance-dot" />
-                    </g>
-                  </svg>
-                  <div v-if="!hasChartData(balanceChartValues(series))" class="embedded-trend-empty">
-                    暂无历史
-                  </div>
-                </div>
-                <div
-                  v-if="!historyLoading && (platformBalanceHistory[row.id] ?? []).length === 0"
-                  class="embedded-empty"
-                >
-                  暂无账号余额历史
-                </div>
-              </div>
-            </div>
-
-            <div class="embedded-trend-panel">
-              <div class="embedded-section-label">倍率变化</div>
-              <div class="embedded-trend-grid">
-                <div
-                  v-for="series in platformRateHistory[row.id] ?? []"
-                  :key="series.group_id"
-                  class="embedded-trend-card"
-                >
-                  <div class="embedded-trend-head">
-                    <span>{{ series.group_name }}</span>
-                    <strong>{{ latestRate(series) }}</strong>
-                  </div>
-                  <svg class="embedded-trend-chart" viewBox="0 0 320 96" role="img">
-                    <polyline
-                      v-if="chartPath(rateChartValues(series), 56)"
-                      :points="chartPath(rateChartValues(series), 56)"
-                      class="trend-line rate-line"
-                    />
-                    <g v-for="point in chartPoints(rateChartValues(series), 56)" :key="point.key">
-                      <circle :cx="point.x" :cy="point.y" r="2.2" class="trend-dot rate-dot" />
-                    </g>
-                  </svg>
-                  <div v-if="!hasChartData(rateChartValues(series))" class="embedded-trend-empty">
-                    暂无历史
-                  </div>
-                </div>
-                <div
-                  v-if="!historyLoading && (platformRateHistory[row.id] ?? []).length === 0"
-                  class="embedded-empty"
-                >
-                  暂无分组倍率历史
-                </div>
-              </div>
             </div>
           </div>
         </div>

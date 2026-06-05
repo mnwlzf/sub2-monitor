@@ -425,75 +425,95 @@
               </div>
               <span>分组趋势图</span>
             </div>
-            <div class="embedded-trend-grid">
-              <div v-if="rateHistoryVisibleSeries(row.id).length > 0">
+            <div v-if="rateHistoryVisibleSeries(row.id).length > 0" class="embedded-rate-platform-card">
+              <div class="embedded-rate-legend">
                 <div
                   v-for="series in rateHistoryVisibleSeries(row.id)"
                   :key="series.external_group_id"
-                  class="embedded-trend-card"
+                  class="embedded-rate-legend-item"
                   :class="{ highlighted: series.is_configured }"
                 >
-                  <div class="embedded-trend-head">
-                    <span>{{ series.group_name }}</span>
-                    <div class="embedded-trend-actions">
-                      <strong>{{ latestEffectiveRate(series) }}</strong>
-                      <el-button
-                        :icon="Close"
-                        circle
-                        size="small"
-                        title="取消展示"
-                        @click="toggleRateSeries(row.id, series.external_group_id)"
-                      />
-                    </div>
+                  <div class="embedded-rate-legend-main">
+                    <strong>{{ series.group_name }}</strong>
+                    <span v-if="series.description">{{ series.description }}</span>
                   </div>
-                  <div v-if="series.description" class="embedded-trend-desc">{{ series.description }}</div>
-                  <svg class="embedded-trend-chart" viewBox="0 0 340 132" role="img">
-                    <g v-for="tick in chartYTicks(effectiveRateChartValues(series), 66)" :key="tick.key">
-                      <line :x1="chartLeft" :x2="chartRight" :y1="tick.y" :y2="tick.y" class="chart-grid-line" />
-                      <text :x="chartLeft - 7" :y="tick.y + 4" class="chart-y-label" text-anchor="end">
-                        {{ tick.label }}
-                      </text>
-                    </g>
-                    <line :x1="chartLeft" :x2="chartLeft" :y1="chartTop" :y2="chartBottom(66)" class="chart-axis-line" />
-                    <line
-                      :x1="chartLeft"
-                      :x2="chartRight"
-                      :y1="chartBottom(66)"
-                      :y2="chartBottom(66)"
-                      class="chart-axis-line"
+                  <div class="embedded-rate-legend-metrics">
+                    <strong>{{ latestEffectiveRate(series) }}</strong>
+                    <el-button
+                      :icon="Close"
+                      circle
+                      size="small"
+                      title="取消展示"
+                      @click="toggleRateSeries(row.id, series.external_group_id)"
                     />
-                    <polyline
-                      v-if="chartPath(effectiveRateChartValues(series), 66)"
-                      :points="chartPath(effectiveRateChartValues(series), 66)"
-                      class="trend-line rate-line"
-                    />
-                    <g v-for="point in rateChartPoints(series, 66)" :key="point.key">
-                      <circle :cx="point.x" :cy="point.y" r="3" class="trend-dot rate-dot" />
-                      <title>{{ point.tooltip }}</title>
-                    </g>
-                    <text
-                      v-for="tick in chartXLabels(series.points.map((point) => point.at), 66, 'date')"
-                      :key="tick.key"
-                      :x="tick.x"
-                      :y="tick.y"
-                      class="chart-x-label"
-                      text-anchor="middle"
-                    >
-                      {{ tick.label }}
-                    </text>
-                  </svg>
-                  <div class="history-axis">
-                    <span>{{ firstDateLabel(series.points[0]?.at) }}</span>
-                    <span>{{ series.group_name }}</span>
-                    <span>{{ firstDateLabel(lastRatePoint(series)?.at) }}</span>
-                  </div>
-                  <div v-if="!hasChartData(effectiveRateChartValues(series))" class="embedded-trend-empty">
-                    暂无历史
                   </div>
                 </div>
               </div>
-              <div v-else class="embedded-empty">暂无分组趋势</div>
+              <svg
+                class="embedded-rate-chart"
+                viewBox="0 0 340 180"
+                role="img"
+              >
+                <g v-for="tick in chartYTicks(platformRateChartValues(row.id), 120)" :key="tick.key">
+                  <line :x1="chartLeft" :x2="chartRight" :y1="tick.y" :y2="tick.y" class="chart-grid-line" />
+                  <text :x="chartLeft - 7" :y="tick.y + 4" class="chart-y-label" text-anchor="end">
+                    {{ tick.label }}
+                  </text>
+                </g>
+                <line :x1="chartLeft" :x2="chartLeft" :y1="chartTop" :y2="chartBottom(120)" class="chart-axis-line" />
+                <line
+                  :x1="chartLeft"
+                  :x2="chartRight"
+                  :y1="chartBottom(120)"
+                  :y2="chartBottom(120)"
+                  class="chart-axis-line"
+                />
+                <template
+                  v-for="(series, index) in rateHistoryVisibleSeries(row.id)"
+                  :key="series.external_group_id"
+                >
+                  <polyline
+                    v-if="chartPathWithBounds(effectiveRateChartValues(series), platformRateChartBounds(row.id), 120)"
+                    :points="chartPathWithBounds(effectiveRateChartValues(series), platformRateChartBounds(row.id), 120)"
+                    class="trend-line rate-line"
+                    :style="{ stroke: seriesColor(index) }"
+                  />
+                  <g
+                    v-for="point in platformRateSeriesPoints(series, platformRateChartBounds(row.id), 120)"
+                    :key="point.key"
+                  >
+                    <circle
+                      :cx="point.x"
+                      :cy="point.y"
+                      r="3"
+                      class="trend-dot rate-dot"
+                      :style="{ fill: seriesColor(index) }"
+                    />
+                    <title>{{ point.tooltip }}</title>
+                  </g>
+                </template>
+                <text
+                  v-for="tick in chartXLabels(
+                    platformRatePrimarySeries(row.id)?.points.map((point) => point.at) ?? [],
+                    120,
+                    'date',
+                  )"
+                  :key="tick.key"
+                  :x="tick.x"
+                  :y="tick.y"
+                  class="chart-x-label"
+                  text-anchor="middle"
+                >
+                  {{ tick.label }}
+                </text>
+              </svg>
+              <div class="history-axis">
+                <span>{{ platformRateFirstDate(row.id) }}</span>
+                <span>分组趋势</span>
+                <span>{{ platformRateLastDate(row.id) }}</span>
+              </div>
             </div>
+            <div v-else class="embedded-empty">暂无分组趋势</div>
           </article>
         </div>
 
@@ -1375,6 +1395,86 @@ function uniqueDiscoveredGroupRates(rows: DiscoveredGroupRate[]) {
 function rateHistoryVisibleSeries(platformId: number) {
   const hidden = new Set(hiddenRateSeries.value[platformId] ?? [])
   return (platformRateHistory.value[platformId] ?? []).filter((series) => !hidden.has(series.external_group_id))
+}
+
+function platformRatePrimarySeries(platformId: number) {
+  return rateHistoryVisibleSeries(platformId)[0] ?? null
+}
+
+function platformRateChartValues(platformId: number) {
+  return rateHistoryVisibleSeries(platformId).flatMap((series) => effectiveRateChartValues(series))
+}
+
+function platformRateChartBounds(platformId: number) {
+  return chartBounds(platformRateChartValues(platformId))
+}
+
+function platformRateSeriesPoints(
+  series: GroupRateHistorySeries,
+  bounds: { min: number; max: number; range: number } | null,
+  chartHeight = 76,
+) {
+  return chartPointsWithBounds(effectiveRateChartValues(series), bounds, chartHeight).map((point) => {
+    const raw = series.points[point.index]?.rate_multiplier
+    return {
+      ...point,
+      tooltip: `${series.group_name}\n时间: ${chartTimeLabel(series.points[point.index]?.at)}\n实际倍率: ${formatMultiplier(point.value)}\n原始倍率: ${formatMultiplier(raw)}`,
+    }
+  })
+}
+
+function chartPointsWithBounds(
+  values: Array<number | null>,
+  bounds: { min: number; max: number; range: number } | null,
+  chartHeight = 76,
+) {
+  if (!bounds) {
+    return []
+  }
+  const width = chartRight - chartLeft
+  const step = values.length > 1 ? width / (values.length - 1) : width
+
+  return values
+    .map((value, index) => {
+      if (value === null) {
+        return null
+      }
+      return {
+        key: `${index}-${value}`,
+        x: chartLeft + step * index,
+        y: chartTop + chartHeight - ((value - bounds.min) / bounds.range) * chartHeight,
+        value,
+        index,
+      }
+    })
+    .filter(
+      (point): point is { key: string; x: number; y: number; value: number; index: number } =>
+        point !== null,
+    )
+}
+
+function chartPathWithBounds(
+  values: Array<number | null>,
+  bounds: { min: number; max: number; range: number } | null,
+  chartHeight = 76,
+) {
+  return chartPointsWithBounds(values, bounds, chartHeight)
+    .map((point) => `${point.x},${point.y}`)
+    .join(' ')
+}
+
+function seriesColor(index: number) {
+  const palette = ['#2563eb', '#059669', '#d97706', '#7c3aed', '#dc2626', '#0891b2', '#db2777', '#65a30d']
+  return palette[index % palette.length]
+}
+
+function platformRateFirstDate(platformId: number) {
+  return firstDateLabel(platformRatePrimarySeries(platformId)?.points[0]?.at)
+}
+
+function platformRateLastDate(platformId: number) {
+  const series = platformRatePrimarySeries(platformId)
+  return firstDateLabel(series?.points[series.points.length - 1]?.at)
 }
 
 function toggleRateSeries(platformId: number, externalGroupId: string) {

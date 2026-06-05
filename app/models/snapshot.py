@@ -74,3 +74,21 @@ class DiscoveredGroupRateSnapshot(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
 
     platform = relationship("RelayPlatform")
+
+
+class DiscoveredChannelRateSnapshot(Base):
+    __tablename__ = "discovered_channel_rate_snapshots"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    platform_id: Mapped[int] = mapped_column(ForeignKey("relay_platforms.id", ondelete="CASCADE"), index=True)
+    external_channel_id: Mapped[str] = mapped_column(String(120), index=True)
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text)
+    base_url: Mapped[str | None] = mapped_column(Text)
+    status: Mapped[str | None] = mapped_column(String(64))
+    rate_multiplier: Mapped[float | None] = mapped_column(Float)
+    model_rates_json: Mapped[str | None] = mapped_column(Text)
+    error_message: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+
+    platform = relationship("RelayPlatform")

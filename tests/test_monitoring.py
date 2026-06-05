@@ -10,10 +10,11 @@ from app.api.platforms import build_account_balance_points
 from app.core.database import Base
 from app.models.monitor import PlatformAccountMonitor, PlatformGroupMonitor
 from app.models.platform import PlatformStatus, RelayPlatform
-from app.models.snapshot import GroupRateSnapshot
+from app.models.snapshot import DiscoveredChannelRateSnapshot, GroupRateSnapshot
 from app.services.monitoring import run_platform_balance_monitor, run_platform_rate_monitor
 from app.services.provider_strategy import (
     AccountBalanceResult,
+    DiscoveredChannelRateResult,
     DiscoveredGroupRateResult,
     GroupRateResult,
     KeyGroupMonitorResult,
@@ -92,6 +93,30 @@ class FakeCatalogProvider:
         group: PlatformGroupMonitor,
     ) -> GroupRateResult:
         return GroupRateResult(rate_multiplier=0.99)
+
+
+class FakeChannelCatalogProvider:
+    async def fetch_channel_catalog(self, platform: RelayPlatform):
+        return [
+            DiscoveredChannelRateResult(
+                external_channel_id="1",
+                name="OpenAI Official",
+                base_url="https://api.openai.com",
+                status="启用",
+                rate_multiplier=2.5,
+                model_rates={"gpt-4o": 2.0, "gpt-4o-mini": 3.0},
+            )
+        ]
+
+    async def fetch_group_catalog(self, platform: RelayPlatform):
+        return None
+
+    async def fetch_group_rate(
+        self,
+        platform: RelayPlatform,
+        group: PlatformGroupMonitor,
+    ) -> GroupRateResult:
+        return GroupRateResult()
 
 
 def make_session():
@@ -245,6 +270,41 @@ def test_rate_monitor_fetches_key_group_without_stored_summaries(monkeypatch) ->
         assert len(groups) == 1
         assert groups[0].external_group_id == "7"
         assert groups[0].name == "codex"
+    finally:
+        db.close()
+
+
+def test_rate_monitor_persists_discovered_channel_rates(monkeypatch) -> None:
+    monkeypatch.setitem(provider_registry._strategies, "fake-channel-catalog", FakeChannelCatalogProvider())
+    db = make_session()
+    try:
+        platform = RelayPlatform(
+            name="Fake Channel Catalog",
+            base_url="https://example.com",
+            provider_type="fake-channel-catalog",
+            rate_cron="*/5 * * * *",
+            balance_cron="*/10 * * * *",
+            status=PlatformStatus.unknown,
+        )
+        db.add(platform)
+        db.commit()
+
+        asyncio.run(run_platform_rate_monitor(db, platform.id))
+
+        refreshed = db.get(RelayPlatform, platform.id)
+        assert refreshed is not None
+        assert len(refreshed.discovered_channel_rates) == 1
+        channel = refreshed.discovered_channel_rates[0]
+        assert channel.external_channel_id == "1"
+        assert channel.name == "OpenAI Official"
+        assert channel.rate_multiplier == 2.5
+        assert channel.model_rates == {"gpt-4o": 2.0, "gpt-4o-mini": 3.0}
+
+        snapshots = db.scalars(select(DiscoveredChannelRateSnapshot)).all()
+        assert len(snapshots) == 1
+        assert snapshots[0].external_channel_id == "1"
+        assert snapshots[0].rate_multiplier == 2.5
+        assert '"gpt-4o": 2.0' in (snapshots[0].model_rates_json or "")
     finally:
         db.close()
 

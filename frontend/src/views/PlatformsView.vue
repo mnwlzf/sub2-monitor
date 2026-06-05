@@ -403,6 +403,49 @@
                 </div>
                 <div v-else class="embedded-empty">暂无接口分组</div>
               </div>
+
+              <div v-if="row.provider_type === 'newapi'" class="embedded-group-rate-panel">
+                <div class="embedded-section-label">渠道倍率速览</div>
+                <div
+                  v-if="overviewDiscoveredChannelRates(row.discovered_channel_rates).length > 0"
+                  class="embedded-group-rate-list"
+                >
+                  <div
+                    v-for="channel in overviewDiscoveredChannelRates(row.discovered_channel_rates)"
+                    :key="channel.external_channel_id"
+                    class="embedded-group-rate-row"
+                  >
+                    <div class="embedded-group-rate-main">
+                      <div class="embedded-group-rate-title">
+                        <strong>{{ channel.name }}</strong>
+                        <div class="embedded-group-rate-tags">
+                          <el-tag v-if="channel.is_highest" size="small" type="success" effect="light">最高</el-tag>
+                          <el-tag v-if="channel.is_lowest" size="small" type="info" effect="light">最低</el-tag>
+                          <el-tag v-if="channel.status" size="small" type="info" effect="light">
+                            {{ channel.status }}
+                          </el-tag>
+                        </div>
+                      </div>
+                      <span>渠道 {{ channel.external_channel_id }}</span>
+                      <span v-if="channel.base_url" class="embedded-group-rate-desc">{{ channel.base_url }}</span>
+                      <span v-if="channel.description" class="embedded-group-rate-desc">
+                        {{ channel.description }}
+                      </span>
+                    </div>
+                    <div class="embedded-group-rate-values">
+                      <div>
+                        <span>平均倍率</span>
+                        <strong>{{ formatMultiplier(channel.rate_multiplier) }}</strong>
+                      </div>
+                      <div>
+                        <span>模型数</span>
+                        <strong>{{ channelModelRateCount(channel) }}</strong>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <div v-else class="embedded-empty">暂无渠道倍率</div>
+              </div>
             </div>
           </article>
           <el-empty v-if="!loading && platforms.length === 0" description="暂无平台" />
@@ -644,6 +687,60 @@
           <el-empty v-else description="暂无接口分组" />
         </section>
 
+        <section v-if="detail.provider_type === 'newapi'">
+          <div class="monitor-section-title">
+            <div>
+              <h3>渠道倍率</h3>
+              <p>展示 New API 渠道同步接口返回的模型倍率，平均倍率按已返回模型计算。</p>
+            </div>
+          </div>
+          <div
+            v-if="uniqueDiscoveredChannelRates(detail.discovered_channel_rates).length > 0"
+            class="embedded-group-rate-list"
+          >
+            <div
+              v-for="channel in uniqueDiscoveredChannelRates(detail.discovered_channel_rates)"
+              :key="channel.external_channel_id"
+              class="embedded-group-rate-row channel-rate-row"
+            >
+              <div class="embedded-group-rate-main">
+                <div class="embedded-group-rate-title">
+                  <strong>{{ channel.name }}</strong>
+                  <div class="embedded-group-rate-tags">
+                    <el-tag v-if="channel.status" size="small" type="info" effect="light">
+                      {{ channel.status }}
+                    </el-tag>
+                  </div>
+                </div>
+                <span>渠道 {{ channel.external_channel_id }}</span>
+                <span v-if="channel.base_url" class="embedded-group-rate-desc">{{ channel.base_url }}</span>
+                <span v-if="channel.description" class="embedded-group-rate-desc">{{ channel.description }}</span>
+                <div v-if="channelModelRateEntries(channel).length > 0" class="channel-model-rate-list">
+                  <span
+                    v-for="[model, rate] in channelModelRateEntries(channel)"
+                    :key="`${channel.external_channel_id}:${model}`"
+                    class="channel-model-rate"
+                  >
+                    <strong>{{ model }}</strong>
+                    <em>{{ formatMultiplier(rate) }}</em>
+                  </span>
+                </div>
+              </div>
+              <div class="embedded-group-rate-values">
+                <div>
+                  <span>平均倍率</span>
+                  <strong>{{ formatMultiplier(channel.rate_multiplier) }}</strong>
+                </div>
+                <div>
+                  <span>模型数</span>
+                  <strong>{{ channelModelRateCount(channel) }}</strong>
+                </div>
+              </div>
+            </div>
+          </div>
+          <el-empty v-else description="暂无渠道倍率" />
+        </section>
+
         <section>
           <div class="monitor-section-title">
             <div>
@@ -767,6 +864,7 @@ import {
   type AccountMonitorPayload,
   type AccountBalanceHistorySeries,
   type DashboardStats,
+  type DiscoveredChannelRate,
   type DiscoveredGroupRate,
   type GroupRateHistorySeries,
   type GroupMonitorPayload,
@@ -1261,6 +1359,14 @@ function uniqueDiscoveredGroupRates(rows: DiscoveredGroupRate[]) {
   return Array.from(seen.values())
 }
 
+function uniqueDiscoveredChannelRates(rows: DiscoveredChannelRate[]) {
+  const seen = new Map<string, DiscoveredChannelRate>()
+  for (const row of rows) {
+    seen.set(row.external_channel_id, row)
+  }
+  return Array.from(seen.values())
+}
+
 function rateHistoryVisibleSeries(platformId: number) {
   return platformRateHistory.value[platformId] ?? []
 }
@@ -1279,6 +1385,11 @@ function platformRateLastDate(platformId: number) {
 }
 
 type OverviewDiscoveredGroupRate = DiscoveredGroupRate & {
+  is_highest: boolean
+  is_lowest: boolean
+}
+
+type OverviewDiscoveredChannelRate = DiscoveredChannelRate & {
   is_highest: boolean
   is_lowest: boolean
 }
@@ -1307,6 +1418,40 @@ function overviewDiscoveredGroupRates(rows: DiscoveredGroupRate[]): OverviewDisc
     is_highest: row.external_group_id === highest?.external_group_id,
     is_lowest: row.external_group_id === lowest?.external_group_id,
   }))
+}
+
+function overviewDiscoveredChannelRates(rows: DiscoveredChannelRate[]): OverviewDiscoveredChannelRate[] {
+  const unique = uniqueDiscoveredChannelRates(rows)
+  const ranked = unique
+    .filter((row) => row.rate_multiplier !== null)
+    .slice()
+    .sort((a, b) => (a.rate_multiplier ?? 0) - (b.rate_multiplier ?? 0))
+  const highest = ranked[ranked.length - 1]
+  const lowest = ranked[0]
+  const selected = [highest, lowest].filter(
+    (row): row is DiscoveredChannelRate => row !== undefined,
+  )
+  const fallback = selected.length > 0 ? selected : unique.slice(0, 2)
+  const seen = new Set<string>()
+  return fallback.filter((row) => {
+    if (seen.has(row.external_channel_id)) {
+      return false
+    }
+    seen.add(row.external_channel_id)
+    return true
+  }).map((row) => ({
+    ...row,
+    is_highest: row.external_channel_id === highest?.external_channel_id,
+    is_lowest: row.external_channel_id === lowest?.external_channel_id,
+  }))
+}
+
+function channelModelRateEntries(row: DiscoveredChannelRate) {
+  return Object.entries(row.model_rates ?? {}).slice(0, 8)
+}
+
+function channelModelRateCount(row: DiscoveredChannelRate) {
+  return Object.keys(row.model_rates ?? {}).length
 }
 
 function formatTime(value: string | null) {

@@ -144,10 +144,27 @@ export interface DiscoveredGroupRate {
   updated_at: string
 }
 
+export interface DiscoveredChannelRate {
+  id: number
+  platform_id: number
+  external_channel_id: string
+  name: string
+  description: string | null
+  base_url: string | null
+  status: string | null
+  rate_multiplier: number | null
+  model_rates: Record<string, number>
+  last_error: string | null
+  checked_at: string | null
+  created_at: string
+  updated_at: string
+}
+
 export interface PlatformDetail extends RelayPlatform {
   account_monitors: AccountMonitor[]
   group_monitors: GroupMonitor[]
   discovered_group_rates: DiscoveredGroupRate[]
+  discovered_channel_rates: DiscoveredChannelRate[]
 }
 
 export interface AccountMonitorPayload {
@@ -176,6 +193,7 @@ export interface MonitorRunResult {
   platform: RelayPlatform
   account_monitors: AccountMonitor[]
   group_monitors: GroupMonitor[]
+  discovered_channel_rates: DiscoveredChannelRate[]
 }
 
 export interface AccountBalanceHistoryPoint {

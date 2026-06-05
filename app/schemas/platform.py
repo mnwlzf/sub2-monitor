@@ -228,10 +228,29 @@ class DiscoveredGroupRateResponse(BaseModel):
     updated_at: datetime
 
 
+class DiscoveredChannelRateResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    platform_id: int
+    external_channel_id: str
+    name: str
+    description: str | None
+    base_url: str | None
+    status: str | None
+    rate_multiplier: float | None
+    model_rates: dict[str, float]
+    last_error: str | None
+    checked_at: datetime | None
+    created_at: datetime
+    updated_at: datetime
+
+
 class PlatformDetailResponse(PlatformResponse):
     account_monitors: list[AccountMonitorResponse]
     group_monitors: list[GroupMonitorResponse]
     discovered_group_rates: list[DiscoveredGroupRateResponse]
+    discovered_channel_rates: list[DiscoveredChannelRateResponse]
 
     @model_validator(mode="before")
     @classmethod
@@ -258,6 +277,7 @@ class MonitorRunResponse(BaseModel):
     platform: PlatformResponse
     account_monitors: list[AccountMonitorResponse]
     group_monitors: list[GroupMonitorResponse]
+    discovered_channel_rates: list[DiscoveredChannelRateResponse] = Field(default_factory=list)
 
 
 class AccountBalanceHistoryPoint(BaseModel):

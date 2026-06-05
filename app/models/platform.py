@@ -66,6 +66,11 @@ class RelayPlatform(Base):
         back_populates="platform",
         cascade="all, delete-orphan",
     )
+    discovered_channel_rates = relationship(
+        "PlatformDiscoveredChannelRate",
+        back_populates="platform",
+        cascade="all, delete-orphan",
+    )
 
     @property
     def has_api_key(self) -> bool:

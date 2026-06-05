@@ -1,3 +1,4 @@
+import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Any
@@ -37,6 +38,18 @@ class DiscoveredGroupRateResult:
 
 
 @dataclass(frozen=True)
+class DiscoveredChannelRateResult:
+    external_channel_id: str
+    name: str
+    description: str | None = None
+    base_url: str | None = None
+    status: str | None = None
+    rate_multiplier: float | None = None
+    model_rates: dict[str, float] | None = None
+    error: str | None = None
+
+
+@dataclass(frozen=True)
 class KeyGroupMonitorResult:
     external_group_id: str
     name: str
@@ -71,6 +84,13 @@ class ProviderStrategy(ABC):
         platform: RelayPlatform,
     ) -> list[DiscoveredGroupRateResult] | None:
         """Fetch all discoverable groups from a provider platform if supported."""
+        return None
+
+    async def fetch_channel_catalog(
+        self,
+        platform: RelayPlatform,
+    ) -> list[DiscoveredChannelRateResult] | None:
+        """Fetch all discoverable channel rates from a provider platform if supported."""
         return None
 
     async def fetch_key_group_catalog(
@@ -964,6 +984,10 @@ class NewApiStrategy(ProviderStrategy):
     provider_type = "newapi"
     label = "New API"
     description = "面向 New API 部署实例的监控策略骨架"
+    RATIO_SYNC_CHANNELS_ENDPOINT = "api/ratio_sync/channels"
+    RATIO_SYNC_FETCH_ENDPOINT = "api/ratio_sync/fetch"
+    CHANNEL_LIST_ENDPOINT = "api/channel/"
+    CHANNEL_ID_PATTERN = re.compile(r"\(([^()]+)\)\s*$")
 
     def __init__(
         self,
@@ -972,6 +996,67 @@ class NewApiStrategy(ProviderStrategy):
     ) -> None:
         super().__init__(timeout_seconds)
         self.site_strategies = site_strategies or newapi_site_strategy_registry
+
+    async def fetch_channel_catalog(
+        self,
+        platform: RelayPlatform,
+    ) -> list[DiscoveredChannelRateResult] | None:
+        headers = self.admin_headers(platform)
+        if "New-Api-User" not in headers:
+            raise ValueError("newapi channel rate monitoring requires a numeric root user id in account monitor")
+        async with httpx.AsyncClient(
+            base_url=self.site_url(platform),
+            headers=headers,
+            timeout=self.timeout_seconds,
+        ) as client:
+            channels_response = await client.get(self.RATIO_SYNC_CHANNELS_ENDPOINT)
+            channels_payload = self.safe_json(channels_response)
+            if channels_response.status_code >= 400:
+                raise ValueError(
+                    f"newapi ratio sync channels returned HTTP {channels_response.status_code}",
+                )
+            if self.response_failed(channels_payload):
+                raise ValueError(self.response_message(channels_payload) or "newapi ratio sync channels failed")
+
+            admin_channels_payload: Any | None = None
+            try:
+                admin_response = await client.get(self.CHANNEL_LIST_ENDPOINT)
+            except httpx.HTTPError:
+                admin_response = None
+            if admin_response is not None and admin_response.status_code < 400:
+                admin_payload = self.safe_json(admin_response)
+                if not self.response_failed(admin_payload):
+                    admin_channels_payload = admin_payload
+
+            channel_ids = [
+                int(channel_id)
+                for channel_id in self.channel_ids_from_payload(channels_payload)
+                if channel_id.isdigit() and int(channel_id) > 0
+            ]
+            if not channel_ids:
+                return self.parse_channel_rate_results(
+                    channels_payload,
+                    admin_channels_payload=admin_channels_payload,
+                )
+
+            ratio_payload: Any | None = None
+            ratio_error: str | None = None
+            ratio_response = await client.post(
+                self.RATIO_SYNC_FETCH_ENDPOINT,
+                json={"channel_ids": channel_ids, "timeout": int(self.timeout_seconds)},
+            )
+            ratio_payload = self.safe_json(ratio_response)
+            if ratio_response.status_code >= 400:
+                ratio_error = f"newapi ratio sync fetch returned HTTP {ratio_response.status_code}"
+            elif self.response_failed(ratio_payload):
+                ratio_error = self.response_message(ratio_payload) or "newapi ratio sync fetch failed"
+
+        return self.parse_channel_rate_results(
+            channels_payload,
+            ratio_payload=ratio_payload,
+            admin_channels_payload=admin_channels_payload,
+            ratio_error=ratio_error,
+        )
 
     async def fetch_account_balance(
         self,
@@ -995,6 +1080,270 @@ class NewApiStrategy(ProviderStrategy):
     ) -> list[DiscoveredGroupRateResult] | None:
         strategy = self.site_strategies.get(platform.site_strategy)
         return await strategy.fetch_group_catalog(self, platform)
+
+    def admin_headers(self, platform: RelayPlatform) -> dict[str, str]:
+        headers = self.auth_headers(platform)
+        user_id = self.management_user_id(platform)
+        if user_id:
+            headers["New-Api-User"] = user_id
+        return headers
+
+    @staticmethod
+    def management_user_id(platform: RelayPlatform) -> str | None:
+        for account in platform.account_monitors:
+            if not account.enabled:
+                continue
+            candidate = (account.external_account_id or account.username or "").strip()
+            if candidate.isdigit():
+                return candidate
+        return None
+
+    @staticmethod
+    def site_url(platform: RelayPlatform) -> str:
+        parts = urlsplit(platform.base_url)
+        if not parts.scheme or not parts.netloc:
+            return platform.base_url.rstrip("/") + "/"
+        path = YunjinNewApiSiteStrategy.site_base_path(parts.path)
+        return urlunsplit((parts.scheme, parts.netloc, path, "", "")).rstrip("/") + "/"
+
+    @staticmethod
+    def safe_json(response: httpx.Response) -> Any:
+        if not response.headers.get("content-type", "").lower().startswith("application/json"):
+            return {}
+        try:
+            return response.json()
+        except ValueError:
+            return {}
+
+    @staticmethod
+    def response_failed(payload: Any) -> bool:
+        return isinstance(payload, dict) and payload.get("success") is False
+
+    @staticmethod
+    def response_message(payload: Any) -> str | None:
+        if not isinstance(payload, dict):
+            return None
+        message = payload.get("message") or payload.get("msg") or payload.get("error")
+        return str(message) if message else None
+
+    @classmethod
+    def unwrap_payload(cls, payload: Any) -> Any:
+        if isinstance(payload, dict) and "data" in payload:
+            return payload["data"]
+        return payload
+
+    @classmethod
+    def channel_ids_from_payload(cls, payload: Any) -> list[str]:
+        return [
+            channel_id
+            for channel_id in (
+                cls.channel_id_from_raw(channel.get("id"))
+                for channel in cls.parse_channel_catalog_payload(payload)
+            )
+            if channel_id
+        ]
+
+    @classmethod
+    def parse_channel_rate_results(
+        cls,
+        channels_payload: Any,
+        ratio_payload: Any | None = None,
+        admin_channels_payload: Any | None = None,
+        ratio_error: str | None = None,
+    ) -> list[DiscoveredChannelRateResult]:
+        channels = cls.parse_channel_catalog_payload(channels_payload)
+        admin_channels = {
+            channel_id: channel
+            for channel in cls.parse_channel_catalog_payload(admin_channels_payload)
+            if (channel_id := cls.channel_id_from_raw(channel.get("id")))
+        }
+        model_rates_by_channel = cls.parse_ratio_sync_model_ratios(ratio_payload)
+
+        results: list[DiscoveredChannelRateResult] = []
+        for channel in channels:
+            channel_id = cls.channel_id_from_raw(channel.get("id"))
+            if not channel_id:
+                continue
+            merged_channel = dict(admin_channels.get(channel_id, {}))
+            merged_channel.update(channel)
+            model_rates = model_rates_by_channel.get(channel_id, {})
+            rate_multiplier = (
+                sum(model_rates.values()) / len(model_rates)
+                if model_rates
+                else None
+            )
+            name = cls.channel_value(merged_channel, ("name", "Name")) or f"渠道 {channel_id}"
+            results.append(
+                DiscoveredChannelRateResult(
+                    external_channel_id=channel_id,
+                    name=str(name)[:120],
+                    description=cls.channel_description(merged_channel, model_rates),
+                    base_url=cls.string_value(cls.channel_value(merged_channel, ("base_url", "BaseURL", "baseUrl"))),
+                    status=cls.channel_status_label(cls.channel_value(merged_channel, ("status", "Status"))),
+                    rate_multiplier=rate_multiplier,
+                    model_rates=model_rates,
+                    error=ratio_error,
+                )
+            )
+        return results
+
+    @classmethod
+    def parse_channel_catalog_payload(cls, payload: Any) -> list[dict[str, Any]]:
+        payload = cls.unwrap_payload(payload)
+        if isinstance(payload, list):
+            return [item for item in payload if isinstance(item, dict)]
+        if not isinstance(payload, dict):
+            return []
+        for key in ("channels", "items", "list", "rows", "data"):
+            value = payload.get(key)
+            if isinstance(value, list):
+                return [item for item in value if isinstance(item, dict)]
+            if isinstance(value, dict):
+                nested = cls.parse_channel_catalog_payload(value)
+                if nested:
+                    return nested
+        if all(isinstance(item, dict) for item in payload.values()):
+            return [item for item in payload.values() if isinstance(item, dict)]
+        return []
+
+    @classmethod
+    def parse_ratio_sync_model_ratios(cls, ratio_payload: Any | None) -> dict[str, dict[str, float]]:
+        data = cls.unwrap_payload(ratio_payload)
+        if not isinstance(data, dict):
+            return {}
+        differences = data.get("differences")
+        if not isinstance(differences, dict):
+            return {}
+
+        rates: dict[str, dict[str, float]] = {}
+        if isinstance(differences.get("model_ratio"), dict):
+            for model_name, ratio_item in differences["model_ratio"].items():
+                cls.collect_model_ratio(rates, str(model_name), ratio_item)
+            return rates
+
+        for model_name, ratio_types in differences.items():
+            if not isinstance(ratio_types, dict):
+                continue
+            ratio_item = ratio_types.get("model_ratio")
+            if ratio_item is None:
+                continue
+            cls.collect_model_ratio(rates, str(model_name), ratio_item)
+        return rates
+
+    @classmethod
+    def collect_model_ratio(
+        cls,
+        rates: dict[str, dict[str, float]],
+        model_name: str,
+        ratio_item: Any,
+    ) -> None:
+        if not isinstance(ratio_item, dict):
+            return
+        current = cls.number_from_value(ratio_item.get("current"))
+        upstreams = ratio_item.get("upstreams")
+        if not isinstance(upstreams, dict):
+            upstreams = {
+                key: value
+                for key, value in ratio_item.items()
+                if cls.channel_id_from_label(str(key)) is not None
+            }
+        for label, raw_value in upstreams.items():
+            channel_id = cls.channel_id_from_label(str(label))
+            if not channel_id:
+                continue
+            value = (
+                current
+                if isinstance(raw_value, str) and raw_value.lower() == "same"
+                else cls.number_from_value(raw_value)
+            )
+            if value is None:
+                continue
+            rates.setdefault(channel_id, {})[model_name] = value
+
+    @classmethod
+    def channel_description(cls, channel: dict[str, Any], model_rates: dict[str, float]) -> str | None:
+        parts: list[str] = []
+        channel_type = cls.channel_value(channel, ("type", "Type"))
+        if channel_type is not None:
+            parts.append(f"类型: {channel_type}")
+        groups = cls.channel_value(channel, ("group", "Group"))
+        if groups:
+            parts.append(f"分组: {cls.join_channel_value(groups)}")
+        models = cls.channel_value(channel, ("models", "Models"))
+        if models:
+            parts.append(f"模型: {cls.join_channel_value(models, limit=6)}")
+        if model_rates:
+            samples = [f"{name}={cls.trim_number(rate)}" for name, rate in list(model_rates.items())[:6]]
+            suffix = f" 等 {len(model_rates)} 个" if len(model_rates) > 6 else ""
+            parts.append(f"模型倍率: {', '.join(samples)}{suffix}")
+        return "；".join(parts) if parts else None
+
+    @staticmethod
+    def join_channel_value(value: Any, limit: int | None = None) -> str:
+        if isinstance(value, list | tuple):
+            items = [str(item) for item in value if item is not None]
+        else:
+            items = [item.strip() for item in str(value).split(",") if item.strip()]
+        if limit is not None and len(items) > limit:
+            return f"{', '.join(items[:limit])} 等 {len(items)} 个"
+        return ", ".join(items)
+
+    @staticmethod
+    def channel_value(channel: dict[str, Any], keys: tuple[str, ...]) -> Any:
+        for key in keys:
+            if key in channel:
+                return channel[key]
+        return None
+
+    @staticmethod
+    def string_value(value: Any) -> str | None:
+        if value is None:
+            return None
+        text = str(value).strip()
+        return text or None
+
+    @classmethod
+    def channel_id_from_raw(cls, value: Any) -> str | None:
+        if isinstance(value, int):
+            return str(value)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+        return None
+
+    @classmethod
+    def channel_id_from_label(cls, value: str) -> str | None:
+        match = cls.CHANNEL_ID_PATTERN.search(value)
+        if match:
+            return match.group(1).strip()
+        stripped = value.strip()
+        return stripped if stripped.isdigit() else None
+
+    @staticmethod
+    def channel_status_label(value: Any) -> str | None:
+        if value is None:
+            return None
+        status_map = {
+            "0": "禁用",
+            "1": "启用",
+            "2": "自动禁用",
+            "3": "手动禁用",
+        }
+        return status_map.get(str(value), str(value))
+
+    @staticmethod
+    def number_from_value(value: Any) -> float | None:
+        if isinstance(value, int | float):
+            return float(value)
+        if isinstance(value, str):
+            try:
+                return float(value)
+            except ValueError:
+                return None
+        return None
+
+    @staticmethod
+    def trim_number(value: float) -> str:
+        return f"{value:.6f}".rstrip("0").rstrip(".")
 
 
 class ProviderRegistry:

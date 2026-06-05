@@ -1,3 +1,4 @@
+import json
 from datetime import datetime
 
 from croniter import croniter
@@ -5,14 +6,21 @@ from sqlalchemy import delete, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.core.security import utcnow
-from app.models.monitor import PlatformAccountMonitor, PlatformDiscoveredGroupRate, PlatformGroupMonitor
+from app.models.monitor import (
+    PlatformAccountMonitor,
+    PlatformDiscoveredChannelRate,
+    PlatformDiscoveredGroupRate,
+    PlatformGroupMonitor,
+)
 from app.models.platform import PlatformStatus, RelayPlatform
 from app.models.snapshot import (
     AccountBalanceSnapshot,
+    DiscoveredChannelRateSnapshot,
     DiscoveredGroupRateSnapshot,
     GroupRateSnapshot,
 )
 from app.services.provider_strategy import (
+    DiscoveredChannelRateResult,
     DiscoveredGroupRateResult,
     KeyGroupMonitorResult,
     provider_registry,
@@ -116,13 +124,72 @@ async def run_platform_rate_monitor(db: Session, platform_id: int) -> RelayPlatf
     strategy = provider_registry.get(platform.provider_type)
     errors: list[str] = []
     sync_key_group_monitors(db, platform)
-    try:
-        key_group_catalog = await strategy.fetch_key_group_catalog(platform)
-    except Exception as exc:  # noqa: BLE001
+    key_group_catalog_fetcher = getattr(strategy, "fetch_key_group_catalog", None)
+    if callable(key_group_catalog_fetcher):
+        try:
+            key_group_catalog = await key_group_catalog_fetcher(platform)
+        except Exception as exc:  # noqa: BLE001
+            key_group_catalog = None
+            errors.append(f"key group catalog fetch failed: {exc}")
+    else:
         key_group_catalog = None
-        errors.append(f"key group catalog fetch failed: {exc}")
     if key_group_catalog is not None:
         sync_key_group_monitors(db, platform, key_group_catalog)
+
+    discovered_channel_catalog: list[DiscoveredChannelRateResult] | None
+    channel_catalog_fetcher = getattr(strategy, "fetch_channel_catalog", None)
+    if callable(channel_catalog_fetcher):
+        try:
+            discovered_channel_catalog = await channel_catalog_fetcher(platform)
+        except Exception as exc:  # noqa: BLE001
+            discovered_channel_catalog = None
+            errors.append(f"channel catalog fetch failed: {exc}")
+    else:
+        discovered_channel_catalog = None
+
+    if discovered_channel_catalog is not None:
+        db.execute(
+            delete(PlatformDiscoveredChannelRate).where(
+                PlatformDiscoveredChannelRate.platform_id == platform.id,
+            )
+        )
+        db.flush()
+        discovered_channels: dict[str, DiscoveredChannelRateResult] = {}
+        for item in discovered_channel_catalog:
+            discovered_channels[item.external_channel_id] = item
+        for item in discovered_channels.values():
+            checked_at = utcnow()
+            record_discovered_channel_rate(
+                db=db,
+                platform=platform,
+                external_channel_id=item.external_channel_id,
+                name=item.name,
+                description=item.description,
+                base_url=item.base_url,
+                status=item.status,
+                rate_multiplier=item.rate_multiplier,
+                model_rates=item.model_rates,
+                error=item.error,
+                checked_at=checked_at,
+            )
+            db.add(
+                DiscoveredChannelRateSnapshot(
+                    platform_id=platform.id,
+                    external_channel_id=item.external_channel_id,
+                    name=item.name,
+                    description=item.description,
+                    base_url=item.base_url,
+                    status=item.status,
+                    rate_multiplier=item.rate_multiplier,
+                    model_rates_json=json.dumps(item.model_rates, ensure_ascii=False)
+                    if item.model_rates
+                    else None,
+                    error_message=item.error,
+                    created_at=checked_at,
+                )
+            )
+            if item.error:
+                errors.append(f"channel {item.name}: {item.error}")
 
     discovered_catalog: list[DiscoveredGroupRateResult] | None
     try:
@@ -312,6 +379,7 @@ def get_platform_detail(db: Session, platform_id: int) -> RelayPlatform | None:
             selectinload(RelayPlatform.account_monitors),
             selectinload(RelayPlatform.group_monitors),
             selectinload(RelayPlatform.discovered_group_rates),
+            selectinload(RelayPlatform.discovered_channel_rates),
         )
         .where(RelayPlatform.id == platform_id)
     )
@@ -342,6 +410,36 @@ def record_discovered_group_rate(
             checked_at=checked_at,
         )
     )
+
+
+def record_discovered_channel_rate(
+    db: Session,
+    platform: RelayPlatform,
+    external_channel_id: str,
+    name: str,
+    description: str | None,
+    base_url: str | None,
+    status: str | None,
+    rate_multiplier: float | None,
+    model_rates: dict[str, float] | None,
+    error: str | None,
+    checked_at: datetime | None = None,
+) -> None:
+    if checked_at is None:
+        checked_at = utcnow()
+    channel_rate = PlatformDiscoveredChannelRate(
+        platform_id=platform.id,
+        external_channel_id=external_channel_id,
+        name=name,
+        description=description,
+        base_url=base_url,
+        status=status,
+        rate_multiplier=rate_multiplier,
+        last_error=error,
+        checked_at=checked_at,
+    )
+    channel_rate.model_rates = model_rates
+    db.add(channel_rate)
 
 
 def record_configured_group_rate(

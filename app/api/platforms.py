@@ -205,6 +205,7 @@ async def run_monitor(platform_id: int, db: Session = Depends(get_db)) -> Monito
         "platform": detail,
         "account_monitors": detail.account_monitors,
         "group_monitors": detail.group_monitors,
+        "discovered_channel_rates": detail.discovered_channel_rates,
     }
 
 
@@ -224,6 +225,7 @@ async def run_balance_monitor(platform_id: int, db: Session = Depends(get_db)) -
         "platform": detail,
         "account_monitors": detail.account_monitors,
         "group_monitors": detail.group_monitors,
+        "discovered_channel_rates": detail.discovered_channel_rates,
     }
 
 
@@ -243,6 +245,7 @@ async def run_rate_monitor(platform_id: int, db: Session = Depends(get_db)) -> M
         "platform": detail,
         "account_monitors": detail.account_monitors,
         "group_monitors": detail.group_monitors,
+        "discovered_channel_rates": detail.discovered_channel_rates,
     }
 
 

@@ -5,7 +5,7 @@ import httpx
 
 import app.services.provider_strategy as provider_module
 from app.core.security import encrypt_secret
-from app.services.provider_strategy import Sub2ApiStrategy, YunjinNewApiSiteStrategy
+from app.services.provider_strategy import NewApiStrategy, Sub2ApiStrategy, YunjinNewApiSiteStrategy
 
 
 def platform(base_url: str) -> SimpleNamespace:
@@ -142,6 +142,68 @@ def test_sub2api_key_group_catalog_reads_key_group_bindings() -> None:
     assert len(groups) == 1
     assert groups[0].external_group_id == "7"
     assert groups[0].name == "codex"
+
+
+def test_newapi_channel_rate_parser_reads_official_ratio_sync_shape() -> None:
+    channels_payload = {
+        "success": True,
+        "data": [
+            {
+                "id": 1,
+                "name": "OpenAI Official",
+                "base_url": "https://api.openai.com",
+                "status": 1,
+                "type": 1,
+            }
+        ],
+    }
+    admin_channels_payload = {
+        "success": True,
+        "data": {
+            "items": [
+                {
+                    "id": 1,
+                    "name": "OpenAI Official",
+                    "models": "gpt-4o,gpt-4o-mini",
+                    "group": "default,paid",
+                }
+            ]
+        },
+    }
+    ratio_payload = {
+        "success": True,
+        "data": {
+            "differences": {
+                "gpt-4o": {
+                    "model_ratio": {
+                        "current": 1,
+                        "upstreams": {"OpenAI Official(1)": 2},
+                    }
+                },
+                "gpt-4o-mini": {
+                    "model_ratio": {
+                        "current": 3,
+                        "upstreams": {"OpenAI Official(1)": "same"},
+                    }
+                },
+            }
+        },
+    }
+
+    channels = NewApiStrategy.parse_channel_rate_results(
+        channels_payload,
+        ratio_payload=ratio_payload,
+        admin_channels_payload=admin_channels_payload,
+    )
+
+    assert len(channels) == 1
+    assert channels[0].external_channel_id == "1"
+    assert channels[0].name == "OpenAI Official"
+    assert channels[0].base_url == "https://api.openai.com"
+    assert channels[0].status == "启用"
+    assert channels[0].rate_multiplier == 2.5
+    assert channels[0].model_rates == {"gpt-4o": 2.0, "gpt-4o-mini": 3.0}
+    assert "分组: default, paid" in (channels[0].description or "")
 
 
 def test_sub2api_fetch_account_balance_logs_in_and_reads_user_usage(monkeypatch) -> None:

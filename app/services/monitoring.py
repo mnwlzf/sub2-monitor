@@ -156,17 +156,56 @@ async def run_platform_rate_monitor(db: Session, platform_id: int) -> RelayPlatf
                 )
             )
             if configured_group is not None:
-                record_configured_group_rate(
-                    db=db,
-                    platform=platform,
-                    group=configured_group,
-                    rate_multiplier=item.rate_multiplier,
-                    rpm_limit=item.rpm_limit,
-                    error=item.error,
-                    checked_at=checked_at,
-                )
+                if configured_group.enabled:
+                    record_configured_group_rate(
+                        db=db,
+                        platform=platform,
+                        group=configured_group,
+                        rate_multiplier=item.rate_multiplier,
+                        rpm_limit=item.rpm_limit,
+                        error=item.error,
+                        checked_at=checked_at,
+                    )
             if item.error:
                 errors.append(f"group {item.name}: {item.error}")
+
+    recorded_group_ids: set[int] = set()
+    if discovered_catalog is not None:
+        configured_group_lookup = {group.external_group_id: group for group in platform.group_monitors}
+        for item in discovered_groups.values():
+            configured_group = configured_group_lookup.get(item.external_group_id)
+            if configured_group is None or not configured_group.enabled:
+                continue
+            recorded_group_ids.add(configured_group.id)
+
+    for group in platform.group_monitors:
+        if not group.enabled or group.id in recorded_group_ids:
+            continue
+        checked_at = utcnow()
+        try:
+            result = await strategy.fetch_group_rate(platform, group)
+            record_configured_group_rate(
+                db=db,
+                platform=platform,
+                group=group,
+                rate_multiplier=result.rate_multiplier,
+                rpm_limit=result.rpm_limit,
+                error=result.error,
+                checked_at=checked_at,
+            )
+            if result.error:
+                errors.append(f"group {group.name}: {result.error}")
+        except Exception as exc:  # noqa: BLE001
+            record_configured_group_rate(
+                db=db,
+                platform=platform,
+                group=group,
+                rate_multiplier=None,
+                rpm_limit=None,
+                error=str(exc),
+                checked_at=checked_at,
+            )
+            errors.append(f"group {group.name}: {exc}")
 
     now = utcnow()
     platform.rate_last_run_at = now

@@ -201,9 +201,29 @@ class GroupMonitorResponse(BaseModel):
     updated_at: datetime
 
 
+class DiscoveredGroupRateResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    platform_id: int
+    external_group_id: str
+    name: str
+    description: str | None
+    rate_multiplier: float | None
+    effective_rate_multiplier: float | None = None
+    rpm_limit: int | None
+    last_error: str | None
+    checked_at: datetime | None
+    configured_monitor_id: int | None = None
+    is_configured: bool = False
+    created_at: datetime
+    updated_at: datetime
+
+
 class PlatformDetailResponse(PlatformResponse):
     account_monitors: list[AccountMonitorResponse]
     group_monitors: list[GroupMonitorResponse]
+    discovered_group_rates: list[DiscoveredGroupRateResponse]
 
 
 class MonitorRunResponse(BaseModel):

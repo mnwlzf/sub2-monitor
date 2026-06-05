@@ -1065,6 +1065,11 @@ body {
   padding: 10px 12px;
 }
 
+.embedded-group-rate-row.highlighted {
+  border-color: #f59e0b;
+  background: linear-gradient(180deg, #fffdf5 0%, #fff8eb 100%);
+}
+
 .embedded-group-rate-main {
   min-width: 0;
 }
@@ -1086,6 +1091,13 @@ body {
   margin-top: 3px;
   color: #94a3b8;
   font-size: 12px;
+}
+
+.embedded-group-rate-desc {
+  margin-top: 4px;
+  color: #64748b;
+  line-height: 1.35;
+  white-space: normal !important;
 }
 
 .embedded-group-rate-values {

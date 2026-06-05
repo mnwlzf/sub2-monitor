@@ -13,7 +13,6 @@ from app.models.monitor import PlatformAccountMonitor, PlatformGroupMonitor
 from app.models.platform import PlatformStatus, RelayPlatform
 from app.models.snapshot import (
     AccountBalanceSnapshot,
-    DiscoveredGroupRateSnapshot,
     GroupRateSnapshot,
     PlatformSnapshot,
 )
@@ -296,11 +295,6 @@ def get_rate_history(
     ticks = build_history_ticks(platform.rate_cron, since, now)
     start = ticks[0]
 
-    configured_groups = {group.external_group_id: group for group in platform.group_monitors}
-    discovered_groups = {
-        group.external_group_id: group for group in platform.discovered_group_rates
-    }
-
     group_snapshots = db.scalars(
         select(GroupRateSnapshot)
         .where(
@@ -312,50 +306,6 @@ def get_rate_history(
     by_group_monitor_id: dict[int, list[GroupRateSnapshot]] = {}
     for snapshot in group_snapshots:
         by_group_monitor_id.setdefault(snapshot.group_monitor_id, []).append(snapshot)
-
-    discovered_snapshots = db.scalars(
-        select(DiscoveredGroupRateSnapshot)
-        .where(
-            DiscoveredGroupRateSnapshot.platform_id == platform_id,
-            DiscoveredGroupRateSnapshot.created_at >= start,
-        )
-        .order_by(DiscoveredGroupRateSnapshot.created_at.asc())
-    ).all()
-    by_external_group_id: dict[str, list[DiscoveredGroupRateSnapshot]] = {}
-    for snapshot in discovered_snapshots:
-        by_external_group_id.setdefault(snapshot.external_group_id, []).append(snapshot)
-
-    if discovered_groups:
-        series_keys = sorted(
-            set(configured_groups) | set(discovered_groups),
-            key=lambda key: (
-                0 if key in configured_groups else 1,
-                (discovered_groups.get(key) or configured_groups.get(key)).name.lower(),
-                key.lower(),
-            ),
-        )
-        return [
-            GroupRateHistorySeries(
-                group_id=(
-                    configured_groups[key].id
-                    if key in configured_groups
-                    else discovered_groups[key].id
-                ),
-                external_group_id=key,
-                group_name=(discovered_groups.get(key) or configured_groups.get(key)).name,
-                description=discovered_groups.get(key).description if key in discovered_groups else None,
-                configured_monitor_id=configured_groups[key].id if key in configured_groups else None,
-                is_configured=key in configured_groups,
-                points=build_rate_points(
-                    ticks,
-                    by_external_group_id.get(key)
-                    if key in discovered_groups
-                    else by_group_monitor_id.get(configured_groups[key].id, []),
-                    effective_rate_factor,
-                ),
-            )
-            for key in series_keys
-        ]
 
     return [
         GroupRateHistorySeries(
@@ -414,10 +364,10 @@ def build_account_balance_points(
 
 def build_rate_points(
     ticks: list[datetime],
-    snapshots: list[GroupRateSnapshot | DiscoveredGroupRateSnapshot],
+    snapshots: list[GroupRateSnapshot],
     effective_rate_factor: float | None,
 ) -> list[dict]:
-    snapshots_by_tick: dict[datetime, GroupRateSnapshot | DiscoveredGroupRateSnapshot] = {}
+    snapshots_by_tick: dict[datetime, GroupRateSnapshot] = {}
     for snapshot in snapshots:
         tick_index = bisect_right(ticks, snapshot.created_at) - 1
         if tick_index >= 0:

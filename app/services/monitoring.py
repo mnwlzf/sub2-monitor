@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from croniter import croniter
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
@@ -5,7 +7,7 @@ from sqlalchemy.orm import Session, selectinload
 from app.core.security import utcnow
 from app.models.monitor import PlatformDiscoveredGroupRate, PlatformGroupMonitor
 from app.models.platform import PlatformStatus, RelayPlatform
-from app.models.snapshot import AccountBalanceSnapshot, DiscoveredGroupRateSnapshot, GroupRateSnapshot
+from app.models.snapshot import AccountBalanceSnapshot, GroupRateSnapshot
 from app.services.provider_strategy import (
     DiscoveredGroupRateResult,
     provider_registry,
@@ -105,9 +107,6 @@ async def run_platform_rate_monitor(db: Session, platform_id: int) -> RelayPlatf
     strategy = provider_registry.get(platform.provider_type)
     errors: list[str] = []
 
-    for discovered_group in list(platform.discovered_group_rates):
-        db.delete(discovered_group)
-
     discovered_catalog: list[DiscoveredGroupRateResult] | None
     try:
         discovered_catalog = await strategy.fetch_group_catalog(platform)
@@ -117,24 +116,37 @@ async def run_platform_rate_monitor(db: Session, platform_id: int) -> RelayPlatf
 
     seen_group_ids: set[str] = set()
     if discovered_catalog is not None:
+        for discovered_group in list(platform.discovered_group_rates):
+            db.delete(discovered_group)
         configured_groups = {
             group.external_group_id: group
             for group in platform.group_monitors
         }
         for item in discovered_catalog:
             seen_group_ids.add(item.external_group_id)
+            checked_at = utcnow()
             configured_group = configured_groups.get(item.external_group_id)
-            record_group_rate(
+            record_discovered_group_rate(
                 db=db,
                 platform=platform,
-                group=configured_group,
                 external_group_id=item.external_group_id,
                 name=item.name,
                 description=item.description,
                 rate_multiplier=item.rate_multiplier,
                 rpm_limit=item.rpm_limit,
                 error=item.error,
+                checked_at=checked_at,
             )
+            if configured_group is not None:
+                record_configured_group_rate(
+                    db=db,
+                    platform=platform,
+                    group=configured_group,
+                    rate_multiplier=item.rate_multiplier,
+                    rpm_limit=item.rpm_limit,
+                    error=item.error,
+                    checked_at=checked_at,
+                )
             if item.error:
                 errors.append(f"group {item.name}: {item.error}")
 
@@ -143,30 +155,50 @@ async def run_platform_rate_monitor(db: Session, platform_id: int) -> RelayPlatf
             continue
         try:
             result = await strategy.fetch_group_rate(platform, group)
-            record_group_rate(
+            checked_at = utcnow()
+            record_discovered_group_rate(
                 db=db,
                 platform=platform,
-                group=group,
                 external_group_id=group.external_group_id,
                 name=group.name,
                 description=None,
                 rate_multiplier=result.rate_multiplier,
                 rpm_limit=result.rpm_limit,
                 error=result.error,
+                checked_at=checked_at,
+            )
+            record_configured_group_rate(
+                db=db,
+                platform=platform,
+                group=group,
+                rate_multiplier=result.rate_multiplier,
+                rpm_limit=result.rpm_limit,
+                error=result.error,
+                checked_at=checked_at,
             )
             if result.error:
                 errors.append(f"group {group.name}: {result.error}")
         except Exception as exc:  # noqa: BLE001
-            record_group_rate(
+            checked_at = utcnow()
+            record_discovered_group_rate(
                 db=db,
                 platform=platform,
-                group=group,
                 external_group_id=group.external_group_id,
                 name=group.name,
                 description=None,
                 rate_multiplier=None,
                 rpm_limit=None,
                 error=str(exc),
+                checked_at=checked_at,
+            )
+            record_configured_group_rate(
+                db=db,
+                platform=platform,
+                group=group,
+                rate_multiplier=None,
+                rpm_limit=None,
+                error=str(exc),
+                checked_at=checked_at,
             )
             errors.append(f"group {group.name}: {exc}")
 
@@ -198,18 +230,19 @@ def get_platform_detail(db: Session, platform_id: int) -> RelayPlatform | None:
     )
 
 
-def record_group_rate(
+def record_discovered_group_rate(
     db: Session,
     platform: RelayPlatform,
-    group: PlatformGroupMonitor | None,
     external_group_id: str,
     name: str,
     description: str | None,
     rate_multiplier: float | None,
     rpm_limit: int | None,
     error: str | None,
+    checked_at: datetime | None = None,
 ) -> None:
-    checked_at = utcnow()
+    if checked_at is None:
+        checked_at = utcnow()
     db.add(
         PlatformDiscoveredGroupRate(
             platform_id=platform.id,
@@ -222,20 +255,19 @@ def record_group_rate(
             checked_at=checked_at,
         )
     )
-    db.add(
-        DiscoveredGroupRateSnapshot(
-            platform_id=platform.id,
-            external_group_id=external_group_id,
-            name=name,
-            description=description,
-            rate_multiplier=rate_multiplier,
-            rpm_limit=rpm_limit,
-            error_message=error,
-            created_at=checked_at,
-        )
-    )
-    if group is None:
-        return
+
+
+def record_configured_group_rate(
+    db: Session,
+    platform: RelayPlatform,
+    group: PlatformGroupMonitor,
+    rate_multiplier: float | None,
+    rpm_limit: int | None,
+    error: str | None,
+    checked_at: datetime | None = None,
+) -> None:
+    if checked_at is None:
+        checked_at = utcnow()
     group.rate_multiplier = rate_multiplier
     group.rpm_limit = rpm_limit
     group.last_error = error

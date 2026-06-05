@@ -119,9 +119,27 @@ export interface GroupMonitor {
   updated_at: string
 }
 
+export interface DiscoveredGroupRate {
+  id: number
+  platform_id: number
+  external_group_id: string
+  name: string
+  description: string | null
+  rate_multiplier: number | null
+  effective_rate_multiplier: number | null
+  rpm_limit: number | null
+  last_error: string | null
+  checked_at: string | null
+  configured_monitor_id: number | null
+  is_configured: boolean
+  created_at: string
+  updated_at: string
+}
+
 export interface PlatformDetail extends RelayPlatform {
   account_monitors: AccountMonitor[]
   group_monitors: GroupMonitor[]
+  discovered_group_rates: DiscoveredGroupRate[]
 }
 
 export interface AccountMonitorPayload {

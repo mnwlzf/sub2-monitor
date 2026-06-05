@@ -315,30 +315,32 @@
               </div>
 
               <div class="embedded-group-rate-panel">
-                <div class="embedded-section-label">分组实际消耗倍率</div>
-                <div v-if="row.group_monitors.length > 0" class="embedded-group-rate-list">
+                <div class="embedded-section-label">接口分组</div>
+                <div v-if="row.discovered_group_rates.length > 0" class="embedded-group-rate-list">
                   <div
-                    v-for="group in row.group_monitors"
-                    :key="group.id"
+                    v-for="group in row.discovered_group_rates"
+                    :key="group.external_group_id"
                     class="embedded-group-rate-row"
+                    :class="{ highlighted: group.is_configured }"
                   >
                     <div class="embedded-group-rate-main">
                       <strong>{{ group.name }}</strong>
                       <span>{{ group.external_group_id }}</span>
+                      <span v-if="group.description" class="embedded-group-rate-desc">{{ group.description }}</span>
                     </div>
                     <div class="embedded-group-rate-values">
                       <div>
-                        <span>渠道倍率</span>
+                        <span>原始倍率</span>
                         <strong>{{ formatMultiplier(group.rate_multiplier) }}</strong>
                       </div>
                       <div>
-                        <span>实际消耗倍率</span>
+                        <span>实际倍率</span>
                         <strong>{{ formatMultiplier(group.effective_rate_multiplier) }}</strong>
                       </div>
                     </div>
                   </div>
                 </div>
-                <div v-else class="embedded-empty">未配置分组</div>
+                <div v-else class="embedded-empty">暂无接口分组</div>
               </div>
             </div>
           </article>
@@ -408,59 +410,36 @@
           <article v-for="row in platforms" :key="row.id" class="embedded-trends-section">
             <div class="embedded-platform-title compact">
               <strong>{{ row.name }}</strong>
-              <span>最近 7 天，按倍率 Cron 生成时间坐标：{{ row.rate_cron }}</span>
+              <span>接口分组卡片，指定分组高亮</span>
             </div>
-            <div class="embedded-trend-grid">
-              <div
-                v-for="series in platformRateHistory[row.id] ?? []"
-                :key="series.external_group_id"
-                class="embedded-trend-card"
-                :class="{ highlighted: series.is_configured }"
-              >
-                <div class="embedded-trend-head">
-                  <span>{{ series.group_name }}</span>
-                  <strong>{{ latestEffectiveRate(series) }}</strong>
-                </div>
-                <div v-if="series.description" class="embedded-trend-desc">{{ series.description }}</div>
-                <svg class="embedded-trend-chart" viewBox="0 0 340 132" role="img">
-                  <g v-for="tick in chartYTicks(effectiveRateChartValues(series), 66)" :key="tick.key">
-                    <line :x1="chartLeft" :x2="chartRight" :y1="tick.y" :y2="tick.y" class="chart-grid-line" />
-                    <text :x="chartLeft - 7" :y="tick.y + 4" class="chart-y-label" text-anchor="end">
-                      {{ tick.label }}
-                    </text>
-                  </g>
-                  <line :x1="chartLeft" :x2="chartLeft" :y1="chartTop" :y2="chartBottom(66)" class="chart-axis-line" />
-                  <line
-                    :x1="chartLeft"
-                    :x2="chartRight"
-                    :y1="chartBottom(66)"
-                    :y2="chartBottom(66)"
-                    class="chart-axis-line"
-                  />
-                  <polyline
-                    v-if="chartPath(effectiveRateChartValues(series), 66)"
-                    :points="chartPath(effectiveRateChartValues(series), 66)"
-                    class="trend-line rate-line"
-                  />
-                  <g v-for="point in rateChartPoints(series, 66)" :key="point.key">
-                    <circle :cx="point.x" :cy="point.y" r="3" class="trend-dot rate-dot" />
-                    <title>{{ point.tooltip }}</title>
-                  </g>
-                  <text
-                    v-for="tick in chartXLabels(series.points.map((point) => point.at), 66, 'date')"
-                    :key="tick.key"
-                    :x="tick.x"
-                    :y="tick.y"
-                    class="chart-x-label"
-                    text-anchor="middle"
-                  >
-                    {{ tick.label }}
-                  </text>
-                </svg>
-                <div v-if="!hasChartData(effectiveRateChartValues(series))" class="embedded-trend-empty">
-                  暂无历史
+            <div class="embedded-group-rate-panel">
+              <div v-if="row.discovered_group_rates.length > 0" class="embedded-group-rate-list">
+                <div
+                  v-for="group in row.discovered_group_rates"
+                  :key="group.external_group_id"
+                  class="embedded-group-rate-row"
+                  :class="{ highlighted: group.is_configured }"
+                >
+                  <div class="embedded-group-rate-main">
+                    <strong>{{ group.name }}</strong>
+                    <span>{{ group.external_group_id }}</span>
+                    <span v-if="group.description" class="embedded-group-rate-desc">
+                      {{ group.description }}
+                    </span>
+                  </div>
+                  <div class="embedded-group-rate-values">
+                    <div>
+                      <span>原始倍率</span>
+                      <strong>{{ formatMultiplier(group.rate_multiplier) }}</strong>
+                    </div>
+                    <div>
+                      <span>实际倍率</span>
+                      <strong>{{ formatMultiplier(group.effective_rate_multiplier) }}</strong>
+                    </div>
+                  </div>
                 </div>
               </div>
+              <div v-else class="embedded-empty">暂无接口分组</div>
             </div>
           </article>
         </div>
@@ -858,7 +837,6 @@ const detail = ref<PlatformDetail | null>(null)
 const balanceHistory = ref<AccountBalanceHistorySeries[]>([])
 const rateHistory = ref<GroupRateHistorySeries[]>([])
 const platformBalanceHistory = ref<Record<number, AccountBalanceHistorySeries[]>>({})
-const platformRateHistory = ref<Record<number, GroupRateHistorySeries[]>>({})
 const loading = ref(false)
 const historyLoading = ref(false)
 const saving = ref(false)
@@ -886,7 +864,7 @@ const embeddedMenuItems = [
   {
     key: 'rates',
     label: '倍率趋势',
-    description: '分组倍率按 cron 间隔变化',
+    description: '接口分组卡片，配置项高亮',
   },
   {
     key: 'settings',
@@ -1042,7 +1020,7 @@ async function load() {
     stats.value = dashboard
     platforms.value = details
     if (isEmbedded.value) {
-      await loadPlatformHistories(details.map((row) => row.id))
+      await loadPlatformBalanceHistories(details.map((row) => row.id))
     }
   } finally {
     loading.value = false
@@ -1067,28 +1045,21 @@ async function loadHistory(platformId: number) {
     balanceHistory.value = balances
     rateHistory.value = rates
     platformBalanceHistory.value = { ...platformBalanceHistory.value, [platformId]: balances }
-    platformRateHistory.value = { ...platformRateHistory.value, [platformId]: rates }
   } finally {
     historyLoading.value = false
   }
 }
 
-async function loadPlatformHistories(platformIds: number[]) {
+async function loadPlatformBalanceHistories(platformIds: number[]) {
   historyLoading.value = true
   try {
     const rows = await Promise.all(
-      platformIds.map(async (platformId) => {
-        const [balances, rates] = await Promise.all([
-          fetchBalanceHistory(platformId),
-          fetchRateHistory(platformId),
-        ])
-        return { platformId, balances, rates }
-      }),
+      platformIds.map(async (platformId) => ({
+        platformId,
+        balances: await fetchBalanceHistory(platformId),
+      })),
     )
-    platformBalanceHistory.value = Object.fromEntries(
-      rows.map((row) => [row.platformId, row.balances]),
-    )
-    platformRateHistory.value = Object.fromEntries(rows.map((row) => [row.platformId, row.rates]))
+    platformBalanceHistory.value = Object.fromEntries(rows.map((row) => [row.platformId, row.balances]))
   } finally {
     historyLoading.value = false
   }
@@ -1136,9 +1107,6 @@ async function runMonitor(row: RelayPlatform) {
     await runPlatformMonitor(row.id)
     ElMessage.success('采集完成')
     await load()
-    if (isEmbedded.value) {
-      await loadHistory(row.id)
-    }
   } finally {
     monitoring.value = false
   }

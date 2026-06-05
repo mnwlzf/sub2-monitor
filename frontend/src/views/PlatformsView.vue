@@ -1,6 +1,6 @@
 <template>
   <div class="platforms-page">
-    <section class="page-hero">
+    <section v-if="!isEmbedded" class="page-hero">
       <div>
         <div class="eyebrow">平台监控</div>
         <h2>平台列表</h2>
@@ -19,7 +19,7 @@
       </div>
     </section>
 
-    <section class="stats-grid">
+    <section v-if="!isEmbedded" class="stats-grid">
       <div class="stat-card">
         <span>平台总数</span>
         <strong>{{ stats?.total_platforms ?? '-' }}</strong>
@@ -159,172 +159,236 @@
       </el-table>
     </section>
 
-    <section v-else v-loading="loading" class="embedded-platform-list">
-      <article v-for="row in platforms" :key="row.id" class="embedded-platform-card">
-        <header class="embedded-platform-header">
-          <div class="embedded-platform-title">
-            <div>
-              <strong>{{ row.name }}</strong>
-              <span>{{ row.base_url }}</span>
-            </div>
-            <div class="platform-badges">
-              <el-tag size="small" effect="plain">{{ providerLabel(row.provider_type) }}</el-tag>
-              <el-tag size="small" effect="light" type="info">{{ siteStrategyLabel(row) }}</el-tag>
-              <el-tag :type="statusType(row.status)" effect="light" size="small">
-                {{ statusText(row.status) }}
-              </el-tag>
-            </div>
-          </div>
-          <div class="embedded-platform-controls">
-            <el-switch :model-value="row.enabled" @change="toggleEnabled(row)" />
-            <div class="table-actions">
-              <el-button :icon="Setting" circle title="监控项" @click="openDetail(row)" />
-              <el-button :icon="Refresh" circle title="采集" @click="runMonitor(row)" />
-              <el-button :icon="Edit" circle title="编辑" @click="openEdit(row)" />
-              <el-button :icon="Delete" circle plain title="删除" type="danger" @click="remove(row)" />
-            </div>
-          </div>
-        </header>
-
-        <div class="embedded-platform-body">
-          <div class="embedded-trends-section">
-            <div class="embedded-section-label">趋势分析</div>
-            <div class="embedded-trends">
-              <div class="embedded-trend-panel">
-                <div class="embedded-trend-title">余额变化</div>
-                <div class="embedded-trend-grid">
-                  <div
-                    v-for="series in platformBalanceHistory[row.id] ?? []"
-                    :key="series.account_id"
-                    class="embedded-trend-card"
-                  >
-                    <div class="embedded-trend-head">
-                      <span>{{ series.account_name }}</span>
-                      <strong>{{ latestBalance(series) }}</strong>
-                    </div>
-                    <svg class="embedded-trend-chart" viewBox="0 0 320 96" role="img">
-                      <polyline
-                        v-if="chartPath(balanceChartValues(series), 56)"
-                        :points="chartPath(balanceChartValues(series), 56)"
-                        class="trend-line balance-line"
-                      />
-                      <g v-for="point in chartPoints(balanceChartValues(series), 56)" :key="point.key">
-                        <circle :cx="point.x" :cy="point.y" r="2.2" class="trend-dot balance-dot" />
-                      </g>
-                    </svg>
-                    <div v-if="!hasChartData(balanceChartValues(series))" class="embedded-trend-empty">
-                      暂无历史
-                    </div>
-                  </div>
-                  <div
-                    v-if="!historyLoading && (platformBalanceHistory[row.id] ?? []).length === 0"
-                    class="embedded-empty"
-                  >
-                    暂无账号余额历史
-                  </div>
-                </div>
-              </div>
-
-              <div class="embedded-trend-panel">
-                <div class="embedded-trend-title">倍率变化</div>
-                <div class="embedded-trend-grid">
-                  <div
-                    v-for="series in platformRateHistory[row.id] ?? []"
-                    :key="series.group_id"
-                    class="embedded-trend-card"
-                  >
-                    <div class="embedded-trend-head">
-                      <span>{{ series.group_name }}</span>
-                      <strong>{{ latestRate(series) }}</strong>
-                    </div>
-                    <svg class="embedded-trend-chart" viewBox="0 0 320 96" role="img">
-                      <polyline
-                        v-if="chartPath(rateChartValues(series), 56)"
-                        :points="chartPath(rateChartValues(series), 56)"
-                        class="trend-line rate-line"
-                      />
-                      <g v-for="point in chartPoints(rateChartValues(series), 56)" :key="point.key">
-                        <circle :cx="point.x" :cy="point.y" r="2.2" class="trend-dot rate-dot" />
-                      </g>
-                    </svg>
-                    <div v-if="!hasChartData(rateChartValues(series))" class="embedded-trend-empty">
-                      暂无历史
-                    </div>
-                  </div>
-                  <div
-                    v-if="!historyLoading && (platformRateHistory[row.id] ?? []).length === 0"
-                    class="embedded-empty"
-                  >
-                    暂无分组倍率历史
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <div class="embedded-account-panel">
-            <div class="embedded-section-label">账号概览</div>
-            <div v-if="row.account_monitors.length > 0" class="embedded-account-list">
-              <div
-                v-for="account in row.account_monitors.slice(0, 2)"
-                :key="account.id"
-                class="embedded-account-row"
-              >
-                <div class="embedded-account-main">
-                  <div class="embedded-account-name">
-                    <strong>{{ account.name }}</strong>
-                    <el-tag
-                      :type="account.last_error ? 'danger' : account.checked_at ? 'success' : 'info'"
-                      effect="light"
-                      size="small"
-                    >
-                      {{ account.last_error ? '异常' : account.checked_at ? '正常' : '未采集' }}
-                    </el-tag>
-                  </div>
-                  <div v-if="account.last_error" class="embedded-account-error">
-                    {{ account.last_error }}
-                  </div>
-                </div>
-                <div class="embedded-account-values">
-                  <div>
-                    <span>余额</span>
-                    <strong>{{ formatMoney(account.balance) }}</strong>
-                  </div>
-                  <div>
-                    <span>消耗</span>
-                    <strong>{{ formatMoney(account.quota_used) }}</strong>
-                  </div>
-                </div>
-              </div>
-              <div v-if="row.account_monitors.length > 2" class="muted">
-                还有 {{ row.account_monitors.length - 2 }} 个账号
-              </div>
-            </div>
-            <div v-else class="embedded-empty">未配置账号</div>
-          </div>
-
-          <div class="embedded-metrics">
-            <div>
-              <span>账号数</span>
-              <strong>{{ row.account_monitors.length }}</strong>
-            </div>
-            <div>
-              <span>总余额</span>
-              <strong>{{ formatMoney(row.balance) }}</strong>
-            </div>
-            <div>
-              <span>总消耗</span>
-              <strong>{{ formatMoney(row.quota_used) }}</strong>
-            </div>
-            <div>
-              <span>最后采集</span>
-              <strong>{{ formatTime(row.checked_at) }}</strong>
-            </div>
-          </div>
+    <section v-else v-loading="loading" class="embedded-workspace">
+      <aside class="embedded-menu">
+        <div class="embedded-menu-brand">
+          <strong>Sub2 Monitor</strong>
+          <span>功能菜单</span>
         </div>
-      </article>
+        <button
+          v-for="item in embeddedMenuItems"
+          :key="item.key"
+          :class="{ active: activeEmbeddedView === item.key }"
+          type="button"
+          @click="activeEmbeddedView = item.key"
+        >
+          <span>{{ item.label }}</span>
+          <small>{{ item.description }}</small>
+        </button>
+      </aside>
 
-      <el-empty v-if="!loading && platforms.length === 0" description="暂无平台" />
+      <main class="embedded-render">
+        <div class="embedded-render-head">
+          <div>
+            <h3>{{ embeddedViewTitle }}</h3>
+            <p>{{ embeddedViewDescription }}</p>
+          </div>
+          <el-button :icon="Plus" size="small" type="primary" @click="openCreate">新增平台</el-button>
+        </div>
+
+        <div v-if="activeEmbeddedView === 'overview'" class="embedded-panel-list">
+          <section class="stats-grid embedded-stats-grid">
+            <div class="stat-card">
+              <span>平台总数</span>
+              <strong>{{ stats?.total_platforms ?? '-' }}</strong>
+            </div>
+            <div class="stat-card">
+              <span>启用平台</span>
+              <strong>{{ stats?.enabled_platforms ?? '-' }}</strong>
+            </div>
+            <div class="stat-card">
+              <span>健康</span>
+              <strong class="ok">{{ stats?.healthy_platforms ?? '-' }}</strong>
+            </div>
+            <div class="stat-card">
+              <span>异常</span>
+              <strong class="bad">{{ (stats?.degraded_platforms ?? 0) + (stats?.down_platforms ?? 0) }}</strong>
+            </div>
+            <div class="stat-card">
+              <span>账号监控</span>
+              <strong>{{ stats?.account_monitor_count ?? '-' }}</strong>
+            </div>
+            <div class="stat-card">
+              <span>分组监控</span>
+              <strong>{{ stats?.group_monitor_count ?? '-' }}</strong>
+            </div>
+          </section>
+
+          <article v-for="row in platforms" :key="row.id" class="embedded-platform-card">
+            <header class="embedded-platform-header">
+              <div class="embedded-platform-title">
+                <div>
+                  <strong>{{ row.name }}</strong>
+                  <span>{{ row.base_url }}</span>
+                </div>
+                <div class="platform-badges">
+                  <el-tag size="small" effect="plain">{{ providerLabel(row.provider_type) }}</el-tag>
+                  <el-tag size="small" effect="light" type="info">{{ siteStrategyLabel(row) }}</el-tag>
+                  <el-tag :type="statusType(row.status)" effect="light" size="small">
+                    {{ statusText(row.status) }}
+                  </el-tag>
+                </div>
+              </div>
+              <div class="embedded-platform-controls">
+                <el-switch :model-value="row.enabled" @change="toggleEnabled(row)" />
+                <div class="table-actions">
+                  <el-button :icon="Setting" circle title="监控项" @click="openDetail(row)" />
+                  <el-button :icon="Refresh" circle title="采集" @click="runMonitor(row)" />
+                  <el-button :icon="Edit" circle title="编辑" @click="openEdit(row)" />
+                  <el-button :icon="Delete" circle plain title="删除" type="danger" @click="remove(row)" />
+                </div>
+              </div>
+            </header>
+
+            <div class="embedded-platform-body">
+              <div class="embedded-account-panel">
+                <div class="embedded-section-label">账号概览</div>
+                <div v-if="row.account_monitors.length > 0" class="embedded-account-list">
+                  <div
+                    v-for="account in row.account_monitors"
+                    :key="account.id"
+                    class="embedded-account-row"
+                  >
+                    <div class="embedded-account-main">
+                      <div class="embedded-account-name">
+                        <strong>{{ account.name }}</strong>
+                        <el-tag
+                          :type="account.last_error ? 'danger' : account.checked_at ? 'success' : 'info'"
+                          effect="light"
+                          size="small"
+                        >
+                          {{ account.last_error ? '异常' : account.checked_at ? '正常' : '未采集' }}
+                        </el-tag>
+                      </div>
+                      <div v-if="account.last_error" class="embedded-account-error">
+                        {{ account.last_error }}
+                      </div>
+                    </div>
+                    <div class="embedded-account-values">
+                      <div>
+                        <span>余额</span>
+                        <strong>{{ formatMoney(account.balance) }}</strong>
+                      </div>
+                      <div>
+                        <span>消耗</span>
+                        <strong>{{ formatMoney(account.quota_used) }}</strong>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <div v-else class="embedded-empty">未配置账号</div>
+              </div>
+
+              <div class="embedded-metrics">
+                <div>
+                  <span>账号数</span>
+                  <strong>{{ row.account_monitors.length }}</strong>
+                </div>
+                <div>
+                  <span>总余额</span>
+                  <strong>{{ formatMoney(row.balance) }}</strong>
+                </div>
+                <div>
+                  <span>总消耗</span>
+                  <strong>{{ formatMoney(row.quota_used) }}</strong>
+                </div>
+                <div>
+                  <span>最后采集</span>
+                  <strong>{{ formatTime(row.checked_at) }}</strong>
+                </div>
+              </div>
+            </div>
+          </article>
+          <el-empty v-if="!loading && platforms.length === 0" description="暂无平台" />
+        </div>
+
+        <div v-else-if="activeEmbeddedView === 'balances'" class="embedded-panel-list">
+          <article v-for="row in platforms" :key="row.id" class="embedded-trends-section">
+            <div class="embedded-platform-title compact">
+              <strong>{{ row.name }}</strong>
+              <span>最近 24 小时，每个账号按小时展示余额变化</span>
+            </div>
+            <div class="embedded-trend-grid">
+              <div
+                v-for="series in platformBalanceHistory[row.id] ?? []"
+                :key="series.account_id"
+                class="embedded-trend-card"
+              >
+                <div class="embedded-trend-head">
+                  <span>{{ series.account_name }}</span>
+                  <strong>{{ latestBalance(series) }}</strong>
+                </div>
+                <svg class="embedded-trend-chart" viewBox="0 0 320 96" role="img">
+                  <polyline
+                    v-if="chartPath(balanceChartValues(series), 56)"
+                    :points="chartPath(balanceChartValues(series), 56)"
+                    class="trend-line balance-line"
+                  />
+                  <g v-for="point in chartPoints(balanceChartValues(series), 56)" :key="point.key">
+                    <circle :cx="point.x" :cy="point.y" r="2.2" class="trend-dot balance-dot" />
+                  </g>
+                </svg>
+                <div v-if="!hasChartData(balanceChartValues(series))" class="embedded-trend-empty">
+                  暂无历史
+                </div>
+              </div>
+            </div>
+          </article>
+        </div>
+
+        <div v-else-if="activeEmbeddedView === 'rates'" class="embedded-panel-list">
+          <article v-for="row in platforms" :key="row.id" class="embedded-trends-section">
+            <div class="embedded-platform-title compact">
+              <strong>{{ row.name }}</strong>
+              <span>最近 7 天，按分组展示倍率变化</span>
+            </div>
+            <div class="embedded-trend-grid">
+              <div
+                v-for="series in platformRateHistory[row.id] ?? []"
+                :key="series.group_id"
+                class="embedded-trend-card"
+              >
+                <div class="embedded-trend-head">
+                  <span>{{ series.group_name }}</span>
+                  <strong>{{ latestRate(series) }}</strong>
+                </div>
+                <svg class="embedded-trend-chart" viewBox="0 0 320 96" role="img">
+                  <polyline
+                    v-if="chartPath(rateChartValues(series), 56)"
+                    :points="chartPath(rateChartValues(series), 56)"
+                    class="trend-line rate-line"
+                  />
+                  <g v-for="point in chartPoints(rateChartValues(series), 56)" :key="point.key">
+                    <circle :cx="point.x" :cy="point.y" r="2.2" class="trend-dot rate-dot" />
+                  </g>
+                </svg>
+                <div v-if="!hasChartData(rateChartValues(series))" class="embedded-trend-empty">
+                  暂无历史
+                </div>
+              </div>
+            </div>
+          </article>
+        </div>
+
+        <div v-else class="embedded-panel-list">
+          <article v-for="row in platforms" :key="row.id" class="embedded-platform-card">
+            <header class="embedded-platform-header">
+              <div class="embedded-platform-title">
+                <div>
+                  <strong>{{ row.name }}</strong>
+                  <span>{{ row.account_monitors.length }} 个账号 / {{ row.group_monitors.length }} 个分组</span>
+                </div>
+              </div>
+              <div class="embedded-platform-controls">
+                <el-button :icon="Setting" @click="openDetail(row)">配置监控项</el-button>
+                <el-button :icon="Refresh" :loading="monitoring" type="primary" @click="runMonitor(row)">
+                  立即采集
+                </el-button>
+              </div>
+            </header>
+          </article>
+        </div>
+      </main>
     </section>
 
     <el-dialog v-model="dialogVisible" :title="editing ? '编辑平台' : '新增平台'" width="620px">
@@ -579,7 +643,7 @@
 import { Delete, Edit, Plus, Refresh, Setting } from '@element-plus/icons-vue'
 import type { FormInstance, FormRules } from 'element-plus'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 
 import {
   createAccountMonitor,
@@ -632,6 +696,36 @@ const accountDialogVisible = ref(false)
 const groupDialogVisible = ref(false)
 const editing = ref<RelayPlatform | null>(null)
 const formRef = ref<FormInstance>()
+const activeEmbeddedView = ref<'overview' | 'balances' | 'rates' | 'settings'>('overview')
+
+const embeddedMenuItems = [
+  {
+    key: 'overview',
+    label: '平台总览',
+    description: '状态、账号余额和采集操作',
+  },
+  {
+    key: 'balances',
+    label: '余额趋势',
+    description: '账号余额的小时级变化',
+  },
+  {
+    key: 'rates',
+    label: '倍率趋势',
+    description: '分组倍率的周期变化',
+  },
+  {
+    key: 'settings',
+    label: '监控配置',
+    description: '账号、分组和采集任务入口',
+  },
+] as const
+
+const embeddedView = computed(
+  () => embeddedMenuItems.find((item) => item.key === activeEmbeddedView.value) ?? embeddedMenuItems[0],
+)
+const embeddedViewTitle = computed(() => embeddedView.value.label)
+const embeddedViewDescription = computed(() => embeddedView.value.description)
 
 const form = reactive<PlatformPayload>({
   name: '',

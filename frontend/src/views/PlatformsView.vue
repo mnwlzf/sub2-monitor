@@ -393,15 +393,40 @@
                   <span>{{ series.group_name }}</span>
                   <strong>{{ latestEffectiveRate(series) }}</strong>
                 </div>
-                <svg class="embedded-trend-chart" viewBox="0 0 320 96" role="img">
+                <svg class="embedded-trend-chart" viewBox="0 0 340 132" role="img">
+                  <g v-for="tick in chartYTicks(effectiveRateChartValues(series), 66)" :key="tick.key">
+                    <line :x1="chartLeft" :x2="chartRight" :y1="tick.y" :y2="tick.y" class="chart-grid-line" />
+                    <text :x="chartLeft - 7" :y="tick.y + 4" class="chart-y-label" text-anchor="end">
+                      {{ tick.label }}
+                    </text>
+                  </g>
+                  <line :x1="chartLeft" :x2="chartLeft" :y1="chartTop" :y2="chartBottom(66)" class="chart-axis-line" />
+                  <line
+                    :x1="chartLeft"
+                    :x2="chartRight"
+                    :y1="chartBottom(66)"
+                    :y2="chartBottom(66)"
+                    class="chart-axis-line"
+                  />
                   <polyline
-                    v-if="chartPath(effectiveRateChartValues(series), 56)"
-                    :points="chartPath(effectiveRateChartValues(series), 56)"
+                    v-if="chartPath(effectiveRateChartValues(series), 66)"
+                    :points="chartPath(effectiveRateChartValues(series), 66)"
                     class="trend-line rate-line"
                   />
-                  <g v-for="point in chartPoints(effectiveRateChartValues(series), 56)" :key="point.key">
-                    <circle :cx="point.x" :cy="point.y" r="2.2" class="trend-dot rate-dot" />
+                  <g v-for="point in rateChartPoints(series, 66)" :key="point.key">
+                    <circle :cx="point.x" :cy="point.y" r="3" class="trend-dot rate-dot" />
+                    <title>{{ point.tooltip }}</title>
                   </g>
+                  <text
+                    v-for="tick in chartXLabels(series.points.map((point) => point.at), 66, 'date')"
+                    :key="tick.key"
+                    :x="tick.x"
+                    :y="tick.y"
+                    class="chart-x-label"
+                    text-anchor="middle"
+                  >
+                    {{ tick.label }}
+                  </text>
                 </svg>
                 <div v-if="!hasChartData(effectiveRateChartValues(series))" class="embedded-trend-empty">
                   暂无历史
@@ -563,7 +588,7 @@
               </svg>
               <div class="history-axis">
                 <span>{{ firstTimeLabel(series.points[0]?.at) }}</span>
-                <span>最近 24 小时</span>
+                <span>最近 24 小时 UTC+8</span>
                 <span>{{ firstTimeLabel(lastBalancePoint(series)?.at) }}</span>
               </div>
               <div v-if="!hasChartData(balanceChartValues(series))" class="history-empty">暂无余额历史</div>
@@ -584,19 +609,44 @@
                 <span>{{ series.group_name }}</span>
                 <strong>{{ latestEffectiveRate(series) }}</strong>
               </div>
-              <svg class="trend-chart" viewBox="0 0 320 120" role="img">
+              <svg class="trend-chart" viewBox="0 0 340 150" role="img">
+                <g v-for="tick in chartYTicks(effectiveRateChartValues(series), 86)" :key="tick.key">
+                  <line :x1="chartLeft" :x2="chartRight" :y1="tick.y" :y2="tick.y" class="chart-grid-line" />
+                  <text :x="chartLeft - 7" :y="tick.y + 4" class="chart-y-label" text-anchor="end">
+                    {{ tick.label }}
+                  </text>
+                </g>
+                <line :x1="chartLeft" :x2="chartLeft" :y1="chartTop" :y2="chartBottom(86)" class="chart-axis-line" />
+                <line
+                  :x1="chartLeft"
+                  :x2="chartRight"
+                  :y1="chartBottom(86)"
+                  :y2="chartBottom(86)"
+                  class="chart-axis-line"
+                />
                 <polyline
-                  v-if="chartPath(effectiveRateChartValues(series))"
-                  :points="chartPath(effectiveRateChartValues(series))"
+                  v-if="chartPath(effectiveRateChartValues(series), 86)"
+                  :points="chartPath(effectiveRateChartValues(series), 86)"
                   class="trend-line rate-line"
                 />
-                <g v-for="point in chartPoints(effectiveRateChartValues(series))" :key="point.key">
-                  <circle :cx="point.x" :cy="point.y" r="2.5" class="trend-dot rate-dot" />
+                <g v-for="point in rateChartPoints(series, 86)" :key="point.key">
+                  <circle :cx="point.x" :cy="point.y" r="3" class="trend-dot rate-dot" />
+                  <title>{{ point.tooltip }}</title>
                 </g>
+                <text
+                  v-for="tick in chartXLabels(series.points.map((point) => point.at), 86, 'date')"
+                  :key="tick.key"
+                  :x="tick.x"
+                  :y="tick.y"
+                  class="chart-x-label"
+                  text-anchor="middle"
+                >
+                  {{ tick.label }}
+                </text>
               </svg>
               <div class="history-axis">
                 <span>{{ firstDateLabel(series.points[0]?.at) }}</span>
-                <span>最近 7 天</span>
+                <span>最近 7 天 UTC+8</span>
                 <span>{{ firstDateLabel(lastRatePoint(series)?.at) }}</span>
               </div>
               <div v-if="!hasChartData(effectiveRateChartValues(series))" class="history-empty">暂无倍率历史</div>
@@ -1208,41 +1258,52 @@ function formatTime(value: string | null) {
   if (!value) {
     return '-'
   }
-  const normalized = /[zZ]|[+-]\d{2}:\d{2}$/.test(value) ? value : `${value}Z`
-  const date = new Date(normalized)
+  const date = parseApiTime(value)
   if (Number.isNaN(date.getTime())) {
     return value
   }
-  return date.toLocaleString('zh-CN', { hour12: false })
+  return date.toLocaleString('zh-CN', {
+    hour12: false,
+    timeZone: 'Asia/Shanghai',
+  })
 }
 
 function firstTimeLabel(value: string | undefined) {
   if (!value) {
     return '-'
   }
-  const date = new Date(value)
+  const date = parseApiTime(value)
   if (Number.isNaN(date.getTime())) {
     return '-'
   }
-  return date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false })
+  return date.toLocaleTimeString('zh-CN', {
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+    timeZone: 'Asia/Shanghai',
+  })
 }
 
 function firstDateLabel(value: string | undefined) {
   if (!value) {
     return '-'
   }
-  const date = new Date(value)
+  const date = parseApiTime(value)
   if (Number.isNaN(date.getTime())) {
     return '-'
   }
-  return `${date.getMonth() + 1}/${date.getDate()}`
+  return date.toLocaleDateString('zh-CN', {
+    month: 'numeric',
+    day: 'numeric',
+    timeZone: 'Asia/Shanghai',
+  })
 }
 
 function chartTimeLabel(value: string | undefined) {
   if (!value) {
     return '-'
   }
-  const date = new Date(value)
+  const date = parseApiTime(value)
   if (Number.isNaN(date.getTime())) {
     return '-'
   }
@@ -1252,7 +1313,13 @@ function chartTimeLabel(value: string | undefined) {
     hour: '2-digit',
     minute: '2-digit',
     hour12: false,
+    timeZone: 'Asia/Shanghai',
   })
+}
+
+function parseApiTime(value: string) {
+  const normalized = /[zZ]|[+-]\d{2}:\d{2}$/.test(value) ? value : `${value}Z`
+  return new Date(normalized)
 }
 
 function balanceChartValues(series: AccountBalanceHistorySeries) {
@@ -1355,7 +1422,7 @@ function chartYTicks(values: Array<number | null>, chartHeight = 76) {
   })
 }
 
-function chartXLabels(times: string[], chartHeight = 76) {
+function chartXLabels(times: string[], chartHeight = 76, mode: 'time' | 'date' = 'time') {
   if (times.length === 0) {
     return []
   }
@@ -1367,7 +1434,7 @@ function chartXLabels(times: string[], chartHeight = 76) {
     key: `x-${index}`,
     x: chartLeft + step * index,
     y: chartBottom(chartHeight) + 18,
-    label: firstTimeLabel(times[index]),
+    label: mode === 'date' ? firstDateLabel(times[index]) : firstTimeLabel(times[index]),
   }))
 }
 
@@ -1376,6 +1443,16 @@ function balanceChartPoints(series: AccountBalanceHistorySeries, chartHeight = 7
     ...point,
     tooltip: `${series.account_name}\n时间: ${chartTimeLabel(series.points[point.index]?.at)}\n余额: ${formatMoney(point.value)}`,
   }))
+}
+
+function rateChartPoints(series: GroupRateHistorySeries, chartHeight = 76) {
+  return chartPoints(effectiveRateChartValues(series), chartHeight).map((point) => {
+    const raw = series.points[point.index]?.rate_multiplier
+    return {
+      ...point,
+      tooltip: `${series.group_name}\n时间: ${chartTimeLabel(series.points[point.index]?.at)}\n实际倍率: ${formatMultiplier(point.value)}\n原始倍率: ${formatMultiplier(raw)}`,
+    }
+  })
 }
 
 function latestBalance(series: AccountBalanceHistorySeries) {

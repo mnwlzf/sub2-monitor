@@ -361,7 +361,7 @@
           <article v-for="row in platforms" :key="row.id" class="embedded-trends-section">
             <div class="embedded-platform-title compact">
               <strong>{{ row.name }}</strong>
-              <span>最近 24 小时，按余额 Cron 生成时间坐标：{{ row.balance_cron }}</span>
+              <span>最近 24 小时，按平台和账号展示真实采样点：{{ row.balance_cron }}</span>
             </div>
             <div class="embedded-trend-grid">
               <div
@@ -607,7 +607,7 @@
           <div class="monitor-section-title">
             <div>
               <h3>余额趋势</h3>
-              <p>每个账号最近 24 小时余额变化，坐标间隔按余额 Cron 生成：{{ detail.balance_cron }}</p>
+              <p>每个平台账号最近 24 小时余额变化，按真实采样点绘制：{{ detail.balance_cron }}</p>
             </div>
           </div>
           <div v-loading="historyLoading" class="history-grid">

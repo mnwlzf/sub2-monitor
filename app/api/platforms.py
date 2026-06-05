@@ -257,13 +257,11 @@ def get_balance_history(
     platform = detail_or_404(db, platform_id)
     now = utcnow()
     since = now - timedelta(days=1)
-    hours = build_history_ticks(platform.balance_cron, since, now)
-    start = hours[0]
     snapshots = db.scalars(
         select(AccountBalanceSnapshot)
         .where(
             AccountBalanceSnapshot.platform_id == platform_id,
-            AccountBalanceSnapshot.created_at >= start,
+            AccountBalanceSnapshot.created_at >= since,
         )
         .order_by(AccountBalanceSnapshot.created_at.asc())
     ).all()
@@ -275,7 +273,7 @@ def get_balance_history(
         AccountBalanceHistorySeries(
             account_id=account.id,
             account_name=account.name,
-            points=build_account_balance_points(hours, by_account.get(account.id, [])),
+            points=build_account_balance_points(by_account.get(account.id, [])),
         )
         for account in platform.account_monitors
     ]
@@ -377,27 +375,16 @@ def build_history_ticks(cron_expr: str, since: datetime, until: datetime) -> lis
 
 
 def build_account_balance_points(
-    ticks: list[datetime],
     snapshots: list[AccountBalanceSnapshot],
 ) -> list[dict]:
-    snapshots_by_tick: dict[datetime, AccountBalanceSnapshot] = {}
-    for snapshot in snapshots:
-        tick_index = bisect_right(ticks, snapshot.created_at) - 1
-        if tick_index >= 0:
-            snapshots_by_tick[ticks[tick_index]] = snapshot
-
     return [
         {
-            "at": tick,
-            "balance": snapshots_by_tick[tick].balance if tick in snapshots_by_tick else None,
-            "quota_used": (
-                snapshots_by_tick[tick].quota_used if tick in snapshots_by_tick else None
-            ),
-            "quota_limit": (
-                snapshots_by_tick[tick].quota_limit if tick in snapshots_by_tick else None
-            ),
+            "at": snapshot.created_at,
+            "balance": snapshot.balance,
+            "quota_used": snapshot.quota_used,
+            "quota_limit": snapshot.quota_limit,
         }
-        for tick in ticks
+        for snapshot in snapshots
     ]
 
 

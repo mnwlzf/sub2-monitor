@@ -1,9 +1,12 @@
 import asyncio
+from datetime import datetime
+from types import SimpleNamespace
 
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 
 import app.models.all  # noqa: F401
+from app.api.platforms import build_account_balance_points
 from app.core.database import Base
 from app.models.monitor import PlatformGroupMonitor
 from app.models.platform import PlatformStatus, RelayPlatform
@@ -68,3 +71,30 @@ def test_rate_monitor_persists_configured_group_snapshot_without_catalog(monkeyp
         assert refreshed_group.checked_at is not None
     finally:
         db.close()
+
+
+def test_account_balance_history_points_use_real_snapshots_only() -> None:
+    first_at = datetime(2026, 6, 5, 9, 30)
+    second_at = datetime(2026, 6, 5, 9, 40)
+
+    points = build_account_balance_points(
+        [
+            SimpleNamespace(created_at=first_at, balance=10.0, quota_used=1.0, quota_limit=20.0),
+            SimpleNamespace(created_at=second_at, balance=9.5, quota_used=1.5, quota_limit=20.0),
+        ]
+    )
+
+    assert points == [
+        {
+            "at": first_at,
+            "balance": 10.0,
+            "quota_used": 1.0,
+            "quota_limit": 20.0,
+        },
+        {
+            "at": second_at,
+            "balance": 9.5,
+            "quota_used": 1.5,
+            "quota_limit": 20.0,
+        },
+    ]

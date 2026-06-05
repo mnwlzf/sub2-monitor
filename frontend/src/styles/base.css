@@ -362,6 +362,10 @@ body {
 }
 
 .account-compare-item {
+  display: grid;
+  grid-template-columns: minmax(150px, 1fr) minmax(110px, auto) minmax(160px, 1.2fr);
+  gap: 12px;
+  align-items: center;
   padding: 10px 12px;
   border: 1px solid #e5e7eb;
   border-radius: 10px;
@@ -371,6 +375,10 @@ body {
 .embedded-shell .account-compare-item {
   border-radius: 8px;
   padding: 9px 10px;
+}
+
+.account-compare-main {
+  min-width: 0;
 }
 
 .account-compare-name {
@@ -384,10 +392,53 @@ body {
   font-weight: 600;
 }
 
+.account-compare-name span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.account-compare-meta {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  min-width: 0;
+  margin-top: 6px;
+  color: #64748b;
+  font-size: 12px;
+}
+
+.account-compare-meta span {
+  display: inline-flex;
+  max-width: 180px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.account-compare-meta em,
+.embedded-account-meta em {
+  margin-right: 4px;
+  color: #94a3b8;
+  font-style: normal;
+  flex-shrink: 0;
+}
+
+.account-compare-error {
+  overflow: hidden;
+  margin-top: 5px;
+  color: #dc2626;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .account-compare-metrics {
   display: flex;
   gap: 12px;
-  margin-top: 6px;
+  flex-wrap: wrap;
+  margin-top: 0;
   color: #4b5563;
   font-size: 12px;
 }
@@ -403,6 +454,10 @@ body {
   flex-wrap: wrap;
   min-width: 0;
   margin-top: 8px;
+}
+
+.account-key-summary-row {
+  margin-top: 0;
 }
 
 .account-key-summary {
@@ -440,6 +495,11 @@ body {
   border-color: #e5e7eb;
   background: #f8fafc;
   color: #64748b;
+}
+
+.account-key-empty {
+  color: #94a3b8;
+  font-size: 12px;
 }
 
 .account-key-summary-list.detail {
@@ -1046,15 +1106,15 @@ body {
 
 .embedded-account-list {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(420px, 1fr));
+  grid-template-columns: 1fr;
   gap: 8px;
 }
 
 .embedded-account-row {
   display: grid;
-  grid-template-columns: minmax(150px, 0.75fr) minmax(260px, 1fr);
+  grid-template-columns: minmax(180px, 0.9fr) minmax(220px, 0.75fr) minmax(220px, 1fr);
   gap: 16px;
-  align-items: center;
+  align-items: start;
   border: 1px solid #e8edf5;
   border-radius: 8px;
   background: #fbfdff;
@@ -1081,6 +1141,25 @@ body {
   white-space: nowrap;
 }
 
+.embedded-account-meta {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  min-width: 0;
+  margin-top: 6px;
+  color: #64748b;
+  font-size: 12px;
+}
+
+.embedded-account-meta span {
+  display: inline-flex;
+  max-width: 220px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .embedded-account-error {
   display: block;
   overflow: hidden;
@@ -1091,8 +1170,19 @@ body {
   white-space: nowrap;
 }
 
+.embedded-account-key-panel {
+  min-width: 0;
+}
+
+.embedded-account-key-title {
+  display: block;
+  margin-bottom: 6px;
+  color: #64748b;
+  font-size: 12px;
+}
+
 .embedded-account-keys {
-  margin-top: 8px;
+  margin-top: 0;
 }
 
 .embedded-account-values {

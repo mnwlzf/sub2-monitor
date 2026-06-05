@@ -91,21 +91,32 @@
                 :key="account.id"
                 class="account-compare-item"
               >
-                <div class="account-compare-name">
-                  <span>{{ account.name }}</span>
-                  <el-tag
-                    :type="account.last_error ? 'danger' : account.checked_at ? 'success' : 'info'"
-                    effect="light"
-                    size="small"
-                  >
-                    {{ account.last_error ? '异常' : account.checked_at ? '正常' : '未采集' }}
-                  </el-tag>
+                <div class="account-compare-main">
+                  <div class="account-compare-name">
+                    <span>{{ account.name }}</span>
+                    <el-tag
+                      :type="account.last_error ? 'danger' : account.checked_at ? 'success' : 'info'"
+                      effect="light"
+                      size="small"
+                    >
+                      {{ account.last_error ? '异常' : account.checked_at ? '正常' : '未采集' }}
+                    </el-tag>
+                  </div>
+                  <div class="account-compare-meta">
+                    <span><em>账号</em>{{ account.external_account_id }}</span>
+                    <span v-if="accountLoginLabel(account)">
+                      <em>登录</em>{{ accountLoginLabel(account) }}
+                    </span>
+                  </div>
+                  <div v-if="account.last_error" class="account-compare-error">
+                    {{ account.last_error }}
+                  </div>
                 </div>
                 <div class="account-compare-metrics">
                   <span><em>余额</em> {{ formatMoney(account.balance) }}</span>
                   <span><em>消耗</em> {{ formatMoney(account.quota_used) }}</span>
                 </div>
-                <div v-if="visibleAccountKeys(account).length > 0" class="account-key-summary-list">
+                <div v-if="visibleAccountKeys(account).length > 0" class="account-key-summary-list account-key-summary-row">
                   <span
                     v-for="key in visibleAccountKeys(account)"
                     :key="accountKeySummaryId(key)"
@@ -118,6 +129,7 @@
                     +{{ hiddenAccountKeyCount(account) }}
                   </span>
                 </div>
+                <div v-else class="account-key-empty">暂无密钥</div>
               </div>
               <div v-if="row.account_monitors.length === 0" class="muted">未配置账号</div>
               <div v-else-if="row.account_monitors.length > 3" class="muted">
@@ -281,9 +293,28 @@
                           {{ account.last_error ? '异常' : account.checked_at ? '正常' : '未采集' }}
                         </el-tag>
                       </div>
+                      <div class="embedded-account-meta">
+                        <span><em>账号</em>{{ account.external_account_id }}</span>
+                        <span v-if="accountLoginLabel(account)">
+                          <em>登录</em>{{ accountLoginLabel(account) }}
+                        </span>
+                      </div>
                       <div v-if="account.last_error" class="embedded-account-error">
                         {{ account.last_error }}
                       </div>
+                    </div>
+                    <div class="embedded-account-values">
+                      <div>
+                        <span>余额</span>
+                        <strong>{{ formatMoney(account.balance) }}</strong>
+                      </div>
+                      <div>
+                        <span>消耗</span>
+                        <strong>{{ formatMoney(account.quota_used) }}</strong>
+                      </div>
+                    </div>
+                    <div class="embedded-account-key-panel">
+                      <span class="embedded-account-key-title">密钥 / 分组</span>
                       <div
                         v-if="visibleAccountKeys(account).length > 0"
                         class="account-key-summary-list embedded-account-keys"
@@ -300,16 +331,7 @@
                           +{{ hiddenAccountKeyCount(account) }}
                         </span>
                       </div>
-                    </div>
-                    <div class="embedded-account-values">
-                      <div>
-                        <span>余额</span>
-                        <strong>{{ formatMoney(account.balance) }}</strong>
-                      </div>
-                      <div>
-                        <span>消耗</span>
-                        <strong>{{ formatMoney(account.quota_used) }}</strong>
-                      </div>
+                      <span v-else class="account-key-empty">暂无密钥</span>
                     </div>
                   </div>
                 </div>
@@ -1196,6 +1218,13 @@ function visibleAccountKeys(account: AccountMonitor) {
 
 function hiddenAccountKeyCount(account: AccountMonitor) {
   return Math.max(accountKeySummaries(account).length - maxAccountKeysShown, 0)
+}
+
+function accountLoginLabel(account: AccountMonitor) {
+  if (!account.username || account.username === account.external_account_id) {
+    return ''
+  }
+  return account.username
 }
 
 function accountKeySummaryId(key: AccountKeySummary) {

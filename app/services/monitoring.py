@@ -46,6 +46,7 @@ async def run_platform_balance_monitor(db: Session, platform_id: int) -> RelayPl
             account.balance = result.balance
             account.quota_used = result.quota_used
             account.quota_limit = result.quota_limit
+            account.key_summaries = result.key_summaries
             account.last_error = result.error
             if result.error:
                 errors.append(f"account {account.name}: {result.error}")

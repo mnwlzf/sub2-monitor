@@ -8,7 +8,7 @@ from sqlalchemy.orm import sessionmaker
 import app.models.all  # noqa: F401
 from app.api.platforms import build_account_balance_points
 from app.core.database import Base
-from app.models.monitor import PlatformGroupMonitor
+from app.models.monitor import PlatformAccountMonitor, PlatformGroupMonitor
 from app.models.platform import PlatformStatus, RelayPlatform
 from app.models.snapshot import GroupRateSnapshot
 from app.services.monitoring import run_platform_rate_monitor
@@ -98,3 +98,22 @@ def test_account_balance_history_points_use_real_snapshots_only() -> None:
             "quota_limit": 20.0,
         },
     ]
+
+
+def test_account_monitor_key_summaries_round_trip() -> None:
+    account = PlatformAccountMonitor(
+        platform_id=1,
+        name="Main",
+        external_account_id="user@example.com",
+    )
+
+    account.key_summaries = (
+        {"id": "101", "name": "prod-key", "group_id": "7", "group_name": "codex"},
+    )
+
+    assert account.key_summaries == [
+        {"id": "101", "name": "prod-key", "group_id": "7", "group_name": "codex"},
+    ]
+
+    account.key_summaries_json = "not json"
+    assert account.key_summaries == []

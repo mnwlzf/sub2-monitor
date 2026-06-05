@@ -149,6 +149,13 @@ class AccountMonitorUpdate(BaseModel):
     enabled: bool | None = None
 
 
+class AccountKeySummary(BaseModel):
+    id: str
+    name: str
+    group_id: str | None = None
+    group_name: str | None = None
+
+
 class AccountMonitorResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -162,6 +169,7 @@ class AccountMonitorResponse(BaseModel):
     balance: float | None
     quota_used: float | None
     quota_limit: float | None
+    key_summaries: list[AccountKeySummary] = Field(default_factory=list)
     last_error: str | None
     checked_at: datetime | None
     created_at: datetime

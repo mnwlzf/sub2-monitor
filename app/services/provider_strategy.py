@@ -15,6 +15,7 @@ class AccountBalanceResult:
     balance: float | None = None
     quota_used: float | None = None
     quota_limit: float | None = None
+    key_summaries: tuple[dict[str, str | None], ...] = ()
     error: str | None = None
 
 
@@ -598,6 +599,7 @@ class Sub2ApiStrategy(ProviderStrategy):
             ("total_actual_cost", "actual_cost", "total_cost"),
         )
         key_quota_used, key_quota_limit = self.sum_api_key_quotas(keys_payload)
+        key_summaries = self.api_key_summaries(keys_payload)
         if quota_used is None:
             quota_used = key_quota_used
         quota_limit = total_recharged if total_recharged is not None else key_quota_limit
@@ -606,6 +608,7 @@ class Sub2ApiStrategy(ProviderStrategy):
             return AccountBalanceResult(
                 balance=balance,
                 quota_limit=quota_limit,
+                key_summaries=key_summaries,
                 error=dashboard_error,
             )
 
@@ -613,6 +616,7 @@ class Sub2ApiStrategy(ProviderStrategy):
             balance=balance,
             quota_used=quota_used,
             quota_limit=quota_limit,
+            key_summaries=key_summaries,
         )
 
     async def fetch_group_rate(
@@ -860,6 +864,30 @@ class Sub2ApiStrategy(ProviderStrategy):
                 quota_limit += limit
                 has_limit = True
         return quota_used if has_used else None, quota_limit if has_limit else None
+
+    @classmethod
+    def api_key_summaries(cls, keys_payload: Any) -> tuple[dict[str, str | None], ...]:
+        summaries: list[dict[str, str | None]] = []
+        for raw_key in cls.group_rows(keys_payload):
+            if not isinstance(raw_key, dict):
+                continue
+            key_id = raw_key.get("id")
+            name = raw_key.get("name")
+            raw_group = raw_key.get("group")
+            group = raw_group if isinstance(raw_group, dict) else {}
+            group_id = raw_key.get("group_id")
+            if group_id is None:
+                group_id = group.get("id")
+            group_name = group.get("name")
+            summaries.append(
+                {
+                    "id": str(key_id) if key_id is not None else "",
+                    "name": str(name or key_id or "未命名密钥"),
+                    "group_id": str(group_id) if group_id is not None else None,
+                    "group_name": str(group_name) if group_name else None,
+                }
+            )
+        return tuple(summaries)
 
     @staticmethod
     def number_from_value(value: Any) -> float | None:

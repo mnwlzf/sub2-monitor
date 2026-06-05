@@ -71,6 +71,7 @@ def ensure_schema() -> None:
         account_column_sql = {
             "username": "ALTER TABLE platform_account_monitors ADD COLUMN username VARCHAR(160)",
             "password_encrypted": "ALTER TABLE platform_account_monitors ADD COLUMN password_encrypted TEXT",
+            "key_summaries_json": "ALTER TABLE platform_account_monitors ADD COLUMN key_summaries_json TEXT",
         }
         with engine.begin() as conn:
             for column, statement in account_column_sql.items():

@@ -105,6 +105,19 @@
                   <span><em>余额</em> {{ formatMoney(account.balance) }}</span>
                   <span><em>消耗</em> {{ formatMoney(account.quota_used) }}</span>
                 </div>
+                <div v-if="visibleAccountKeys(account).length > 0" class="account-key-summary-list">
+                  <span
+                    v-for="key in visibleAccountKeys(account)"
+                    :key="accountKeySummaryId(key)"
+                    class="account-key-summary"
+                  >
+                    <strong>{{ key.name }}</strong>
+                    <em>{{ keyGroupLabel(key) }}</em>
+                  </span>
+                  <span v-if="hiddenAccountKeyCount(account) > 0" class="account-key-summary more">
+                    +{{ hiddenAccountKeyCount(account) }}
+                  </span>
+                </div>
               </div>
               <div v-if="row.account_monitors.length === 0" class="muted">未配置账号</div>
               <div v-else-if="row.account_monitors.length > 3" class="muted">
@@ -270,6 +283,22 @@
                       </div>
                       <div v-if="account.last_error" class="embedded-account-error">
                         {{ account.last_error }}
+                      </div>
+                      <div
+                        v-if="visibleAccountKeys(account).length > 0"
+                        class="account-key-summary-list embedded-account-keys"
+                      >
+                        <span
+                          v-for="key in visibleAccountKeys(account)"
+                          :key="accountKeySummaryId(key)"
+                          class="account-key-summary"
+                        >
+                          <strong>{{ key.name }}</strong>
+                          <em>{{ keyGroupLabel(key) }}</em>
+                        </span>
+                        <span v-if="hiddenAccountKeyCount(account) > 0" class="account-key-summary more">
+                          +{{ hiddenAccountKeyCount(account) }}
+                        </span>
                       </div>
                     </div>
                     <div class="embedded-account-values">
@@ -516,6 +545,24 @@
           <el-table :data="detail.account_monitors" size="small">
             <el-table-column prop="name" label="名称" min-width="150" />
             <el-table-column prop="external_account_id" label="平台账号 ID" min-width="160" />
+            <el-table-column label="密钥 / 分组" min-width="220">
+              <template #default="{ row }">
+                <div v-if="visibleAccountKeys(row).length > 0" class="account-key-summary-list detail">
+                  <span
+                    v-for="key in visibleAccountKeys(row)"
+                    :key="accountKeySummaryId(key)"
+                    class="account-key-summary"
+                  >
+                    <strong>{{ key.name }}</strong>
+                    <em>{{ keyGroupLabel(key) }}</em>
+                  </span>
+                  <span v-if="hiddenAccountKeyCount(row) > 0" class="account-key-summary more">
+                    +{{ hiddenAccountKeyCount(row) }}
+                  </span>
+                </div>
+                <span v-else class="muted">-</span>
+              </template>
+            </el-table-column>
             <el-table-column label="余额" width="120">
               <template #default="{ row }">{{ row.balance ?? '-' }}</template>
             </el-table-column>
@@ -693,6 +740,7 @@ import {
   runPlatformRateMonitor,
   updateAccountMonitor,
   updatePlatform,
+  type AccountKeySummary,
   type AccountMonitor,
   type AccountMonitorPayload,
   type AccountBalanceHistorySeries,
@@ -730,6 +778,7 @@ const editing = ref<RelayPlatform | null>(null)
 const accountEditing = ref<AccountMonitor | null>(null)
 const formRef = ref<FormInstance>()
 const activeEmbeddedView = ref<'overview' | 'balances' | 'rates' | 'settings'>('overview')
+const maxAccountKeysShown = 3
 
 const embeddedMenuItems = [
   {
@@ -1135,6 +1184,26 @@ function statusText(status: PlatformStatus) {
     down: '不可用',
     unknown: '未知',
   }[status]
+}
+
+function accountKeySummaries(account: AccountMonitor) {
+  return account.key_summaries ?? []
+}
+
+function visibleAccountKeys(account: AccountMonitor) {
+  return accountKeySummaries(account).slice(0, maxAccountKeysShown)
+}
+
+function hiddenAccountKeyCount(account: AccountMonitor) {
+  return Math.max(accountKeySummaries(account).length - maxAccountKeysShown, 0)
+}
+
+function accountKeySummaryId(key: AccountKeySummary) {
+  return key.id || `${key.name}:${key.group_id ?? ''}:${key.group_name ?? ''}`
+}
+
+function keyGroupLabel(key: AccountKeySummary) {
+  return key.group_name || (key.group_id ? `分组 ${key.group_id}` : '未绑定分组')
 }
 
 function formatMoney(value: number | null) {

@@ -87,6 +87,13 @@ export interface DashboardStats {
   average_latency_ms: number | null
 }
 
+export interface AccountKeySummary {
+  id: string
+  name: string
+  group_id: string | null
+  group_name: string | null
+}
+
 export interface AccountMonitor {
   id: number
   platform_id: number
@@ -98,6 +105,7 @@ export interface AccountMonitor {
   balance: number | null
   quota_used: number | null
   quota_limit: number | null
+  key_summaries: AccountKeySummary[]
   last_error: string | null
   checked_at: string | null
   created_at: string

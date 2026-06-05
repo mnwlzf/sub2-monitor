@@ -397,6 +397,59 @@ body {
   font-style: normal;
 }
 
+.account-key-summary-list {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  min-width: 0;
+  margin-top: 8px;
+}
+
+.account-key-summary {
+  display: inline-flex;
+  max-width: 100%;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid #c7d2fe;
+  border-radius: 6px;
+  background: #eef2ff;
+  padding: 3px 6px;
+  color: #1e40af;
+  font-size: 12px;
+  line-height: 1.25;
+}
+
+.account-key-summary strong {
+  display: block;
+  max-width: 140px;
+  overflow: hidden;
+  color: #1e3a8a;
+  font-size: 12px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.account-key-summary em {
+  color: #64748b;
+  font-style: normal;
+  white-space: nowrap;
+}
+
+.account-key-summary.more {
+  border-color: #e5e7eb;
+  background: #f8fafc;
+  color: #64748b;
+}
+
+.account-key-summary-list.detail {
+  margin-top: 0;
+}
+
+.account-key-summary-list.detail .account-key-summary strong {
+  max-width: 180px;
+}
+
 .metric-stack {
   display: grid;
   gap: 10px;
@@ -1036,6 +1089,10 @@ body {
   font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.embedded-account-keys {
+  margin-top: 8px;
 }
 
 .embedded-account-values {

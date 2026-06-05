@@ -162,7 +162,18 @@ def test_sub2api_fetch_account_balance_logs_in_and_reads_user_usage(monkeypatch)
                 "keys?page=1&page_size=100": {
                     "code": 0,
                     "message": "success",
-                    "data": {"items": [{"quota_used": 2, "quota": 10}]},
+                    "data": {
+                        "items": [
+                            {
+                                "id": 101,
+                                "name": "prod-key",
+                                "group_id": 7,
+                                "group": {"id": 7, "name": "codex"},
+                                "quota_used": 2,
+                                "quota": 10,
+                            }
+                        ]
+                    },
                 },
             }
             return httpx.Response(
@@ -188,3 +199,6 @@ def test_sub2api_fetch_account_balance_logs_in_and_reads_user_usage(monkeypatch)
     assert result.balance == 12.5
     assert result.quota_used == 7.5
     assert result.quota_limit == 20
+    assert result.key_summaries == (
+        {"id": "101", "name": "prod-key", "group_id": "7", "group_name": "codex"},
+    )

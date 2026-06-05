@@ -26,11 +26,18 @@ const sampledPoints = computed(() =>
     .filter((point) => point.balance !== null)
     .map((point) => ({
       at: point.at,
+      timestamp: parseTime(point.at),
       balance: point.balance as number,
       quotaUsed: point.quota_used,
       quotaLimit: point.quota_limit,
     })),
 )
+
+function parseTime(value: string) {
+  const normalized = /[zZ]|[+-]\d{2}:\d{2}$/.test(value) ? value : `${value}Z`
+  const timestamp = new Date(normalized).getTime()
+  return Number.isNaN(timestamp) ? null : timestamp
+}
 
 function formatNumber(value: number | null | undefined) {
   if (value === null || value === undefined) {
@@ -55,7 +62,7 @@ function formatTime(value: string) {
 }
 
 function chartOptions(): EChartsCoreOption {
-  const data = sampledPoints.value.map((point) => [point.at, point.balance])
+  const data = sampledPoints.value.map((point) => [point.timestamp, point.balance])
   return {
     animation: false,
     color: ['#2563eb'],

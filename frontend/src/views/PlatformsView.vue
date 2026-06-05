@@ -508,65 +508,10 @@
         <section>
           <div class="monitor-section-title">
             <div>
-              <h3>余额趋势</h3>
-              <p>每个平台账号最近 24 小时余额变化，按真实采样点绘制：{{ detail.balance_cron }}</p>
-            </div>
-          </div>
-          <div v-loading="historyLoading" class="history-grid balance-history-grid">
-            <div v-for="series in balanceHistory" :key="series.account_id" class="history-card balance-history-card">
-              <div class="history-card-head">
-                <span>{{ series.account_name }}</span>
-                <strong>{{ latestBalance(series) }}</strong>
-              </div>
-              <BalanceLineChart :series="series" />
-              <div class="history-axis">
-                <span>{{ firstTimeLabel(series.points[0]?.at) }}</span>
-                <span>余额 Cron: {{ detail.balance_cron }}</span>
-                <span>{{ firstTimeLabel(lastBalancePoint(series)?.at) }}</span>
-              </div>
-              <div v-if="!hasChartData(balanceChartValues(series))" class="history-empty">暂无余额历史</div>
-            </div>
-          </div>
-        </section>
-
-        <section>
-          <div class="monitor-section-title">
-            <div>
-              <h3>倍率趋势</h3>
-              <p>最近七天分组实际倍率变化，坐标间隔按倍率 Cron 生成：{{ detail.rate_cron }}</p>
-            </div>
-          </div>
-          <div v-loading="historyLoading" class="history-grid">
-            <div
-              v-for="series in rateHistory"
-              :key="series.external_group_id"
-              class="history-card"
-              :class="{ highlighted: series.is_configured }"
-            >
-              <div class="history-card-head">
-                <span>{{ series.group_name }}</span>
-                <strong>{{ latestEffectiveRate(series) }}</strong>
-              </div>
-              <div v-if="series.description" class="history-card-desc">{{ series.description }}</div>
-              <RateLineChart :series="[series]" />
-              <div class="history-axis">
-                <span>{{ firstDateLabel(series.points[0]?.at) }}</span>
-                <span>倍率 Cron: {{ detail.rate_cron }}</span>
-                <span>{{ firstDateLabel(lastRatePoint(series)?.at) }}</span>
-              </div>
-              <div v-if="!hasChartData(effectiveRateChartValues(series))" class="history-empty">暂无倍率历史</div>
-            </div>
-            <el-empty v-if="!historyLoading && rateHistory.length === 0" description="暂无分组倍率历史" />
-          </div>
-        </section>
-
-        <section>
-          <div class="monitor-section-title">
-            <div>
               <h3>账号余额监控</h3>
               <p>配置一个或多个平台账号，用策略读取余额和额度剩余。</p>
             </div>
-            <el-button :icon="Plus" @click="accountDialogVisible = true">添加账号</el-button>
+            <el-button :icon="Plus" @click="openAccountCreate">添加账号</el-button>
           </div>
           <el-table :data="detail.account_monitors" size="small">
             <el-table-column prop="name" label="名称" min-width="150" />
@@ -586,6 +531,7 @@
             <el-table-column prop="last_error" label="错误" min-width="180" show-overflow-tooltip />
             <el-table-column label="操作" width="90">
               <template #default="{ row }">
+                <el-button :icon="Edit" link @click="openAccountEdit(row)">编辑</el-button>
                 <el-button :icon="Delete" link type="danger" @click="removeAccount(row.id)">删除</el-button>
               </template>
             </el-table-column>
@@ -670,7 +616,7 @@
       </template>
     </el-dialog>
 
-    <el-dialog v-model="accountDialogVisible" title="添加账号余额监控" width="520px">
+    <el-dialog v-model="accountDialogVisible" :title="accountEditing ? '编辑账号余额监控' : '添加账号余额监控'" width="520px">
       <el-form :model="accountForm" label-width="110px">
         <el-form-item label="显示名称">
           <el-input v-model="accountForm.name" />
@@ -745,7 +691,9 @@ import {
   runPlatformBalanceMonitor,
   runPlatformMonitor,
   runPlatformRateMonitor,
+  updateAccountMonitor,
   updatePlatform,
+  type AccountMonitor,
   type AccountMonitorPayload,
   type AccountBalanceHistorySeries,
   type DashboardStats,
@@ -779,6 +727,7 @@ const detailVisible = ref(false)
 const accountDialogVisible = ref(false)
 const groupDialogVisible = ref(false)
 const editing = ref<RelayPlatform | null>(null)
+const accountEditing = ref<AccountMonitor | null>(null)
 const formRef = ref<FormInstance>()
 const activeEmbeddedView = ref<'overview' | 'balances' | 'rates' | 'settings'>('overview')
 
@@ -895,6 +844,24 @@ function resetAccountForm() {
   })
 }
 
+function openAccountCreate() {
+  accountEditing.value = null
+  resetAccountForm()
+  accountDialogVisible.value = true
+}
+
+function openAccountEdit(row: AccountMonitor) {
+  accountEditing.value = row
+  Object.assign(accountForm, {
+    name: row.name,
+    external_account_id: row.external_account_id,
+    username: row.username,
+    password: null,
+    enabled: row.enabled,
+  })
+  accountDialogVisible.value = true
+}
+
 function resetGroupForm() {
   Object.assign(groupForm, { name: '', external_group_id: '', enabled: true })
 }
@@ -930,7 +897,6 @@ function openEdit(row: RelayPlatform) {
 
 async function openDetail(row: RelayPlatform) {
   detail.value = await fetchPlatform(row.id)
-  await loadHistory(row.id)
   detailVisible.value = true
 }
 
@@ -961,22 +927,6 @@ async function reloadDetail() {
     return
   }
   detail.value = await fetchPlatform(detail.value.id)
-  await loadHistory(detail.value.id)
-}
-
-async function loadHistory(platformId: number) {
-  historyLoading.value = true
-  try {
-    const [balances, rates] = await Promise.all([
-      fetchBalanceHistory(platformId),
-      fetchRateHistory(platformId),
-    ])
-    balanceHistory.value = balances
-    rateHistory.value = rates
-    platformBalanceHistory.value = { ...platformBalanceHistory.value, [platformId]: balances }
-  } finally {
-    historyLoading.value = false
-  }
 }
 
 async function loadPlatformBalanceHistories(platformIds: number[]) {
@@ -1116,8 +1066,13 @@ async function saveAccount() {
   if (!payload.password) {
     delete payload.password
   }
-  await createAccountMonitor(detail.value.id, payload)
+  if (accountEditing.value) {
+    await updateAccountMonitor(detail.value.id, accountEditing.value.id, payload)
+  } else {
+    await createAccountMonitor(detail.value.id, payload)
+  }
   resetAccountForm()
+  accountEditing.value = null
   accountDialogVisible.value = false
   await reloadDetail()
   await load()
@@ -1270,22 +1225,6 @@ function formatTime(value: string | null) {
   })
 }
 
-function firstTimeLabel(value: string | undefined) {
-  if (!value) {
-    return '-'
-  }
-  const date = parseApiTime(value)
-  if (Number.isNaN(date.getTime())) {
-    return '-'
-  }
-  return date.toLocaleTimeString('zh-CN', {
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false,
-    timeZone: 'Asia/Shanghai',
-  })
-}
-
 function firstDateLabel(value: string | undefined) {
   if (!value) {
     return '-'
@@ -1310,18 +1249,6 @@ function balanceChartValues(series: AccountBalanceHistorySeries) {
   return series.points.map((point) => point.balance)
 }
 
-function effectiveRateChartValues(series: GroupRateHistorySeries) {
-  return series.points.map((point) => point.effective_rate_multiplier)
-}
-
-function lastBalancePoint(series: AccountBalanceHistorySeries) {
-  return series.points[series.points.length - 1]
-}
-
-function lastRatePoint(series: GroupRateHistorySeries) {
-  return series.points[series.points.length - 1]
-}
-
 function hasChartData(values: Array<number | null>) {
   return values.some((value) => value !== null)
 }
@@ -1329,18 +1256,6 @@ function hasChartData(values: Array<number | null>) {
 function latestBalance(series: AccountBalanceHistorySeries) {
   const latest = [...series.points].reverse().find((point) => point.balance !== null)
   return latest ? formatMoney(latest.balance) : '-'
-}
-
-function latestRate(series: GroupRateHistorySeries) {
-  const latest = [...series.points].reverse().find((point) => point.rate_multiplier !== null)
-  return latest ? formatMultiplier(latest.rate_multiplier) : '-'
-}
-
-function latestEffectiveRate(series: GroupRateHistorySeries) {
-  const latest = [...series.points].reverse().find(
-    (point) => point.effective_rate_multiplier !== null,
-  )
-  return latest ? formatMultiplier(latest.effective_rate_multiplier) : '-'
 }
 
 onMounted(load)

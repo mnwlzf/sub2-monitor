@@ -150,6 +150,14 @@ export interface AccountMonitorPayload {
   enabled: boolean
 }
 
+export interface AccountMonitorUpdatePayload {
+  name?: string
+  external_account_id?: string
+  username?: string | null
+  password?: string | null
+  enabled?: boolean
+}
+
 export interface GroupMonitorPayload {
   name: string
   external_group_id: string
@@ -299,6 +307,15 @@ export async function fetchRateHistory(id: number) {
 
 export async function createAccountMonitor(platformId: number, payload: AccountMonitorPayload) {
   const { data } = await http.post<AccountMonitor>(`/platforms/${platformId}/accounts`, payload)
+  return data
+}
+
+export async function updateAccountMonitor(
+  platformId: number,
+  monitorId: number,
+  payload: AccountMonitorUpdatePayload,
+) {
+  const { data } = await http.patch<AccountMonitor>(`/platforms/${platformId}/accounts/${monitorId}`, payload)
   return data
 }
 

@@ -349,7 +349,7 @@
           <article v-for="row in platforms" :key="row.id" class="embedded-trends-section">
             <div class="embedded-platform-title compact">
               <strong>{{ row.name }}</strong>
-              <span>最近 24 小时，每个账号按小时展示余额变化</span>
+              <span>最近 24 小时，按余额 Cron 生成时间坐标：{{ row.balance_cron }}</span>
             </div>
             <div class="embedded-trend-grid">
               <div
@@ -408,18 +408,20 @@
           <article v-for="row in platforms" :key="row.id" class="embedded-trends-section">
             <div class="embedded-platform-title compact">
               <strong>{{ row.name }}</strong>
-              <span>最近 7 天，按分组展示实际倍率变化；{{ formatRateConversion(row) }}</span>
+              <span>最近 7 天，按倍率 Cron 生成时间坐标：{{ row.rate_cron }}</span>
             </div>
             <div class="embedded-trend-grid">
               <div
                 v-for="series in platformRateHistory[row.id] ?? []"
-                :key="series.group_id"
+                :key="series.external_group_id"
                 class="embedded-trend-card"
+                :class="{ highlighted: series.is_configured }"
               >
                 <div class="embedded-trend-head">
                   <span>{{ series.group_name }}</span>
                   <strong>{{ latestEffectiveRate(series) }}</strong>
                 </div>
+                <div v-if="series.description" class="embedded-trend-desc">{{ series.description }}</div>
                 <svg class="embedded-trend-chart" viewBox="0 0 340 132" role="img">
                   <g v-for="tick in chartYTicks(effectiveRateChartValues(series), 66)" :key="tick.key">
                     <line :x1="chartLeft" :x2="chartRight" :y1="tick.y" :y2="tick.y" class="chart-grid-line" />
@@ -569,7 +571,7 @@
           <div class="monitor-section-title">
             <div>
               <h3>余额趋势</h3>
-              <p>每个账号最近 24 小时余额变化，按小时展示。</p>
+              <p>每个账号最近 24 小时余额变化，坐标间隔按余额 Cron 生成：{{ detail.balance_cron }}</p>
             </div>
           </div>
           <div v-loading="historyLoading" class="history-grid">
@@ -615,7 +617,7 @@
               </svg>
               <div class="history-axis">
                 <span>{{ firstTimeLabel(series.points[0]?.at) }}</span>
-                <span>最近 24 小时 UTC+8</span>
+                <span>余额 Cron: {{ detail.balance_cron }}</span>
                 <span>{{ firstTimeLabel(lastBalancePoint(series)?.at) }}</span>
               </div>
               <div v-if="!hasChartData(balanceChartValues(series))" class="history-empty">暂无余额历史</div>
@@ -627,15 +629,21 @@
           <div class="monitor-section-title">
             <div>
               <h3>倍率趋势</h3>
-              <p>最近七天分组实际倍率变化，实际倍率 = 原始倍率 x 充值金额 / 到账金额。</p>
+              <p>最近七天分组实际倍率变化，坐标间隔按倍率 Cron 生成：{{ detail.rate_cron }}</p>
             </div>
           </div>
           <div v-loading="historyLoading" class="history-grid">
-            <div v-for="series in rateHistory" :key="series.group_id" class="history-card">
+            <div
+              v-for="series in rateHistory"
+              :key="series.external_group_id"
+              class="history-card"
+              :class="{ highlighted: series.is_configured }"
+            >
               <div class="history-card-head">
                 <span>{{ series.group_name }}</span>
                 <strong>{{ latestEffectiveRate(series) }}</strong>
               </div>
+              <div v-if="series.description" class="history-card-desc">{{ series.description }}</div>
               <svg class="trend-chart" viewBox="0 0 340 150" role="img">
                 <g v-for="tick in chartYTicks(effectiveRateChartValues(series), 86)" :key="tick.key">
                   <line :x1="chartLeft" :x2="chartRight" :y1="tick.y" :y2="tick.y" class="chart-grid-line" />
@@ -673,7 +681,7 @@
               </svg>
               <div class="history-axis">
                 <span>{{ firstDateLabel(series.points[0]?.at) }}</span>
-                <span>最近 7 天 UTC+8</span>
+                <span>倍率 Cron: {{ detail.rate_cron }}</span>
                 <span>{{ firstDateLabel(lastRatePoint(series)?.at) }}</span>
               </div>
               <div v-if="!hasChartData(effectiveRateChartValues(series))" class="history-empty">暂无倍率历史</div>
@@ -873,12 +881,12 @@ const embeddedMenuItems = [
   {
     key: 'balances',
     label: '余额趋势',
-    description: '账号余额的小时级变化',
+    description: '账号余额按 cron 间隔变化',
   },
   {
     key: 'rates',
     label: '倍率趋势',
-    description: '分组倍率的周期变化',
+    description: '分组倍率按 cron 间隔变化',
   },
   {
     key: 'settings',

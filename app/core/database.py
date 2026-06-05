@@ -76,3 +76,27 @@ def ensure_schema() -> None:
             for column, statement in account_column_sql.items():
                 if column not in account_columns:
                     conn.execute(text(statement))
+
+    if "platform_discovered_group_rates" in table_names:
+        discovered_columns = {
+            column["name"] for column in inspector.get_columns("platform_discovered_group_rates")
+        }
+        discovered_column_sql = {
+            "description": "ALTER TABLE platform_discovered_group_rates ADD COLUMN description TEXT",
+        }
+        with engine.begin() as conn:
+            for column, statement in discovered_column_sql.items():
+                if column not in discovered_columns:
+                    conn.execute(text(statement))
+
+    if "discovered_group_rate_snapshots" in table_names:
+        discovered_snapshot_columns = {
+            column["name"] for column in inspector.get_columns("discovered_group_rate_snapshots")
+        }
+        discovered_snapshot_column_sql = {
+            "description": "ALTER TABLE discovered_group_rate_snapshots ADD COLUMN description TEXT",
+        }
+        with engine.begin() as conn:
+            for column, statement in discovered_snapshot_column_sql.items():
+                if column not in discovered_snapshot_columns:
+                    conn.execute(text(statement))

@@ -3,9 +3,13 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
 from app.core.security import utcnow
+from app.models.monitor import PlatformDiscoveredGroupRate, PlatformGroupMonitor
 from app.models.platform import PlatformStatus, RelayPlatform
-from app.models.snapshot import AccountBalanceSnapshot, GroupRateSnapshot
-from app.services.provider_strategy import provider_registry
+from app.models.snapshot import AccountBalanceSnapshot, DiscoveredGroupRateSnapshot, GroupRateSnapshot
+from app.services.provider_strategy import (
+    DiscoveredGroupRateResult,
+    provider_registry,
+)
 
 
 async def run_platform_monitor(db: Session, platform_id: int) -> RelayPlatform:
@@ -91,6 +95,7 @@ async def run_platform_rate_monitor(db: Session, platform_id: int) -> RelayPlatf
         select(RelayPlatform)
         .options(
             selectinload(RelayPlatform.group_monitors),
+            selectinload(RelayPlatform.discovered_group_rates),
         )
         .where(RelayPlatform.id == platform_id)
     )
@@ -100,32 +105,70 @@ async def run_platform_rate_monitor(db: Session, platform_id: int) -> RelayPlatf
     strategy = provider_registry.get(platform.provider_type)
     errors: list[str] = []
 
+    for discovered_group in list(platform.discovered_group_rates):
+        db.delete(discovered_group)
+
+    discovered_catalog: list[DiscoveredGroupRateResult] | None
+    try:
+        discovered_catalog = await strategy.fetch_group_catalog(platform)
+    except Exception as exc:  # noqa: BLE001
+        discovered_catalog = None
+        errors.append(f"group catalog fetch failed: {exc}")
+
+    seen_group_ids: set[str] = set()
+    if discovered_catalog is not None:
+        configured_groups = {
+            group.external_group_id: group
+            for group in platform.group_monitors
+        }
+        for item in discovered_catalog:
+            seen_group_ids.add(item.external_group_id)
+            configured_group = configured_groups.get(item.external_group_id)
+            record_group_rate(
+                db=db,
+                platform=platform,
+                group=configured_group,
+                external_group_id=item.external_group_id,
+                name=item.name,
+                description=item.description,
+                rate_multiplier=item.rate_multiplier,
+                rpm_limit=item.rpm_limit,
+                error=item.error,
+            )
+            if item.error:
+                errors.append(f"group {item.name}: {item.error}")
+
     for group in platform.group_monitors:
-        if not group.enabled:
+        if not group.enabled or group.external_group_id in seen_group_ids:
             continue
         try:
             result = await strategy.fetch_group_rate(platform, group)
-            group.rate_multiplier = result.rate_multiplier
-            group.rpm_limit = result.rpm_limit
-            group.last_error = result.error
+            record_group_rate(
+                db=db,
+                platform=platform,
+                group=group,
+                external_group_id=group.external_group_id,
+                name=group.name,
+                description=None,
+                rate_multiplier=result.rate_multiplier,
+                rpm_limit=result.rpm_limit,
+                error=result.error,
+            )
             if result.error:
                 errors.append(f"group {group.name}: {result.error}")
         except Exception as exc:  # noqa: BLE001
-            group.last_error = str(exc)
-            errors.append(f"group {group.name}: {exc}")
-        checked_at = utcnow()
-        group.checked_at = checked_at
-        db.add(group)
-        db.add(
-            GroupRateSnapshot(
-                platform_id=platform.id,
-                group_monitor_id=group.id,
-                rate_multiplier=group.rate_multiplier,
-                rpm_limit=group.rpm_limit,
-                error_message=group.last_error,
-                created_at=checked_at,
+            record_group_rate(
+                db=db,
+                platform=platform,
+                group=group,
+                external_group_id=group.external_group_id,
+                name=group.name,
+                description=None,
+                rate_multiplier=None,
+                rpm_limit=None,
+                error=str(exc),
             )
-        )
+            errors.append(f"group {group.name}: {exc}")
 
     now = utcnow()
     platform.rate_last_run_at = now
@@ -149,6 +192,62 @@ def get_platform_detail(db: Session, platform_id: int) -> RelayPlatform | None:
         .options(
             selectinload(RelayPlatform.account_monitors),
             selectinload(RelayPlatform.group_monitors),
+            selectinload(RelayPlatform.discovered_group_rates),
         )
         .where(RelayPlatform.id == platform_id)
+    )
+
+
+def record_group_rate(
+    db: Session,
+    platform: RelayPlatform,
+    group: PlatformGroupMonitor | None,
+    external_group_id: str,
+    name: str,
+    description: str | None,
+    rate_multiplier: float | None,
+    rpm_limit: int | None,
+    error: str | None,
+) -> None:
+    checked_at = utcnow()
+    db.add(
+        PlatformDiscoveredGroupRate(
+            platform_id=platform.id,
+            external_group_id=external_group_id,
+            name=name,
+            description=description,
+            rate_multiplier=rate_multiplier,
+            rpm_limit=rpm_limit,
+            last_error=error,
+            checked_at=checked_at,
+        )
+    )
+    db.add(
+        DiscoveredGroupRateSnapshot(
+            platform_id=platform.id,
+            external_group_id=external_group_id,
+            name=name,
+            description=description,
+            rate_multiplier=rate_multiplier,
+            rpm_limit=rpm_limit,
+            error_message=error,
+            created_at=checked_at,
+        )
+    )
+    if group is None:
+        return
+    group.rate_multiplier = rate_multiplier
+    group.rpm_limit = rpm_limit
+    group.last_error = error
+    group.checked_at = checked_at
+    db.add(group)
+    db.add(
+        GroupRateSnapshot(
+            platform_id=platform.id,
+            group_monitor_id=group.id,
+            rate_multiplier=rate_multiplier,
+            rpm_limit=rpm_limit,
+            error_message=error,
+            created_at=checked_at,
+        )
     )

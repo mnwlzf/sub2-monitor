@@ -25,6 +25,16 @@ class GroupRateResult:
     error: str | None = None
 
 
+@dataclass(frozen=True)
+class DiscoveredGroupRateResult:
+    external_group_id: str
+    name: str
+    description: str | None = None
+    rate_multiplier: float | None = None
+    rpm_limit: int | None = None
+    error: str | None = None
+
+
 class ProviderStrategy(ABC):
     provider_type: str
     label: str
@@ -48,6 +58,13 @@ class ProviderStrategy(ABC):
         group: PlatformGroupMonitor,
     ) -> GroupRateResult:
         """Fetch one group's rate multiplier state from a provider platform."""
+
+    async def fetch_group_catalog(
+        self,
+        platform: RelayPlatform,
+    ) -> list[DiscoveredGroupRateResult] | None:
+        """Fetch all discoverable groups from a provider platform if supported."""
+        return None
 
     def auth_headers(self, platform: RelayPlatform) -> dict[str, str]:
         api_key = decrypt_secret(platform.api_key_encrypted)
@@ -114,6 +131,14 @@ class NewApiSiteStrategy(ABC):
     ) -> GroupRateResult:
         """Fetch a group rate for one New API site variant."""
 
+    async def fetch_group_catalog(
+        self,
+        provider: "NewApiStrategy",
+        platform: RelayPlatform,
+    ) -> list[DiscoveredGroupRateResult] | None:
+        """Fetch all discoverable groups for a New API site variant if supported."""
+        return None
+
 
 class GenericNewApiSiteStrategy(NewApiSiteStrategy):
     site_strategy = "generic"
@@ -156,10 +181,11 @@ class YunjinNewApiSiteStrategy(NewApiSiteStrategy):
     DEFAULT_QUOTA_PER_UNIT = 500_000
     LOGIN_ENDPOINTS = ("api/user/login?turnstile=", "api/user/login")
     PRICING_ENDPOINTS = ("api/pricing", "pricing")
+    GROUPS_ENDPOINT = "api/user/self/groups"
 
     site_strategy = "yunjin"
     label = "云锦"
-    description = "云锦站点策略：账号登录后读取 /api/user/self，倍率读取 /api/pricing"
+    description = "云锦站点策略：账号登录后读取 /api/user/self，分组读取 /api/user/self/groups"
 
     async def fetch_account_balance(
         self,
@@ -270,6 +296,66 @@ class YunjinNewApiSiteStrategy(NewApiSiteStrategy):
             return GroupRateResult(rate_multiplier=float(raw_rate))
         except (TypeError, ValueError):
             return GroupRateResult(error=f"yunjin group ratio is not numeric: {raw_rate!r}")
+
+    async def fetch_group_catalog(
+        self,
+        provider: "NewApiStrategy",
+        platform: RelayPlatform,
+    ) -> list[DiscoveredGroupRateResult] | None:
+        status, payload, _ = await provider.get_json(platform, f"/{self.GROUPS_ENDPOINT}")
+        if status >= 400:
+            return None
+        return self.parse_group_catalog_payload(payload)
+
+    @staticmethod
+    def parse_group_catalog_payload(payload: Any) -> list[DiscoveredGroupRateResult] | None:
+        if not isinstance(payload, dict):
+            return None
+        data = payload.get("data")
+        if not isinstance(data, dict):
+            return None
+
+        groups: list[DiscoveredGroupRateResult] = []
+        for external_group_id, raw_group in data.items():
+            if not isinstance(external_group_id, str) or not external_group_id.strip():
+                continue
+            name = external_group_id.strip()
+            description: str | None = None
+            rate_multiplier: float | None = None
+            rpm_limit: int | None = None
+            error: str | None = None
+
+            if isinstance(raw_group, dict):
+                desc = raw_group.get("desc")
+                if isinstance(desc, str) and desc.strip():
+                    description = desc.strip()
+                raw_ratio = raw_group.get("ratio")
+                if raw_ratio is not None:
+                    try:
+                        rate_multiplier = float(raw_ratio)
+                    except (TypeError, ValueError):
+                        error = f"yunjin group ratio is not numeric: {raw_ratio!r}"
+                raw_rpm = raw_group.get("rpm_limit", raw_group.get("rpm"))
+                if raw_rpm is not None:
+                    try:
+                        rpm_limit = int(float(raw_rpm))
+                    except (TypeError, ValueError):
+                        if error is None:
+                            error = f"yunjin group rpm is not numeric: {raw_rpm!r}"
+            else:
+                error = f"yunjin group payload is not an object: {raw_group!r}"
+
+            groups.append(
+                DiscoveredGroupRateResult(
+                    external_group_id=name,
+                    name=name,
+                    description=description,
+                    rate_multiplier=rate_multiplier,
+                    rpm_limit=rpm_limit,
+                    error=error,
+                )
+            )
+        return groups
 
     @staticmethod
     def site_url(platform: RelayPlatform) -> str:
@@ -460,6 +546,13 @@ class NewApiStrategy(ProviderStrategy):
     ) -> GroupRateResult:
         strategy = self.site_strategies.get(platform.site_strategy)
         return await strategy.fetch_group_rate(self, platform, group)
+
+    async def fetch_group_catalog(
+        self,
+        platform: RelayPlatform,
+    ) -> list[DiscoveredGroupRateResult] | None:
+        strategy = self.site_strategies.get(platform.site_strategy)
+        return await strategy.fetch_group_catalog(self, platform)
 
 
 class ProviderRegistry:

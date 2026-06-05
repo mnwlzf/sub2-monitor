@@ -165,8 +165,12 @@ export interface GroupRateHistoryPoint {
 }
 
 export interface GroupRateHistorySeries {
-  group_id: number
+  group_id: number | null
+  external_group_id: string
   group_name: string
+  description: string | null
+  configured_monitor_id: number | null
+  is_configured: boolean
   points: GroupRateHistoryPoint[]
 }
 

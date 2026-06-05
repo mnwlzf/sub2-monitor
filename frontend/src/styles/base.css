@@ -485,6 +485,12 @@ body {
   padding: 12px;
 }
 
+.history-card.highlighted {
+  border-color: #f59e0b;
+  background: linear-gradient(180deg, #fffaf0 0%, #fff7ed 100%);
+  box-shadow: 0 12px 26px rgba(245, 158, 11, 0.14);
+}
+
 .history-card-head {
   display: flex;
   align-items: center;
@@ -505,6 +511,13 @@ body {
 .history-card-head strong {
   color: #0f172a;
   font-size: 16px;
+}
+
+.history-card-desc {
+  margin-bottom: 8px;
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1.45;
 }
 
 .trend-chart {
@@ -574,6 +587,18 @@ body {
   margin-top: 8px;
   color: #94a3b8;
   font-size: 12px;
+}
+
+.history-axis span {
+  min-width: 0;
+}
+
+.history-axis span:nth-child(2) {
+  flex: 1;
+  overflow: hidden;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .history-empty {
@@ -1170,6 +1195,12 @@ body {
   padding: 10px;
 }
 
+.embedded-trend-card.highlighted {
+  border-color: #f59e0b;
+  background: linear-gradient(180deg, #fffaf0 0%, #fff7ed 100%);
+  box-shadow: 0 10px 22px rgba(245, 158, 11, 0.12);
+}
+
 .embedded-trend-head {
   display: flex;
   align-items: center;
@@ -1190,6 +1221,13 @@ body {
 .embedded-trend-head strong {
   color: #0f172a;
   font-size: 13px;
+}
+
+.embedded-trend-desc {
+  margin-bottom: 6px;
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1.4;
 }
 
 .embedded-trend-chart {

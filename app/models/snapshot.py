@@ -58,3 +58,19 @@ class GroupRateSnapshot(Base):
 
     group_monitor = relationship("PlatformGroupMonitor")
     platform = relationship("RelayPlatform")
+
+
+class DiscoveredGroupRateSnapshot(Base):
+    __tablename__ = "discovered_group_rate_snapshots"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    platform_id: Mapped[int] = mapped_column(ForeignKey("relay_platforms.id", ondelete="CASCADE"), index=True)
+    external_group_id: Mapped[str] = mapped_column(String(120), index=True)
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text)
+    rate_multiplier: Mapped[float | None] = mapped_column(Float)
+    rpm_limit: Mapped[int | None] = mapped_column(Integer)
+    error_message: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+
+    platform = relationship("RelayPlatform")

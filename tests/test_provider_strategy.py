@@ -46,3 +46,28 @@ def test_relative_endpoint_keeps_subpath_base_url() -> None:
         request = client.build_request("GET", "api/pricing")
 
     assert str(request.url) == "https://example.com/yunjin/api/pricing"
+
+
+def test_yunjin_group_catalog_parser_reads_desc_and_ratio() -> None:
+    payload = {
+        "data": {
+            "codex": {
+                "desc": "codex分组，（自营稳定）",
+                "ratio": 0.08,
+            },
+            "A-CCMAX": {
+                "desc": "Claude MAX",
+                "ratio": "1.8",
+            },
+        },
+        "message": "",
+        "success": True,
+    }
+
+    groups = YunjinNewApiSiteStrategy.parse_group_catalog_payload(payload)
+
+    assert groups is not None
+    assert [item.external_group_id for item in groups] == ["codex", "A-CCMAX"]
+    assert groups[0].description == "codex分组，（自营稳定）"
+    assert groups[0].rate_multiplier == 0.08
+    assert groups[1].rate_multiplier == 1.8

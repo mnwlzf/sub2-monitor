@@ -61,6 +61,11 @@ class RelayPlatform(Base):
         back_populates="platform",
         cascade="all, delete-orphan",
     )
+    discovered_group_rates = relationship(
+        "PlatformDiscoveredGroupRate",
+        back_populates="platform",
+        cascade="all, delete-orphan",
+    )
 
     @property
     def has_api_key(self) -> bool:

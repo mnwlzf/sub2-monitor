@@ -54,3 +54,38 @@ class PlatformGroupMonitor(Base):
         if self.rate_multiplier is None or self.platform.effective_rate_factor is None:
             return None
         return self.rate_multiplier * self.platform.effective_rate_factor
+
+
+class PlatformDiscoveredGroupRate(Base):
+    __tablename__ = "platform_discovered_group_rates"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    platform_id: Mapped[int] = mapped_column(ForeignKey("relay_platforms.id"), index=True)
+    external_group_id: Mapped[str] = mapped_column(String(120), nullable=False)
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text)
+    rate_multiplier: Mapped[float | None] = mapped_column(Float)
+    rpm_limit: Mapped[int | None] = mapped_column(Integer)
+    last_error: Mapped[str | None] = mapped_column(Text)
+    checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+    platform = relationship("RelayPlatform", back_populates="discovered_group_rates")
+
+    @property
+    def effective_rate_multiplier(self) -> float | None:
+        if self.rate_multiplier is None or self.platform.effective_rate_factor is None:
+            return None
+        return self.rate_multiplier * self.platform.effective_rate_factor
+
+    @property
+    def configured_monitor_id(self) -> int | None:
+        for group in self.platform.group_monitors:
+            if group.external_group_id == self.external_group_id:
+                return group.id
+        return None
+
+    @property
+    def is_configured(self) -> bool:
+        return self.configured_monitor_id is not None

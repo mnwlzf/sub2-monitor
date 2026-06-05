@@ -233,8 +233,12 @@ class GroupRateHistoryPoint(BaseModel):
 
 
 class GroupRateHistorySeries(BaseModel):
-    group_id: int
+    group_id: int | None = None
+    external_group_id: str
     group_name: str
+    description: str | None = None
+    configured_monitor_id: int | None = None
+    is_configured: bool = False
     points: list[GroupRateHistoryPoint]
 
 

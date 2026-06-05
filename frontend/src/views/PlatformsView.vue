@@ -432,14 +432,12 @@
                   :key="series.external_group_id"
                   class="embedded-rate-legend-item"
                   :class="{ highlighted: series.is_configured }"
+                  :title="series.description ? `${series.group_name} - ${series.description}` : series.group_name"
                 >
                   <span class="embedded-rate-swatch" :style="{ backgroundColor: seriesColor(index) }" />
                   <div class="embedded-rate-legend-main">
-                    <strong>{{ series.group_name }}</strong>
-                    <span v-if="series.description">{{ series.description }}</span>
-                  </div>
-                  <div class="embedded-rate-legend-metrics">
-                    <strong>{{ latestEffectiveRate(series) }}</strong>
+                    <strong class="embedded-rate-legend-name">{{ series.group_name }}</strong>
+                    <strong class="embedded-rate-legend-value">{{ latestEffectiveRate(series) }}</strong>
                   </div>
                 </div>
               </div>
@@ -935,7 +933,6 @@ const balanceHistory = ref<AccountBalanceHistorySeries[]>([])
 const rateHistory = ref<GroupRateHistorySeries[]>([])
 const platformBalanceHistory = ref<Record<number, AccountBalanceHistorySeries[]>>({})
 const platformRateHistory = ref<Record<number, GroupRateHistorySeries[]>>({})
-const hiddenRateSeries = ref<Record<number, string[]>>({})
 const loading = ref(false)
 const historyLoading = ref(false)
 const saving = ref(false)
@@ -1381,8 +1378,7 @@ function uniqueDiscoveredGroupRates(rows: DiscoveredGroupRate[]) {
 }
 
 function rateHistoryVisibleSeries(platformId: number) {
-  const hidden = new Set(hiddenRateSeries.value[platformId] ?? [])
-  return (platformRateHistory.value[platformId] ?? []).filter((series) => !hidden.has(series.external_group_id))
+  return platformRateHistory.value[platformId] ?? []
 }
 
 function platformRatePrimarySeries(platformId: number) {

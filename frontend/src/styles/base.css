@@ -1222,17 +1222,17 @@ body {
 
 .embedded-rate-platform-card {
   display: grid;
-  gap: 12px;
-  border: 1px solid #e8edf5;
-  border-radius: 8px;
-  background: #fbfdff;
-  padding: 12px;
+  gap: 10px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  padding: 0;
 }
 
 .embedded-rate-legend {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-  gap: 10px;
+  grid-template-columns: repeat(auto-fit, minmax(168px, 1fr));
+  gap: 8px;
 }
 
 .embedded-rate-legend-item {
@@ -1240,68 +1240,59 @@ body {
   min-width: 0;
   align-items: center;
   justify-content: flex-start;
-  gap: 10px;
-  border: 1px solid #e8edf5;
-  border-radius: 8px;
+  gap: 6px;
+  border: 1px solid #dbe3ef;
+  border-radius: 999px;
   background: #ffffff;
-  padding: 10px 12px;
+  padding: 6px 10px;
 }
 
 .embedded-rate-legend-item.highlighted {
   border-color: #f59e0b;
-  background: linear-gradient(180deg, #fffaf0 0%, #fff7ed 100%);
+  background: #fffaf0;
 }
 
 .embedded-rate-legend-main {
   min-width: 0;
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
   flex: 1;
 }
 
-.embedded-rate-legend-main strong,
-.embedded-rate-legend-main span {
-  display: block;
+.embedded-rate-legend-name {
   overflow: hidden;
+  color: #0f172a;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
   text-overflow: ellipsis;
 }
 
-.embedded-rate-legend-main strong {
+.embedded-rate-legend-value {
+  flex-shrink: 0;
+  overflow: hidden;
   color: #0f172a;
   font-size: 13px;
+  font-variant-numeric: tabular-nums;
   white-space: nowrap;
-}
-
-.embedded-rate-legend-main span {
-  margin-top: 3px;
-  color: #64748b;
-  font-size: 12px;
-  line-height: 1.35;
-  white-space: normal;
-}
-
-.embedded-rate-legend-metrics {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-shrink: 0;
-}
-
-.embedded-rate-legend-metrics strong {
-  color: #0f172a;
-  font-size: 14px;
+  text-overflow: ellipsis;
 }
 
 .embedded-rate-chart {
   display: block;
   width: 100%;
-  height: 260px;
-  border-radius: 6px;
+  height: 240px;
+  border-radius: 8px;
   background: #ffffff;
+  border: 1px solid #eef2f7;
 }
 
 .embedded-rate-swatch {
   flex: 0 0 auto;
-  width: 10px;
-  height: 10px;
+  width: 8px;
+  height: 8px;
   border-radius: 999px;
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.75);
 }
@@ -1320,7 +1311,7 @@ body {
 }
 
 .embedded-rate-section {
-  padding: 14px;
+  padding: 8px 0 0;
 }
 
 .rate-history-axis {

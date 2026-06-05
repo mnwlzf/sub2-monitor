@@ -114,7 +114,6 @@ async def run_platform_rate_monitor(db: Session, platform_id: int) -> RelayPlatf
         discovered_catalog = None
         errors.append(f"group catalog fetch failed: {exc}")
 
-    seen_group_ids: set[str] = set()
     if discovered_catalog is not None:
         for discovered_group in list(platform.discovered_group_rates):
             db.delete(discovered_group)
@@ -123,7 +122,6 @@ async def run_platform_rate_monitor(db: Session, platform_id: int) -> RelayPlatf
             for group in platform.group_monitors
         }
         for item in discovered_catalog:
-            seen_group_ids.add(item.external_group_id)
             checked_at = utcnow()
             configured_group = configured_groups.get(item.external_group_id)
             record_discovered_group_rate(
@@ -149,58 +147,6 @@ async def run_platform_rate_monitor(db: Session, platform_id: int) -> RelayPlatf
                 )
             if item.error:
                 errors.append(f"group {item.name}: {item.error}")
-
-    for group in platform.group_monitors:
-        if not group.enabled or group.external_group_id in seen_group_ids:
-            continue
-        try:
-            result = await strategy.fetch_group_rate(platform, group)
-            checked_at = utcnow()
-            record_discovered_group_rate(
-                db=db,
-                platform=platform,
-                external_group_id=group.external_group_id,
-                name=group.name,
-                description=None,
-                rate_multiplier=result.rate_multiplier,
-                rpm_limit=result.rpm_limit,
-                error=result.error,
-                checked_at=checked_at,
-            )
-            record_configured_group_rate(
-                db=db,
-                platform=platform,
-                group=group,
-                rate_multiplier=result.rate_multiplier,
-                rpm_limit=result.rpm_limit,
-                error=result.error,
-                checked_at=checked_at,
-            )
-            if result.error:
-                errors.append(f"group {group.name}: {result.error}")
-        except Exception as exc:  # noqa: BLE001
-            checked_at = utcnow()
-            record_discovered_group_rate(
-                db=db,
-                platform=platform,
-                external_group_id=group.external_group_id,
-                name=group.name,
-                description=None,
-                rate_multiplier=None,
-                rpm_limit=None,
-                error=str(exc),
-                checked_at=checked_at,
-            )
-            record_configured_group_rate(
-                db=db,
-                platform=platform,
-                group=group,
-                rate_multiplier=None,
-                rpm_limit=None,
-                error=str(exc),
-                checked_at=checked_at,
-            )
-            errors.append(f"group {group.name}: {exc}")
 
     now = utcnow()
     platform.rate_last_run_at = now

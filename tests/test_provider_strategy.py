@@ -206,6 +206,105 @@ def test_newapi_channel_rate_parser_reads_official_ratio_sync_shape() -> None:
     assert "分组: default, paid" in (channels[0].description or "")
 
 
+def test_newapi_fetch_account_balance_reads_key_summaries(monkeypatch) -> None:
+    class StubAsyncClient:
+        def __init__(self, *args, **kwargs) -> None:
+            self.base_url = str(kwargs.get("base_url") or "")
+            self.headers = dict(kwargs.get("headers") or {})
+            self.requests = []
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def get(
+            self,
+            path: str,
+            params: dict | None = None,
+            headers: dict | None = None,
+        ):
+            self.requests.append(("GET", path, params))
+            target = path
+            if target.startswith("https://"):
+                target = target.split("https://newapi.example.com/", 1)[-1]
+            if path == "api/token/":
+                assert self.headers.get("New-Api-User") == "Bearer 123"
+                return httpx.Response(
+                    200,
+                    json={
+                        "success": True,
+                        "data": {
+                            "items": [
+                                {"id": 11, "name": "prod-key"},
+                                {"id": 12, "name": "ops-key"},
+                            ],
+                            "total": 2,
+                            "page_size": 100,
+                        },
+                    },
+                    request=httpx.Request("GET", f"{self.base_url}{path}"),
+                )
+            if target == "api/token/11":
+                return httpx.Response(
+                    200,
+                    json={
+                        "success": True,
+                        "data": {"id": 11, "name": "prod-key", "group": {"id": 7, "name": "codex"}},
+                    },
+                    request=httpx.Request("GET", f"{self.base_url}{path}"),
+                )
+            if target == "api/token/12":
+                return httpx.Response(
+                    200,
+                    json={
+                        "success": True,
+                        "data": {"id": 12, "name": "ops-key", "group_id": 9, "group_name": "ops"},
+                    },
+                    request=httpx.Request("GET", f"{self.base_url}{path}"),
+                )
+            if target.endswith("/api/account/123") or target == "api/account/123":
+                return httpx.Response(
+                    200,
+                    json={"balance": 12.5, "used_quota": 3.5, "quota": 20},
+                    request=httpx.Request("GET", f"{self.base_url}{path}"),
+                )
+            raise AssertionError(path)
+
+    monkeypatch.setattr(provider_module.httpx, "AsyncClient", StubAsyncClient)
+
+    result = asyncio.run(
+        NewApiStrategy().fetch_account_balance(
+            SimpleNamespace(
+                base_url="https://newapi.example.com",
+                site_strategy="generic",
+                api_key_encrypted=None,
+                auth_header_name="Authorization",
+                auth_header_prefix="Bearer",
+                account_monitors=[
+                    SimpleNamespace(enabled=True, external_account_id="123", username=None)
+                ],
+            ),
+            SimpleNamespace(
+                external_account_id="123",
+                username=None,
+                password_encrypted=None,
+                enabled=True,
+            ),
+        )
+    )
+
+    assert result.error is None
+    assert result.balance == 12.5
+    assert result.quota_used == 3.5
+    assert result.quota_limit == 20
+    assert result.key_summaries == (
+        {"id": "11", "name": "prod-key", "group_id": "7", "group_name": "codex"},
+        {"id": "12", "name": "ops-key", "group_id": "9", "group_name": "ops"},
+    )
+
+
 def test_sub2api_fetch_account_balance_logs_in_and_reads_user_usage(monkeypatch) -> None:
     class StubAsyncClient:
         def __init__(self, *args, **kwargs) -> None:

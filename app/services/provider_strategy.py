@@ -115,7 +115,10 @@ class ProviderStrategy(ABC):
         url = f"{base_url}/{path.lstrip('/')}"
         async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
             response = await client.get(url, headers=self.auth_headers(platform))
-        latency_ms = int(response.elapsed.total_seconds() * 1000)
+        try:
+            latency_ms = int(response.elapsed.total_seconds() * 1000)
+        except Exception:  # noqa: BLE001
+            latency_ms = 0
         if not response.headers.get("content-type", "").lower().startswith("application/json"):
             return response.status_code, {}, latency_ms
         return response.status_code, response.json(), latency_ms
@@ -1064,7 +1067,31 @@ class NewApiStrategy(ProviderStrategy):
         account: PlatformAccountMonitor,
     ) -> AccountBalanceResult:
         strategy = self.site_strategies.get(platform.site_strategy)
-        return await strategy.fetch_account_balance(self, platform, account)
+        balance_result: AccountBalanceResult
+        try:
+            balance_result = await strategy.fetch_account_balance(self, platform, account)
+        except Exception as exc:  # noqa: BLE001
+            balance_result = AccountBalanceResult(error=str(exc))
+
+        key_summaries: tuple[dict[str, str | None], ...] = balance_result.key_summaries
+        key_summary_error: str | None = None
+        try:
+            fetched_key_summaries = await self.fetch_key_summaries(platform)
+            if fetched_key_summaries:
+                key_summaries = fetched_key_summaries
+        except Exception as exc:  # noqa: BLE001
+            key_summary_error = str(exc)
+
+        error = balance_result.error
+        if key_summary_error:
+            error = f"{error}; {key_summary_error}" if error else key_summary_error
+        return AccountBalanceResult(
+            balance=balance_result.balance,
+            quota_used=balance_result.quota_used,
+            quota_limit=balance_result.quota_limit,
+            key_summaries=key_summaries,
+            error=error,
+        )
 
     async def fetch_group_rate(
         self,
@@ -1085,7 +1112,9 @@ class NewApiStrategy(ProviderStrategy):
         headers = self.auth_headers(platform)
         user_id = self.management_user_id(platform)
         if user_id:
-            headers["New-Api-User"] = user_id
+            headers["New-Api-User"] = (
+                user_id if user_id.lower().startswith("bearer ") else f"Bearer {user_id}"
+            )
         return headers
 
     @staticmethod
@@ -1093,10 +1122,29 @@ class NewApiStrategy(ProviderStrategy):
         for account in platform.account_monitors:
             if not account.enabled:
                 continue
-            candidate = (account.external_account_id or account.username or "").strip()
-            if candidate.isdigit():
-                return candidate
+            for candidate in (account.external_account_id, account.username):
+                candidate = (candidate or "").strip()
+                if not candidate:
+                    continue
+                if candidate.lower().startswith("bearer "):
+                    candidate = candidate[7:].strip()
+                if candidate.isdigit():
+                    return candidate
         return None
+
+    @staticmethod
+    def user_id_variants(user_id: str) -> list[str]:
+        variants: list[str] = []
+        normalized = user_id.strip()
+        if not normalized:
+            return variants
+        for candidate in (
+            normalized if normalized.lower().startswith("bearer ") else f"Bearer {normalized}",
+            normalized,
+        ):
+            if candidate not in variants:
+                variants.append(candidate)
+        return variants
 
     @staticmethod
     def site_url(platform: RelayPlatform) -> str:
@@ -1125,6 +1173,168 @@ class NewApiStrategy(ProviderStrategy):
             return None
         message = payload.get("message") or payload.get("msg") or payload.get("error")
         return str(message) if message else None
+
+    async def fetch_key_summaries(
+        self,
+        platform: RelayPlatform,
+    ) -> tuple[dict[str, str | None], ...]:
+        user_id = self.management_user_id(platform)
+        if not user_id:
+            raise ValueError("newapi key monitoring requires an enabled account monitor with New-Api-User")
+
+        last_error: str | None = None
+        for user_id_variant in self.user_id_variants(user_id):
+            try:
+                async with httpx.AsyncClient(
+                    base_url=self.site_url(platform),
+                    headers={**self.auth_headers(platform), "New-Api-User": user_id_variant},
+                    timeout=self.timeout_seconds,
+                ) as client:
+                    summaries = await self.fetch_token_summaries(client)
+                    if summaries is not None:
+                        return summaries
+            except httpx.HTTPError as exc:
+                last_error = str(exc)
+            except ValueError as exc:
+                last_error = str(exc)
+        raise ValueError(last_error or "newapi token catalog fetch failed")
+
+    async def fetch_token_summaries(
+        self,
+        client: httpx.AsyncClient,
+    ) -> tuple[dict[str, str | None], ...] | None:
+        token_ids: list[str] = []
+        page = 1
+        page_size = 100
+        while True:
+            response = await client.get(
+                "api/token/",
+                params={"p": page, "page": page, "page_size": page_size, "size": page_size},
+            )
+            payload = self.safe_json(response)
+            if response.status_code >= 400:
+                raise ValueError(f"newapi token list returned HTTP {response.status_code}")
+            if self.response_failed(payload):
+                raise ValueError(self.response_message(payload) or "newapi token list failed")
+
+            items, total, response_page_size = self.token_list_items(payload)
+            for item in items:
+                token_id = item.get("id")
+                if token_id is None:
+                    continue
+                token_id_text = str(token_id).strip()
+                if token_id_text:
+                    token_ids.append(token_id_text)
+
+            if not items:
+                break
+            if total is not None and len(token_ids) >= total:
+                break
+            if len(items) < response_page_size:
+                break
+            page += 1
+
+        if not token_ids:
+            return ()
+
+        details = await self.fetch_token_details(client, token_ids)
+        summaries: list[dict[str, str | None]] = []
+        for token_id in token_ids:
+            detail = details.get(token_id, {})
+            name = self.string_value(detail.get("name")) or f"密钥 {token_id}"
+            group_id, group_name = self.token_group_fields(detail)
+            summaries.append(
+                {
+                    "id": token_id,
+                    "name": name,
+                    "group_id": group_id,
+                    "group_name": group_name,
+                }
+            )
+        return tuple(summaries)
+
+    async def fetch_token_details(
+        self,
+        client: httpx.AsyncClient,
+        token_ids: list[str],
+    ) -> dict[str, dict[str, Any]]:
+        details: dict[str, dict[str, Any]] = {}
+        for token_id in token_ids:
+            response = await client.get(f"api/token/{token_id}")
+            payload = self.safe_json(response)
+            if response.status_code >= 400:
+                raise ValueError(f"newapi token {token_id} returned HTTP {response.status_code}")
+            if self.response_failed(payload):
+                raise ValueError(self.response_message(payload) or f"newapi token {token_id} failed")
+            data = self.unwrap_payload(payload)
+            if isinstance(data, dict):
+                details[token_id] = data
+        return details
+
+    @staticmethod
+    def token_list_items(payload: Any) -> tuple[list[dict[str, Any]], int | None, int]:
+        data = NewApiStrategy.unwrap_payload(payload)
+        if isinstance(data, list):
+            return [item for item in data if isinstance(item, dict)], None, max(len(data), 1)
+        if not isinstance(data, dict):
+            return [], None, 1
+
+        items = data.get("items")
+        if isinstance(items, list):
+            page_size = data.get("page_size", data.get("size"))
+            if isinstance(page_size, int) and page_size > 0:
+                response_page_size = page_size
+            else:
+                response_page_size = len(items) or 1
+            total = data.get("total")
+            total_count = None
+            if isinstance(total, int):
+                total_count = total
+            elif isinstance(total, str) and total.isdigit():
+                total_count = int(total)
+            return [item for item in items if isinstance(item, dict)], total_count, response_page_size
+
+        if all(isinstance(item, dict) for item in data.values()):
+            return [item for item in data.values() if isinstance(item, dict)], None, max(len(data), 1)
+        return [], None, 1
+
+    @staticmethod
+    def token_group_fields(token_detail: dict[str, Any]) -> tuple[str | None, str | None]:
+        group_id = None
+        group_name = None
+
+        group = token_detail.get("group")
+        if isinstance(group, dict):
+            raw_group_id = group.get("id")
+            if isinstance(raw_group_id, int | float):
+                group_id = str(int(raw_group_id))
+            elif isinstance(raw_group_id, str) and raw_group_id.strip():
+                group_id = raw_group_id.strip()
+            raw_group_name = group.get("name")
+            if isinstance(raw_group_name, str) and raw_group_name.strip():
+                group_name = raw_group_name.strip()
+        elif isinstance(group, str) and group.strip():
+            text = group.strip()
+            if text.isdigit():
+                group_id = text
+            else:
+                group_name = text
+
+        raw_group_id = token_detail.get("group_id")
+        if group_id is None:
+            if isinstance(raw_group_id, int | float):
+                group_id = str(int(raw_group_id))
+            elif isinstance(raw_group_id, str) and raw_group_id.strip():
+                group_id = raw_group_id.strip()
+
+        raw_group_name = token_detail.get("group_name")
+        if group_name is None and isinstance(raw_group_name, str) and raw_group_name.strip():
+            group_name = raw_group_name.strip()
+
+        if group_name is None and group_id is not None and not isinstance(group, dict):
+            group_name = group_id
+
+        return group_id, group_name
 
     @classmethod
     def unwrap_payload(cls, payload: Any) -> Any:

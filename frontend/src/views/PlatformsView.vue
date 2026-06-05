@@ -419,40 +419,80 @@
         <div v-else-if="activeEmbeddedView === 'rates'" class="embedded-panel-list">
           <article v-for="row in platforms" :key="row.id" class="embedded-trends-section">
             <div class="embedded-platform-title compact">
-              <strong>{{ row.name }}</strong>
-              <span>接口分组卡片，指定分组高亮</span>
+              <div>
+                <strong>{{ row.name }}</strong>
+                <span>{{ row.base_url }}</span>
+              </div>
+              <span>分组趋势图</span>
             </div>
-            <div class="embedded-group-rate-panel">
-              <div
-                v-if="uniqueDiscoveredGroupRates(row.discovered_group_rates).length > 0"
-                class="embedded-group-rate-list"
-              >
+            <div class="embedded-trend-grid">
+              <div v-if="rateHistoryVisibleSeries(row.id).length > 0">
                 <div
-                  v-for="group in uniqueDiscoveredGroupRates(row.discovered_group_rates)"
-                  :key="group.external_group_id"
-                  class="embedded-group-rate-row"
-                  :class="{ highlighted: group.is_configured }"
+                  v-for="series in rateHistoryVisibleSeries(row.id)"
+                  :key="series.external_group_id"
+                  class="embedded-trend-card"
+                  :class="{ highlighted: series.is_configured }"
                 >
-                  <div class="embedded-group-rate-main">
-                    <strong>{{ group.name }}</strong>
-                    <span>{{ group.external_group_id }}</span>
-                    <span v-if="group.description" class="embedded-group-rate-desc">
-                      {{ group.description }}
-                    </span>
+                  <div class="embedded-trend-head">
+                    <span>{{ series.group_name }}</span>
+                    <div class="embedded-trend-actions">
+                      <strong>{{ latestEffectiveRate(series) }}</strong>
+                      <el-button
+                        :icon="Close"
+                        circle
+                        size="small"
+                        title="取消展示"
+                        @click="toggleRateSeries(row.id, series.external_group_id)"
+                      />
+                    </div>
                   </div>
-                  <div class="embedded-group-rate-values">
-                    <div>
-                      <span>原始倍率</span>
-                      <strong>{{ formatMultiplier(group.rate_multiplier) }}</strong>
-                    </div>
-                    <div>
-                      <span>实际倍率</span>
-                      <strong>{{ formatMultiplier(group.effective_rate_multiplier) }}</strong>
-                    </div>
+                  <div v-if="series.description" class="embedded-trend-desc">{{ series.description }}</div>
+                  <svg class="embedded-trend-chart" viewBox="0 0 340 132" role="img">
+                    <g v-for="tick in chartYTicks(effectiveRateChartValues(series), 66)" :key="tick.key">
+                      <line :x1="chartLeft" :x2="chartRight" :y1="tick.y" :y2="tick.y" class="chart-grid-line" />
+                      <text :x="chartLeft - 7" :y="tick.y + 4" class="chart-y-label" text-anchor="end">
+                        {{ tick.label }}
+                      </text>
+                    </g>
+                    <line :x1="chartLeft" :x2="chartLeft" :y1="chartTop" :y2="chartBottom(66)" class="chart-axis-line" />
+                    <line
+                      :x1="chartLeft"
+                      :x2="chartRight"
+                      :y1="chartBottom(66)"
+                      :y2="chartBottom(66)"
+                      class="chart-axis-line"
+                    />
+                    <polyline
+                      v-if="chartPath(effectiveRateChartValues(series), 66)"
+                      :points="chartPath(effectiveRateChartValues(series), 66)"
+                      class="trend-line rate-line"
+                    />
+                    <g v-for="point in rateChartPoints(series, 66)" :key="point.key">
+                      <circle :cx="point.x" :cy="point.y" r="3" class="trend-dot rate-dot" />
+                      <title>{{ point.tooltip }}</title>
+                    </g>
+                    <text
+                      v-for="tick in chartXLabels(series.points.map((point) => point.at), 66, 'date')"
+                      :key="tick.key"
+                      :x="tick.x"
+                      :y="tick.y"
+                      class="chart-x-label"
+                      text-anchor="middle"
+                    >
+                      {{ tick.label }}
+                    </text>
+                  </svg>
+                  <div class="history-axis">
+                    <span>{{ firstDateLabel(series.points[0]?.at) }}</span>
+                    <span>{{ series.group_name }}</span>
+                    <span>{{ firstDateLabel(lastRatePoint(series)?.at) }}</span>
+                  </div>
+                  <div v-if="!hasChartData(effectiveRateChartValues(series))" class="embedded-trend-empty">
+                    暂无历史
                   </div>
                 </div>
               </div>
-              <div v-else class="embedded-empty">暂无接口分组</div>
+              <div v-else class="embedded-empty">暂无分组趋势</div>
             </div>
           </article>
         </div>
@@ -843,7 +883,7 @@
 </template>
 
 <script setup lang="ts">
-import { Delete, Edit, Plus, Refresh, Setting } from '@element-plus/icons-vue'
+import { Close, Delete, Edit, Plus, Refresh, Setting } from '@element-plus/icons-vue'
 import type { FormInstance, FormRules } from 'element-plus'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { computed, onMounted, reactive, ref } from 'vue'
@@ -888,6 +928,8 @@ const detail = ref<PlatformDetail | null>(null)
 const balanceHistory = ref<AccountBalanceHistorySeries[]>([])
 const rateHistory = ref<GroupRateHistorySeries[]>([])
 const platformBalanceHistory = ref<Record<number, AccountBalanceHistorySeries[]>>({})
+const platformRateHistory = ref<Record<number, GroupRateHistorySeries[]>>({})
+const hiddenRateSeries = ref<Record<number, string[]>>({})
 const loading = ref(false)
 const historyLoading = ref(false)
 const saving = ref(false)
@@ -915,7 +957,7 @@ const embeddedMenuItems = [
   {
     key: 'rates',
     label: '倍率趋势',
-    description: '接口分组卡片，配置项高亮',
+    description: '按平台展示分组趋势',
   },
   {
     key: 'settings',
@@ -1071,7 +1113,7 @@ async function load() {
     stats.value = dashboard
     platforms.value = details
     if (isEmbedded.value) {
-      await loadPlatformBalanceHistories(details.map((row) => row.id))
+      await loadEmbeddedHistories(details.map((row) => row.id))
     }
   } finally {
     loading.value = false
@@ -1102,15 +1144,29 @@ async function loadHistory(platformId: number) {
 }
 
 async function loadPlatformBalanceHistories(platformIds: number[]) {
+  const rows = await Promise.all(
+    platformIds.map(async (platformId) => ({
+      platformId,
+      balances: await fetchBalanceHistory(platformId),
+    })),
+  )
+  platformBalanceHistory.value = Object.fromEntries(rows.map((row) => [row.platformId, row.balances]))
+}
+
+async function loadPlatformRateHistories(platformIds: number[]) {
+  const rows = await Promise.all(
+    platformIds.map(async (platformId) => ({
+      platformId,
+      rates: await fetchRateHistory(platformId),
+    })),
+  )
+  platformRateHistory.value = Object.fromEntries(rows.map((row) => [row.platformId, row.rates]))
+}
+
+async function loadEmbeddedHistories(platformIds: number[]) {
   historyLoading.value = true
   try {
-    const rows = await Promise.all(
-      platformIds.map(async (platformId) => ({
-        platformId,
-        balances: await fetchBalanceHistory(platformId),
-      })),
-    )
-    platformBalanceHistory.value = Object.fromEntries(rows.map((row) => [row.platformId, row.balances]))
+    await Promise.all([loadPlatformBalanceHistories(platformIds), loadPlatformRateHistories(platformIds)])
   } finally {
     historyLoading.value = false
   }
@@ -1314,6 +1370,21 @@ function uniqueDiscoveredGroupRates(rows: DiscoveredGroupRate[]) {
     seen.set(row.external_group_id, row)
   }
   return Array.from(seen.values())
+}
+
+function rateHistoryVisibleSeries(platformId: number) {
+  const hidden = new Set(hiddenRateSeries.value[platformId] ?? [])
+  return (platformRateHistory.value[platformId] ?? []).filter((series) => !hidden.has(series.external_group_id))
+}
+
+function toggleRateSeries(platformId: number, externalGroupId: string) {
+  const hidden = new Set(hiddenRateSeries.value[platformId] ?? [])
+  if (hidden.has(externalGroupId)) {
+    hidden.delete(externalGroupId)
+  } else {
+    hidden.add(externalGroupId)
+  }
+  hiddenRateSeries.value = { ...hiddenRateSeries.value, [platformId]: Array.from(hidden) }
 }
 
 type OverviewDiscoveredGroupRate = DiscoveredGroupRate & {

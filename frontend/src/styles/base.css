@@ -1243,6 +1243,17 @@ body {
   margin-bottom: 6px;
 }
 
+.embedded-trend-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.embedded-trend-actions .el-button {
+  flex-shrink: 0;
+}
+
 .embedded-trend-head span {
   overflow: hidden;
   color: #334155;

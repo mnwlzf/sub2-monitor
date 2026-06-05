@@ -16,6 +16,11 @@ from app.services.auth import bootstrap_first_user, delete_expired_sessions
 from app.services.scheduler import MonitorScheduler
 
 monitor_scheduler = MonitorScheduler()
+NO_CACHE_HEADERS = {
+    "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+    "Pragma": "no-cache",
+    "Expires": "0",
+}
 
 
 @asynccontextmanager
@@ -59,7 +64,7 @@ def mount_frontend(application: FastAPI, dist_dir: Path) -> None:
             and not request.url.path.startswith("/api")
             and dist_dir.joinpath("index.html").exists()
         ):
-            return FileResponse(dist_dir / "index.html")
+            return FileResponse(dist_dir / "index.html", headers=NO_CACHE_HEADERS)
         return JSONResponse({"detail": exc.detail}, status_code=exc.status_code)
 
     @application.get("/{full_path:path}", include_in_schema=False)
@@ -71,7 +76,7 @@ def mount_frontend(application: FastAPI, dist_dir: Path) -> None:
             return FileResponse(requested)
         index_file = dist_dir / "index.html"
         if index_file.exists():
-            return FileResponse(index_file)
+            return FileResponse(index_file, headers=NO_CACHE_HEADERS)
         return JSONResponse(
             {
                 "detail": "Frontend is not built yet. Run `cd frontend && npm run build`.",

@@ -1,5 +1,6 @@
 services:
   sub-monitor:
+    image: ghcr.io/mnwlzf/sub2-monitor:latest
     build:
       context: .
       dockerfile: Dockerfile

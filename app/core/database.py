@@ -52,6 +52,8 @@ def ensure_schema() -> None:
         "api_key_encrypted": "ALTER TABLE relay_platforms ADD COLUMN api_key_encrypted TEXT",
         "balance_cron": "ALTER TABLE relay_platforms ADD COLUMN balance_cron VARCHAR(64) NOT NULL DEFAULT '*/10 * * * *'",
         "rate_cron": "ALTER TABLE relay_platforms ADD COLUMN rate_cron VARCHAR(64) NOT NULL DEFAULT '0 * * * *'",
+        "recharge_amount": "ALTER TABLE relay_platforms ADD COLUMN recharge_amount FLOAT NOT NULL DEFAULT 1.0",
+        "received_amount": "ALTER TABLE relay_platforms ADD COLUMN received_amount FLOAT NOT NULL DEFAULT 1.0",
         "balance_last_run_at": "ALTER TABLE relay_platforms ADD COLUMN balance_last_run_at DATETIME",
         "balance_next_run_at": "ALTER TABLE relay_platforms ADD COLUMN balance_next_run_at DATETIME",
         "rate_last_run_at": "ALTER TABLE relay_platforms ADD COLUMN rate_last_run_at DATETIME",

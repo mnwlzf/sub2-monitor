@@ -327,6 +327,22 @@ body {
   font-size: 12px;
 }
 
+.rate-conversion-cell {
+  display: grid;
+  gap: 4px;
+}
+
+.rate-conversion-cell strong {
+  color: #0f172a;
+  font-size: 13px;
+  line-height: 1.25;
+}
+
+.rate-conversion-cell span {
+  color: #94a3b8;
+  font-size: 12px;
+}
+
 .table-actions {
   display: flex;
   align-items: center;
@@ -494,13 +510,9 @@ body {
 .trend-chart {
   display: block;
   width: 100%;
-  height: 120px;
+  height: 150px;
   border-radius: 8px;
-  background:
-    linear-gradient(#edf2f7 1px, transparent 1px),
-    linear-gradient(90deg, #edf2f7 1px, transparent 1px),
-    #f8fafc;
-  background-size: 100% 38px, 70px 100%;
+  background: #f8fafc;
 }
 
 .trend-line {
@@ -521,6 +533,29 @@ body {
 .trend-dot {
   stroke: #ffffff;
   stroke-width: 1.5;
+}
+
+.trend-dot:hover {
+  r: 4.5;
+  stroke: #0f172a;
+  stroke-width: 2;
+}
+
+.chart-grid-line {
+  stroke: #e2e8f0;
+  stroke-width: 1;
+}
+
+.chart-axis-line {
+  stroke: #cbd5e1;
+  stroke-width: 1.2;
+}
+
+.chart-x-label,
+.chart-y-label {
+  fill: #64748b;
+  font-size: 10px;
+  font-family: "Cascadia Mono", "SFMono-Regular", Consolas, "Liberation Mono", monospace;
 }
 
 .balance-dot {
@@ -1086,13 +1121,9 @@ body {
 .embedded-trend-chart {
   display: block;
   width: 100%;
-  height: 96px;
+  height: 132px;
   border-radius: 6px;
-  background:
-    linear-gradient(#edf2f7 1px, transparent 1px),
-    linear-gradient(90deg, #edf2f7 1px, transparent 1px),
-    #ffffff;
-  background-size: 100% 28px, 70px 100%;
+  background: #ffffff;
 }
 
 .embedded-trend-empty {

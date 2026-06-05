@@ -284,6 +284,7 @@ def get_rate_history(
     db: Session = Depends(get_db),
 ) -> list[GroupRateHistorySeries]:
     platform = detail_or_404(db, platform_id)
+    effective_rate_factor = platform.effective_rate_factor
     since = utcnow() - timedelta(days=7)
     snapshots = db.scalars(
         select(GroupRateSnapshot)
@@ -305,6 +306,11 @@ def get_rate_history(
                 {
                     "at": snapshot.created_at,
                     "rate_multiplier": snapshot.rate_multiplier,
+                    "effective_rate_multiplier": (
+                        snapshot.rate_multiplier * effective_rate_factor
+                        if snapshot.rate_multiplier is not None and effective_rate_factor is not None
+                        else None
+                    ),
                     "rpm_limit": snapshot.rpm_limit,
                 }
                 for snapshot in by_group.get(group.id, [])

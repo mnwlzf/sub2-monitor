@@ -48,3 +48,9 @@ class PlatformGroupMonitor(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
     platform = relationship("RelayPlatform", back_populates="group_monitors")
+
+    @property
+    def effective_rate_multiplier(self) -> float | None:
+        if self.rate_multiplier is None or self.platform.effective_rate_factor is None:
+            return None
+        return self.rate_multiplier * self.platform.effective_rate_factor

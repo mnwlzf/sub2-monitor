@@ -30,6 +30,8 @@ class PlatformBase(BaseModel):
     api_key: str | None = Field(default=None, max_length=4096)
     balance_cron: str = Field(default="*/10 * * * *", max_length=64)
     rate_cron: str = Field(default="0 * * * *", max_length=64)
+    recharge_amount: float = Field(default=1.0, gt=0)
+    received_amount: float = Field(default=1.0, gt=0)
     enabled: bool = True
     key_count: int = Field(default=0, ge=0)
     balance: float | None = None
@@ -61,6 +63,8 @@ class PlatformUpdate(BaseModel):
     api_key: str | None = Field(default=None, max_length=4096)
     balance_cron: str | None = Field(default=None, max_length=64)
     rate_cron: str | None = Field(default=None, max_length=64)
+    recharge_amount: float | None = Field(default=None, gt=0)
+    received_amount: float | None = Field(default=None, gt=0)
     enabled: bool | None = None
     key_count: int | None = Field(default=None, ge=0)
     balance: float | None = None
@@ -96,6 +100,9 @@ class PlatformResponse(BaseModel):
     has_api_key: bool
     balance_cron: str
     rate_cron: str
+    recharge_amount: float
+    received_amount: float
+    effective_rate_factor: float | None
     balance_last_run_at: datetime | None
     balance_next_run_at: datetime | None
     rate_last_run_at: datetime | None
@@ -186,6 +193,7 @@ class GroupMonitorResponse(BaseModel):
     external_group_id: str
     enabled: bool
     rate_multiplier: float | None
+    effective_rate_multiplier: float | None = None
     rpm_limit: int | None
     last_error: str | None
     checked_at: datetime | None
@@ -220,6 +228,7 @@ class AccountBalanceHistorySeries(BaseModel):
 class GroupRateHistoryPoint(BaseModel):
     at: datetime
     rate_multiplier: float | None
+    effective_rate_multiplier: float | None
     rpm_limit: int | None
 
 

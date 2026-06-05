@@ -139,6 +139,14 @@
             </div>
           </template>
         </el-table-column>
+        <el-table-column label="充值/到账" width="150">
+          <template #default="{ row }">
+            <div class="rate-conversion-cell">
+              <strong>{{ formatRateConversion(row) }}</strong>
+              <span>系数 {{ formatMultiplier(row.effective_rate_factor) }}</span>
+            </div>
+          </template>
+        </el-table-column>
         <el-table-column label="启用" width="90">
           <template #default="{ row }">
             <div class="switch-cell">
@@ -296,6 +304,14 @@
                   <span>最后采集</span>
                   <strong>{{ formatTime(row.checked_at) }}</strong>
                 </div>
+                <div>
+                  <span>充值/到账</span>
+                  <strong>{{ formatRateConversion(row) }}</strong>
+                </div>
+                <div>
+                  <span>实际倍率系数</span>
+                  <strong>{{ formatMultiplier(row.effective_rate_factor) }}</strong>
+                </div>
               </div>
             </div>
           </article>
@@ -318,15 +334,40 @@
                   <span>{{ series.account_name }}</span>
                   <strong>{{ latestBalance(series) }}</strong>
                 </div>
-                <svg class="embedded-trend-chart" viewBox="0 0 320 96" role="img">
+                <svg class="embedded-trend-chart" viewBox="0 0 340 132" role="img">
+                  <g v-for="tick in chartYTicks(balanceChartValues(series), 66)" :key="tick.key">
+                    <line :x1="chartLeft" :x2="chartRight" :y1="tick.y" :y2="tick.y" class="chart-grid-line" />
+                    <text :x="chartLeft - 7" :y="tick.y + 4" class="chart-y-label" text-anchor="end">
+                      {{ tick.label }}
+                    </text>
+                  </g>
+                  <line :x1="chartLeft" :x2="chartLeft" :y1="chartTop" :y2="chartBottom(66)" class="chart-axis-line" />
+                  <line
+                    :x1="chartLeft"
+                    :x2="chartRight"
+                    :y1="chartBottom(66)"
+                    :y2="chartBottom(66)"
+                    class="chart-axis-line"
+                  />
                   <polyline
-                    v-if="chartPath(balanceChartValues(series), 56)"
-                    :points="chartPath(balanceChartValues(series), 56)"
+                    v-if="chartPath(balanceChartValues(series), 66)"
+                    :points="chartPath(balanceChartValues(series), 66)"
                     class="trend-line balance-line"
                   />
-                  <g v-for="point in chartPoints(balanceChartValues(series), 56)" :key="point.key">
-                    <circle :cx="point.x" :cy="point.y" r="2.2" class="trend-dot balance-dot" />
+                  <g v-for="point in balanceChartPoints(series, 66)" :key="point.key">
+                    <circle :cx="point.x" :cy="point.y" r="3" class="trend-dot balance-dot" />
+                    <title>{{ point.tooltip }}</title>
                   </g>
+                  <text
+                    v-for="tick in chartXLabels(series.points.map((point) => point.at), 66)"
+                    :key="tick.key"
+                    :x="tick.x"
+                    :y="tick.y"
+                    class="chart-x-label"
+                    text-anchor="middle"
+                  >
+                    {{ tick.label }}
+                  </text>
                 </svg>
                 <div v-if="!hasChartData(balanceChartValues(series))" class="embedded-trend-empty">
                   暂无历史
@@ -340,7 +381,7 @@
           <article v-for="row in platforms" :key="row.id" class="embedded-trends-section">
             <div class="embedded-platform-title compact">
               <strong>{{ row.name }}</strong>
-              <span>最近 7 天，按分组展示倍率变化</span>
+              <span>最近 7 天，按分组展示实际倍率变化；{{ formatRateConversion(row) }}</span>
             </div>
             <div class="embedded-trend-grid">
               <div
@@ -350,19 +391,19 @@
               >
                 <div class="embedded-trend-head">
                   <span>{{ series.group_name }}</span>
-                  <strong>{{ latestRate(series) }}</strong>
+                  <strong>{{ latestEffectiveRate(series) }}</strong>
                 </div>
                 <svg class="embedded-trend-chart" viewBox="0 0 320 96" role="img">
                   <polyline
-                    v-if="chartPath(rateChartValues(series), 56)"
-                    :points="chartPath(rateChartValues(series), 56)"
+                    v-if="chartPath(effectiveRateChartValues(series), 56)"
+                    :points="chartPath(effectiveRateChartValues(series), 56)"
                     class="trend-line rate-line"
                   />
-                  <g v-for="point in chartPoints(rateChartValues(series), 56)" :key="point.key">
+                  <g v-for="point in chartPoints(effectiveRateChartValues(series), 56)" :key="point.key">
                     <circle :cx="point.x" :cy="point.y" r="2.2" class="trend-dot rate-dot" />
                   </g>
                 </svg>
-                <div v-if="!hasChartData(rateChartValues(series))" class="embedded-trend-empty">
+                <div v-if="!hasChartData(effectiveRateChartValues(series))" class="embedded-trend-empty">
                   暂无历史
                 </div>
               </div>
@@ -442,6 +483,24 @@
         <el-form-item label="倍率 Cron" prop="rate_cron">
           <el-input v-model="form.rate_cron" placeholder="0 * * * *" />
         </el-form-item>
+        <el-form-item label="充值金额" prop="recharge_amount">
+          <el-input-number
+            v-model="form.recharge_amount"
+            :min="0.000001"
+            :precision="6"
+            :step="1"
+            class="full-width"
+          />
+        </el-form-item>
+        <el-form-item label="到账金额" prop="received_amount">
+          <el-input-number
+            v-model="form.received_amount"
+            :min="0.000001"
+            :precision="6"
+            :step="1"
+            class="full-width"
+          />
+        </el-form-item>
         <el-form-item label="启用">
           <el-switch v-model="form.enabled" />
         </el-form-item>
@@ -467,15 +526,40 @@
                 <span>{{ series.account_name }}</span>
                 <strong>{{ latestBalance(series) }}</strong>
               </div>
-              <svg class="trend-chart" viewBox="0 0 320 120" role="img">
+              <svg class="trend-chart" viewBox="0 0 340 150" role="img">
+                <g v-for="tick in chartYTicks(balanceChartValues(series), 86)" :key="tick.key">
+                  <line :x1="chartLeft" :x2="chartRight" :y1="tick.y" :y2="tick.y" class="chart-grid-line" />
+                  <text :x="chartLeft - 7" :y="tick.y + 4" class="chart-y-label" text-anchor="end">
+                    {{ tick.label }}
+                  </text>
+                </g>
+                <line :x1="chartLeft" :x2="chartLeft" :y1="chartTop" :y2="chartBottom(86)" class="chart-axis-line" />
+                <line
+                  :x1="chartLeft"
+                  :x2="chartRight"
+                  :y1="chartBottom(86)"
+                  :y2="chartBottom(86)"
+                  class="chart-axis-line"
+                />
                 <polyline
-                  v-if="chartPath(balanceChartValues(series))"
-                  :points="chartPath(balanceChartValues(series))"
+                  v-if="chartPath(balanceChartValues(series), 86)"
+                  :points="chartPath(balanceChartValues(series), 86)"
                   class="trend-line balance-line"
                 />
-                <g v-for="point in chartPoints(balanceChartValues(series))" :key="point.key">
-                  <circle :cx="point.x" :cy="point.y" r="2.5" class="trend-dot balance-dot" />
+                <g v-for="point in balanceChartPoints(series, 86)" :key="point.key">
+                  <circle :cx="point.x" :cy="point.y" r="3" class="trend-dot balance-dot" />
+                  <title>{{ point.tooltip }}</title>
                 </g>
+                <text
+                  v-for="tick in chartXLabels(series.points.map((point) => point.at), 86)"
+                  :key="tick.key"
+                  :x="tick.x"
+                  :y="tick.y"
+                  class="chart-x-label"
+                  text-anchor="middle"
+                >
+                  {{ tick.label }}
+                </text>
               </svg>
               <div class="history-axis">
                 <span>{{ firstTimeLabel(series.points[0]?.at) }}</span>
@@ -491,22 +575,22 @@
           <div class="monitor-section-title">
             <div>
               <h3>倍率趋势</h3>
-              <p>最近七天分组倍率变化。</p>
+              <p>最近七天分组实际倍率变化，实际倍率 = 原始倍率 x 充值金额 / 到账金额。</p>
             </div>
           </div>
           <div v-loading="historyLoading" class="history-grid">
             <div v-for="series in rateHistory" :key="series.group_id" class="history-card">
               <div class="history-card-head">
                 <span>{{ series.group_name }}</span>
-                <strong>{{ latestRate(series) }}</strong>
+                <strong>{{ latestEffectiveRate(series) }}</strong>
               </div>
               <svg class="trend-chart" viewBox="0 0 320 120" role="img">
                 <polyline
-                  v-if="chartPath(rateChartValues(series))"
-                  :points="chartPath(rateChartValues(series))"
+                  v-if="chartPath(effectiveRateChartValues(series))"
+                  :points="chartPath(effectiveRateChartValues(series))"
                   class="trend-line rate-line"
                 />
-                <g v-for="point in chartPoints(rateChartValues(series))" :key="point.key">
+                <g v-for="point in chartPoints(effectiveRateChartValues(series))" :key="point.key">
                   <circle :cx="point.x" :cy="point.y" r="2.5" class="trend-dot rate-dot" />
                 </g>
               </svg>
@@ -515,7 +599,7 @@
                 <span>最近 7 天</span>
                 <span>{{ firstDateLabel(lastRatePoint(series)?.at) }}</span>
               </div>
-              <div v-if="!hasChartData(rateChartValues(series))" class="history-empty">暂无倍率历史</div>
+              <div v-if="!hasChartData(effectiveRateChartValues(series))" class="history-empty">暂无倍率历史</div>
             </div>
             <el-empty v-if="!historyLoading && rateHistory.length === 0" description="暂无分组倍率历史" />
           </div>
@@ -564,8 +648,13 @@
           <el-table :data="detail.group_monitors" size="small">
             <el-table-column prop="name" label="名称" min-width="150" />
             <el-table-column prop="external_group_id" label="平台分组 ID" min-width="160" />
-            <el-table-column label="倍率" width="100">
-              <template #default="{ row }">{{ row.rate_multiplier ?? '-' }}</template>
+            <el-table-column label="原始倍率" width="110">
+              <template #default="{ row }">{{ formatMultiplier(row.rate_multiplier) }}</template>
+            </el-table-column>
+            <el-table-column label="实际倍率" width="110">
+              <template #default="{ row }">
+                <strong>{{ formatMultiplier(row.effective_rate_multiplier) }}</strong>
+              </template>
             </el-table-column>
             <el-table-column label="RPM" width="100">
               <template #default="{ row }">{{ row.rpm_limit ?? '-' }}</template>
@@ -726,6 +815,9 @@ const embeddedView = computed(
 )
 const embeddedViewTitle = computed(() => embeddedView.value.label)
 const embeddedViewDescription = computed(() => embeddedView.value.description)
+const chartLeft = 40
+const chartRight = 310
+const chartTop = 16
 
 const form = reactive<PlatformPayload>({
   name: '',
@@ -737,6 +829,8 @@ const form = reactive<PlatformPayload>({
   api_key: null,
   balance_cron: '*/10 * * * *',
   rate_cron: '0 * * * *',
+  recharge_amount: 1,
+  received_amount: 1,
   enabled: true,
   key_count: 0,
   balance: null,
@@ -766,6 +860,8 @@ const rules: FormRules = {
   auth_header_name: [{ required: true, message: '请输入鉴权 Header', trigger: 'blur' }],
   balance_cron: [{ required: true, message: '请输入余额 Cron', trigger: 'blur' }],
   rate_cron: [{ required: true, message: '请输入倍率 Cron', trigger: 'blur' }],
+  recharge_amount: [{ required: true, message: '请输入充值金额', trigger: 'blur' }],
+  received_amount: [{ required: true, message: '请输入到账金额', trigger: 'blur' }],
 }
 
 function detectEmbedded() {
@@ -787,6 +883,8 @@ function resetForm() {
     api_key: null,
     balance_cron: '*/10 * * * *',
     rate_cron: '0 * * * *',
+    recharge_amount: 1,
+    received_amount: 1,
     enabled: true,
     key_count: 0,
     balance: null,
@@ -827,6 +925,8 @@ function openEdit(row: RelayPlatform) {
     api_key: null,
     balance_cron: row.balance_cron,
     rate_cron: row.rate_cron,
+    recharge_amount: row.recharge_amount,
+    received_amount: row.received_amount,
     enabled: row.enabled,
     key_count: row.key_count,
     balance: row.balance,
@@ -1093,6 +1193,17 @@ function formatMoney(value: number | null) {
   return Number(value.toFixed(6)).toString()
 }
 
+function formatMultiplier(value: number | null) {
+  if (value === null) {
+    return '-'
+  }
+  return Number(value.toFixed(6)).toString()
+}
+
+function formatRateConversion(row: RelayPlatform) {
+  return `${formatMultiplier(row.recharge_amount)} / ${formatMultiplier(row.received_amount)}`
+}
+
 function formatTime(value: string | null) {
   if (!value) {
     return '-'
@@ -1127,12 +1238,33 @@ function firstDateLabel(value: string | undefined) {
   return `${date.getMonth() + 1}/${date.getDate()}`
 }
 
+function chartTimeLabel(value: string | undefined) {
+  if (!value) {
+    return '-'
+  }
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) {
+    return '-'
+  }
+  return date.toLocaleString('zh-CN', {
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  })
+}
+
 function balanceChartValues(series: AccountBalanceHistorySeries) {
   return series.points.map((point) => point.balance)
 }
 
 function rateChartValues(series: GroupRateHistorySeries) {
   return series.points.map((point) => point.rate_multiplier)
+}
+
+function effectiveRateChartValues(series: GroupRateHistorySeries) {
+  return series.points.map((point) => point.effective_rate_multiplier)
 }
 
 function lastBalancePoint(series: AccountBalanceHistorySeries) {
@@ -1147,18 +1279,39 @@ function hasChartData(values: Array<number | null>) {
   return values.some((value) => value !== null)
 }
 
-function chartPoints(values: Array<number | null>, chartHeight = 76) {
+function chartBottom(chartHeight = 76) {
+  return chartTop + chartHeight
+}
+
+function chartBounds(values: Array<number | null>) {
   const validValues = values.filter((value): value is number => value !== null)
   if (validValues.length === 0) {
+    return null
+  }
+  const minValue = Math.min(...validValues)
+  const maxValue = Math.max(...validValues)
+  if (minValue === maxValue) {
+    const padding = Math.max(Math.abs(maxValue) * 0.1, 1)
+    return {
+      min: minValue - padding,
+      max: maxValue + padding,
+      range: padding * 2,
+    }
+  }
+  return {
+    min: minValue,
+    max: maxValue,
+    range: maxValue - minValue,
+  }
+}
+
+function chartPoints(values: Array<number | null>, chartHeight = 76) {
+  const bounds = chartBounds(values)
+  if (!bounds) {
     return []
   }
-  const min = Math.min(...validValues)
-  const max = Math.max(...validValues)
-  const range = max - min || 1
-  const width = 280
+  const width = chartRight - chartLeft
   const height = chartHeight
-  const xStart = 20
-  const yStart = 20
   const step = values.length > 1 ? width / (values.length - 1) : width
 
   return values
@@ -1168,17 +1321,61 @@ function chartPoints(values: Array<number | null>, chartHeight = 76) {
       }
       return {
         key: `${index}-${value}`,
-        x: xStart + step * index,
-        y: yStart + height - ((value - min) / range) * height,
+        x: chartLeft + step * index,
+        y: chartTop + height - ((value - bounds.min) / bounds.range) * height,
+        value,
+        index,
       }
     })
-    .filter((point): point is { key: string; x: number; y: number } => point !== null)
+    .filter(
+      (point): point is { key: string; x: number; y: number; value: number; index: number } =>
+        point !== null,
+    )
 }
 
 function chartPath(values: Array<number | null>, chartHeight = 76) {
   return chartPoints(values, chartHeight)
     .map((point) => `${point.x},${point.y}`)
     .join(' ')
+}
+
+function chartYTicks(values: Array<number | null>, chartHeight = 76) {
+  const bounds = chartBounds(values)
+  if (!bounds) {
+    return []
+  }
+
+  return [0, 0.5, 1].map((ratio) => {
+    const value = bounds.max - bounds.range * ratio
+    return {
+      key: `y-${ratio}`,
+      y: chartTop + chartHeight * ratio,
+      label: formatMoney(value),
+    }
+  })
+}
+
+function chartXLabels(times: string[], chartHeight = 76) {
+  if (times.length === 0) {
+    return []
+  }
+  const indexes = Array.from(new Set([0, Math.floor((times.length - 1) / 2), times.length - 1]))
+  const width = chartRight - chartLeft
+  const step = times.length > 1 ? width / (times.length - 1) : width
+
+  return indexes.map((index) => ({
+    key: `x-${index}`,
+    x: chartLeft + step * index,
+    y: chartBottom(chartHeight) + 18,
+    label: firstTimeLabel(times[index]),
+  }))
+}
+
+function balanceChartPoints(series: AccountBalanceHistorySeries, chartHeight = 76) {
+  return chartPoints(balanceChartValues(series), chartHeight).map((point) => ({
+    ...point,
+    tooltip: `${series.account_name}\n时间: ${chartTimeLabel(series.points[point.index]?.at)}\n余额: ${formatMoney(point.value)}`,
+  }))
 }
 
 function latestBalance(series: AccountBalanceHistorySeries) {
@@ -1188,7 +1385,14 @@ function latestBalance(series: AccountBalanceHistorySeries) {
 
 function latestRate(series: GroupRateHistorySeries) {
   const latest = [...series.points].reverse().find((point) => point.rate_multiplier !== null)
-  return latest?.rate_multiplier ?? '-'
+  return latest ? formatMultiplier(latest.rate_multiplier) : '-'
+}
+
+function latestEffectiveRate(series: GroupRateHistorySeries) {
+  const latest = [...series.points].reverse().find(
+    (point) => point.effective_rate_multiplier !== null,
+  )
+  return latest ? formatMultiplier(latest.effective_rate_multiplier) : '-'
 }
 
 onMounted(load)

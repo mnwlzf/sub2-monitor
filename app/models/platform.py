@@ -28,6 +28,8 @@ class RelayPlatform(Base):
     api_key_encrypted: Mapped[str | None] = mapped_column(Text)
     balance_cron: Mapped[str] = mapped_column(String(64), default="*/10 * * * *", nullable=False)
     rate_cron: Mapped[str] = mapped_column(String(64), default="0 * * * *", nullable=False)
+    recharge_amount: Mapped[float] = mapped_column(Float, default=1.0, nullable=False)
+    received_amount: Mapped[float] = mapped_column(Float, default=1.0, nullable=False)
     balance_last_run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     balance_next_run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     rate_last_run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -63,3 +65,9 @@ class RelayPlatform(Base):
     @property
     def has_api_key(self) -> bool:
         return bool(self.api_key_encrypted)
+
+    @property
+    def effective_rate_factor(self) -> float | None:
+        if self.recharge_amount <= 0 or self.received_amount <= 0:
+            return None
+        return self.recharge_amount / self.received_amount

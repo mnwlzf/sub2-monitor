@@ -36,6 +36,9 @@ export interface RelayPlatform {
   has_api_key: boolean
   balance_cron: string
   rate_cron: string
+  recharge_amount: number
+  received_amount: number
+  effective_rate_factor: number | null
   balance_last_run_at: string | null
   balance_next_run_at: string | null
   rate_last_run_at: string | null
@@ -63,6 +66,8 @@ export interface PlatformPayload {
   api_key?: string | null
   balance_cron: string
   rate_cron: string
+  recharge_amount: number
+  received_amount: number
   enabled: boolean
   key_count: number
   balance: number | null
@@ -106,6 +111,7 @@ export interface GroupMonitor {
   external_group_id: string
   enabled: boolean
   rate_multiplier: number | null
+  effective_rate_multiplier: number | null
   rpm_limit: number | null
   last_error: string | null
   checked_at: string | null
@@ -154,6 +160,7 @@ export interface AccountBalanceHistorySeries {
 export interface GroupRateHistoryPoint {
   at: string
   rate_multiplier: number | null
+  effective_rate_multiplier: number | null
   rpm_limit: number | null
 }
 

@@ -1,7 +1,7 @@
 from datetime import datetime
 
 from croniter import croniter
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.core.security import utcnow
@@ -115,13 +115,17 @@ async def run_platform_rate_monitor(db: Session, platform_id: int) -> RelayPlatf
         errors.append(f"group catalog fetch failed: {exc}")
 
     if discovered_catalog is not None:
-        for discovered_group in list(platform.discovered_group_rates):
-            db.delete(discovered_group)
-        configured_groups = {
-            group.external_group_id: group
-            for group in platform.group_monitors
-        }
+        db.execute(
+            delete(PlatformDiscoveredGroupRate).where(
+                PlatformDiscoveredGroupRate.platform_id == platform.id,
+            )
+        )
+        db.flush()
+        configured_groups = {group.external_group_id: group for group in platform.group_monitors}
+        discovered_groups: dict[str, DiscoveredGroupRateResult] = {}
         for item in discovered_catalog:
+            discovered_groups[item.external_group_id] = item
+        for item in discovered_groups.values():
             checked_at = utcnow()
             configured_group = configured_groups.get(item.external_group_id)
             record_discovered_group_rate(

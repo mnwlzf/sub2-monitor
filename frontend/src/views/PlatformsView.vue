@@ -316,9 +316,12 @@
 
               <div class="embedded-group-rate-panel">
                 <div class="embedded-section-label">接口分组</div>
-                <div v-if="row.discovered_group_rates.length > 0" class="embedded-group-rate-list">
+                <div
+                  v-if="uniqueDiscoveredGroupRates(row.discovered_group_rates).length > 0"
+                  class="embedded-group-rate-list"
+                >
                   <div
-                    v-for="group in row.discovered_group_rates"
+                    v-for="group in uniqueDiscoveredGroupRates(row.discovered_group_rates)"
                     :key="group.external_group_id"
                     class="embedded-group-rate-row"
                     :class="{ highlighted: group.is_configured }"
@@ -413,9 +416,12 @@
               <span>接口分组卡片，指定分组高亮</span>
             </div>
             <div class="embedded-group-rate-panel">
-              <div v-if="row.discovered_group_rates.length > 0" class="embedded-group-rate-list">
+              <div
+                v-if="uniqueDiscoveredGroupRates(row.discovered_group_rates).length > 0"
+                class="embedded-group-rate-list"
+              >
                 <div
-                  v-for="group in row.discovered_group_rates"
+                  v-for="group in uniqueDiscoveredGroupRates(row.discovered_group_rates)"
                   :key="group.external_group_id"
                   class="embedded-group-rate-row"
                   :class="{ highlighted: group.is_configured }"
@@ -708,9 +714,12 @@
               <p>展示接口返回的全部分组倍率，已监控分组会高亮。</p>
             </div>
           </div>
-          <div v-if="detail.discovered_group_rates.length > 0" class="embedded-group-rate-list">
+          <div
+            v-if="uniqueDiscoveredGroupRates(detail.discovered_group_rates).length > 0"
+            class="embedded-group-rate-list"
+          >
             <div
-              v-for="group in detail.discovered_group_rates"
+              v-for="group in uniqueDiscoveredGroupRates(detail.discovered_group_rates)"
               :key="group.external_group_id"
               class="embedded-group-rate-row"
               :class="{ highlighted: group.is_configured }"
@@ -853,6 +862,7 @@ import {
   type AccountMonitorPayload,
   type AccountBalanceHistorySeries,
   type DashboardStats,
+  type DiscoveredGroupRate,
   type GroupRateHistorySeries,
   type GroupMonitorPayload,
   type PlatformDetail,
@@ -1289,6 +1299,14 @@ function formatMultiplier(value: number | null) {
 
 function formatRateConversion(row: RelayPlatform) {
   return `${formatMultiplier(row.recharge_amount)} / ${formatMultiplier(row.received_amount)}`
+}
+
+function uniqueDiscoveredGroupRates(rows: DiscoveredGroupRate[]) {
+  const seen = new Map<string, DiscoveredGroupRate>()
+  for (const row of rows) {
+    seen.set(row.external_group_id, row)
+  }
+  return Array.from(seen.values())
 }
 
 function formatTime(value: string | null) {

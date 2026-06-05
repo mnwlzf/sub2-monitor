@@ -1,7 +1,7 @@
 from datetime import datetime
 
 from croniter import CroniterBadCronError, croniter
-from pydantic import BaseModel, ConfigDict, Field, HttpUrl
+from pydantic import BaseModel, ConfigDict, Field, HttpUrl, model_validator
 from pydantic import field_validator
 
 from app.models.platform import PlatformStatus
@@ -224,6 +224,26 @@ class PlatformDetailResponse(PlatformResponse):
     account_monitors: list[AccountMonitorResponse]
     group_monitors: list[GroupMonitorResponse]
     discovered_group_rates: list[DiscoveredGroupRateResponse]
+
+    @model_validator(mode="before")
+    @classmethod
+    def dedupe_discovered_group_rates(cls, value: object) -> object:
+        if not isinstance(value, dict):
+            return value
+        rows = value.get("discovered_group_rates")
+        if not isinstance(rows, list):
+            return value
+        deduped: dict[str, object] = {}
+        for row in rows:
+            if isinstance(row, dict):
+                key = row.get("external_group_id")
+            else:
+                key = getattr(row, "external_group_id", None)
+            if key:
+                deduped[str(key)] = row
+        result = dict(value)
+        result["discovered_group_rates"] = list(deduped.values())
+        return result
 
 
 class MonitorRunResponse(BaseModel):

@@ -68,35 +68,50 @@ function formatTime(value: string) {
   })
 }
 
+function escapeHtml(value: string) {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+}
+
+function legendGridTop() {
+  if (chartSeries.value.length <= 1) {
+    return 42
+  }
+  const rows = Math.ceil(chartSeries.value.length / 4)
+  return Math.min(118, 34 + rows * 24)
+}
+
 function chartOptions(): EChartsCoreOption {
   return {
     animation: false,
     color: chartSeries.value.map((row) => row.color),
     legend: {
-      type: 'scroll',
+      type: 'plain',
       top: 0,
       left: 10,
       right: 10,
       itemWidth: 10,
       itemHeight: 10,
+      itemGap: 12,
       icon: 'circle',
       textStyle: {
         color: '#334155',
         fontSize: 12,
         fontWeight: 600,
+        width: 132,
+        overflow: 'truncate',
       },
       inactiveColor: '#cbd5e1',
-      pageIconColor: '#64748b',
-      pageIconInactiveColor: '#cbd5e1',
-      pageTextStyle: {
-        color: '#64748b',
-      },
       tooltip: {
         show: true,
       },
     },
     grid: {
-      top: 48,
+      top: legendGridTop(),
       right: 28,
       bottom: 42,
       left: 72,
@@ -104,6 +119,15 @@ function chartOptions(): EChartsCoreOption {
     },
     tooltip: {
       trigger: 'axis',
+      confine: true,
+      appendTo: 'body',
+      extraCssText: [
+        'max-height: 280px',
+        'max-width: 340px',
+        'overflow-y: auto',
+        'overflow-x: hidden',
+        'box-shadow: 0 12px 30px rgba(15, 23, 42, 0.18)',
+      ].join(';'),
       axisPointer: {
         type: 'line',
         lineStyle: {
@@ -114,7 +138,7 @@ function chartOptions(): EChartsCoreOption {
       },
       formatter(params: unknown) {
         const rows = Array.isArray(params) ? params : [params]
-        return rows
+        const items = rows
           .map((item) => {
             const pointRef = item as { seriesIndex?: number; dataIndex?: number }
             if (typeof pointRef.seriesIndex !== 'number' || typeof pointRef.dataIndex !== 'number') {
@@ -126,15 +150,28 @@ function chartOptions(): EChartsCoreOption {
               return ''
             }
             return [
-              `<strong>${seriesRow.row.group_name}</strong>`,
-              `时间: ${formatTime(point.at)}`,
-              `实际倍率: ${formatNumber(point.effectiveRateMultiplier)}`,
-              `原始倍率: ${formatNumber(point.rateMultiplier)}`,
-              `RPM: ${point.rpmLimit ?? '-'}`,
-            ].join('<br />')
+              '<div style="display:grid;gap:2px;padding:4px 0;border-bottom:1px solid #eef2f7;">',
+              '<div style="display:flex;align-items:center;gap:6px;min-width:0;">',
+              `<span style="width:8px;height:8px;border-radius:999px;background:${seriesRow.color};flex:0 0 auto;"></span>`,
+              `<strong style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(seriesRow.row.group_name)}</strong>`,
+              '</div>',
+              `<div>实际倍率: ${formatNumber(point.effectiveRateMultiplier)}</div>`,
+              `<div>原始倍率: ${formatNumber(point.rateMultiplier)} / RPM: ${point.rpmLimit ?? '-'}</div>`,
+              '</div>',
+            ].join('')
           })
           .filter(Boolean)
-          .join('<br /><br />')
+        const firstItem = rows[0] as { seriesIndex?: number; dataIndex?: number } | undefined
+        const firstPoint =
+          typeof firstItem?.seriesIndex === 'number' && typeof firstItem.dataIndex === 'number'
+            ? chartSeries.value[firstItem.seriesIndex]?.points[firstItem.dataIndex]
+            : null
+        return [
+          '<div style="display:grid;gap:6px;color:#475569;font-size:12px;line-height:1.45;">',
+          firstPoint ? `<div style="font-weight:700;color:#0f172a;">${formatTime(firstPoint.at)}</div>` : '',
+          ...items,
+          '</div>',
+        ].join('')
       },
     },
     xAxis: {

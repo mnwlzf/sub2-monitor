@@ -302,10 +302,76 @@ class YunjinNewApiSiteStrategy(NewApiSiteStrategy):
         provider: "NewApiStrategy",
         platform: RelayPlatform,
     ) -> list[DiscoveredGroupRateResult] | None:
-        status, payload, _ = await provider.get_json(platform, f"/{self.GROUPS_ENDPOINT}")
-        if status >= 400:
-            return None
-        return self.parse_group_catalog_payload(payload)
+        account = next(
+            (
+                item
+                for item in platform.account_monitors
+                if item.enabled and item.username and item.password_encrypted
+            ),
+            None,
+        )
+        if account is None:
+            raise ValueError("yunjin group catalog fetch requires an enabled account with password")
+
+        password = decrypt_secret(account.password_encrypted)
+        if not password:
+            raise ValueError("yunjin group catalog password decrypt failed or empty")
+
+        site_url = self.site_url(platform)
+        request_headers = {
+            "Accept": "application/json, text/plain, */*",
+            "Cache-Control": "no-store",
+            "Origin": self.site_origin(platform),
+            "Referer": f"{site_url}login",
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/148.0.0.0 Safari/537.36"
+            ),
+        }
+        async with httpx.AsyncClient(
+            base_url=site_url,
+            follow_redirects=True,
+            headers=request_headers,
+            timeout=provider.timeout_seconds,
+        ) as client:
+            await client.get("login")
+            login_response, login_endpoint = await self.post_first_available(
+                client,
+                self.LOGIN_ENDPOINTS,
+                json={
+                    "username": account.username,
+                    "password": password,
+                },
+            )
+            if login_response.status_code >= 400:
+                raise ValueError(
+                    "yunjin group catalog login endpoint returned "
+                    f"HTTP {login_response.status_code}: {login_endpoint}"
+                )
+            login_payload_json = self.safe_json(login_response)
+            if isinstance(login_payload_json, dict) and login_payload_json.get("success") is False:
+                message = login_payload_json.get("message") or "登录失败"
+                raise ValueError(f"yunjin group catalog login failed: {message}")
+
+            user_id = self.extract_user_id(login_payload_json)
+            if user_id is None:
+                raise ValueError("yunjin group catalog login response missing data.id")
+
+            response = await client.get(
+                self.GROUPS_ENDPOINT,
+                headers={"New-Api-User": str(user_id)},
+            )
+            if response.status_code >= 400:
+                raise ValueError(
+                    f"yunjin group catalog endpoint returned HTTP {response.status_code}"
+                )
+            payload = self.safe_json(response)
+
+        groups = self.parse_group_catalog_payload(payload)
+        if groups is None:
+            raise ValueError("yunjin group catalog response missing data")
+        return groups
 
     @staticmethod
     def parse_group_catalog_payload(payload: Any) -> list[DiscoveredGroupRateResult] | None:

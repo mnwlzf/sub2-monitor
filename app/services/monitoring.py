@@ -96,8 +96,8 @@ async def run_platform_rate_monitor(db: Session, platform_id: int) -> RelayPlatf
     platform = db.scalar(
         select(RelayPlatform)
         .options(
+            selectinload(RelayPlatform.account_monitors),
             selectinload(RelayPlatform.group_monitors),
-            selectinload(RelayPlatform.discovered_group_rates),
         )
         .where(RelayPlatform.id == platform_id)
     )

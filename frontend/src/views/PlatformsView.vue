@@ -363,51 +363,17 @@
               <strong>{{ row.name }}</strong>
               <span>最近 24 小时，按平台和账号展示真实采样点：{{ row.balance_cron }}</span>
             </div>
-            <div class="embedded-trend-grid">
+            <div class="embedded-trend-grid balance-trend-grid">
               <div
                 v-for="series in platformBalanceHistory[row.id] ?? []"
                 :key="series.account_id"
-                class="embedded-trend-card"
+                class="embedded-trend-card balance-trend-card"
               >
                 <div class="embedded-trend-head">
                   <span>{{ series.account_name }}</span>
                   <strong>{{ latestBalance(series) }}</strong>
                 </div>
-                <svg class="embedded-trend-chart" viewBox="0 0 340 132" role="img">
-                  <g v-for="tick in chartYTicks(balanceChartValues(series), 66)" :key="tick.key">
-                    <line :x1="chartLeft" :x2="chartRight" :y1="tick.y" :y2="tick.y" class="chart-grid-line" />
-                    <text :x="chartLeft - 7" :y="tick.y + 4" class="chart-y-label" text-anchor="end">
-                      {{ tick.label }}
-                    </text>
-                  </g>
-                  <line :x1="chartLeft" :x2="chartLeft" :y1="chartTop" :y2="chartBottom(66)" class="chart-axis-line" />
-                  <line
-                    :x1="chartLeft"
-                    :x2="chartRight"
-                    :y1="chartBottom(66)"
-                    :y2="chartBottom(66)"
-                    class="chart-axis-line"
-                  />
-                  <polyline
-                    v-if="chartPath(balanceChartValues(series), 66)"
-                    :points="chartPath(balanceChartValues(series), 66)"
-                    class="trend-line balance-line"
-                  />
-                  <g v-for="point in balanceChartPoints(series, 66)" :key="point.key">
-                    <circle :cx="point.x" :cy="point.y" r="3" class="trend-dot balance-dot" />
-                    <title>{{ point.tooltip }}</title>
-                  </g>
-                  <text
-                    v-for="tick in chartXLabels(series.points.map((point) => point.at), 66)"
-                    :key="tick.key"
-                    :x="tick.x"
-                    :y="tick.y"
-                    class="chart-x-label"
-                    text-anchor="middle"
-                  >
-                    {{ tick.label }}
-                  </text>
-                </svg>
+                <BalanceLineChart :series="series" />
                 <div v-if="!hasChartData(balanceChartValues(series))" class="embedded-trend-empty">
                   暂无历史
                 </div>
@@ -610,47 +576,13 @@
               <p>每个平台账号最近 24 小时余额变化，按真实采样点绘制：{{ detail.balance_cron }}</p>
             </div>
           </div>
-          <div v-loading="historyLoading" class="history-grid">
-            <div v-for="series in balanceHistory" :key="series.account_id" class="history-card">
+          <div v-loading="historyLoading" class="history-grid balance-history-grid">
+            <div v-for="series in balanceHistory" :key="series.account_id" class="history-card balance-history-card">
               <div class="history-card-head">
                 <span>{{ series.account_name }}</span>
                 <strong>{{ latestBalance(series) }}</strong>
               </div>
-              <svg class="trend-chart" viewBox="0 0 340 150" role="img">
-                <g v-for="tick in chartYTicks(balanceChartValues(series), 86)" :key="tick.key">
-                  <line :x1="chartLeft" :x2="chartRight" :y1="tick.y" :y2="tick.y" class="chart-grid-line" />
-                  <text :x="chartLeft - 7" :y="tick.y + 4" class="chart-y-label" text-anchor="end">
-                    {{ tick.label }}
-                  </text>
-                </g>
-                <line :x1="chartLeft" :x2="chartLeft" :y1="chartTop" :y2="chartBottom(86)" class="chart-axis-line" />
-                <line
-                  :x1="chartLeft"
-                  :x2="chartRight"
-                  :y1="chartBottom(86)"
-                  :y2="chartBottom(86)"
-                  class="chart-axis-line"
-                />
-                <polyline
-                  v-if="chartPath(balanceChartValues(series), 86)"
-                  :points="chartPath(balanceChartValues(series), 86)"
-                  class="trend-line balance-line"
-                />
-                <g v-for="point in balanceChartPoints(series, 86)" :key="point.key">
-                  <circle :cx="point.x" :cy="point.y" r="3" class="trend-dot balance-dot" />
-                  <title>{{ point.tooltip }}</title>
-                </g>
-                <text
-                  v-for="tick in chartXLabels(series.points.map((point) => point.at), 86)"
-                  :key="tick.key"
-                  :x="tick.x"
-                  :y="tick.y"
-                  class="chart-x-label"
-                  text-anchor="middle"
-                >
-                  {{ tick.label }}
-                </text>
-              </svg>
+              <BalanceLineChart :series="series" />
               <div class="history-axis">
                 <span>{{ firstTimeLabel(series.points[0]?.at) }}</span>
                 <span>余额 Cron: {{ detail.balance_cron }}</span>
@@ -892,6 +824,7 @@ import type { FormInstance, FormRules } from 'element-plus'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { computed, onMounted, reactive, ref } from 'vue'
 
+import BalanceLineChart from '@/components/BalanceLineChart.vue'
 import {
   createAccountMonitor,
   createGroupMonitor,
@@ -1741,13 +1674,6 @@ function chartXLabels(times: string[], chartHeight = 76, mode: 'time' | 'date' =
     x: chartLeft + step * index,
     y: chartBottom(chartHeight) + 18,
     label: mode === 'date' ? firstDateLabel(times[index]) : firstTimeLabel(times[index]),
-  }))
-}
-
-function balanceChartPoints(series: AccountBalanceHistorySeries, chartHeight = 76) {
-  return chartPoints(balanceChartValues(series), chartHeight).map((point) => ({
-    ...point,
-    tooltip: `${series.account_name}\n时间: ${chartTimeLabel(series.points[point.index]?.at)}\n余额: ${formatMoney(point.value)}`,
   }))
 }
 

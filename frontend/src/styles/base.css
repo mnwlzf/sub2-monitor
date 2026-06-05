@@ -476,6 +476,10 @@ body {
   min-height: 140px;
 }
 
+.balance-history-grid {
+  grid-template-columns: 1fr;
+}
+
 .history-card {
   position: relative;
   min-width: 0;
@@ -483,6 +487,10 @@ body {
   border-radius: 8px;
   background: #ffffff;
   padding: 12px;
+}
+
+.balance-history-card {
+  padding: 14px 16px 16px;
 }
 
 .history-card.highlighted {
@@ -526,6 +534,14 @@ body {
   height: 150px;
   border-radius: 8px;
   background: #f8fafc;
+}
+
+.balance-line-chart {
+  width: 100%;
+  height: 320px;
+  border: 1px solid #eef2f7;
+  border-radius: 8px;
+  background: #ffffff;
 }
 
 .trend-line {
@@ -1220,6 +1236,11 @@ body {
   gap: 8px;
 }
 
+.balance-trend-grid {
+  grid-template-columns: 1fr;
+  gap: 10px;
+}
+
 .embedded-rate-platform-card {
   display: grid;
   gap: 10px;
@@ -1325,6 +1346,10 @@ body {
   border-radius: 8px;
   background: #fbfdff;
   padding: 10px;
+}
+
+.balance-trend-card {
+  padding: 12px 14px 14px;
 }
 
 .embedded-trend-card.highlighted {

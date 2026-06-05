@@ -85,6 +85,27 @@ function legendGridTop() {
   return Math.min(118, 34 + rows * 24)
 }
 
+function tooltipPosition(point: unknown, _params: unknown, _dom: unknown, _rect: unknown, size: unknown) {
+  const [mouseX, mouseY] = Array.isArray(point) ? point : [0, 0]
+  const viewSize = (size as { viewSize?: [number, number] } | undefined)?.viewSize ?? [window.innerWidth, window.innerHeight]
+  const contentSize = (size as { contentSize?: [number, number] } | undefined)?.contentSize ?? [340, 280]
+  const gap = 18
+  const margin = 12
+  const numericMouseX = typeof mouseX === 'number' ? mouseX : 0
+  const numericMouseY = typeof mouseY === 'number' ? mouseY : 0
+
+  let x = numericMouseX + gap
+  if (x + contentSize[0] + margin > viewSize[0]) {
+    x = numericMouseX - contentSize[0] - gap
+  }
+  x = Math.max(margin, Math.min(x, viewSize[0] - contentSize[0] - margin))
+
+  let y = numericMouseY - Math.min(36, contentSize[1] / 2)
+  y = Math.max(margin, Math.min(y, viewSize[1] - contentSize[1] - margin))
+
+  return [x, y]
+}
+
 function chartOptions(): EChartsCoreOption {
   return {
     animation: false,
@@ -119,8 +140,11 @@ function chartOptions(): EChartsCoreOption {
     },
     tooltip: {
       trigger: 'axis',
+      enterable: true,
+      hideDelay: 500,
       confine: true,
       appendTo: 'body',
+      position: tooltipPosition,
       extraCssText: [
         'max-height: 280px',
         'max-width: 340px',

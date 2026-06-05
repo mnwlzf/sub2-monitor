@@ -1258,57 +1258,6 @@ body {
   padding: 0;
 }
 
-.embedded-rate-legend {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(168px, 1fr));
-  gap: 8px;
-}
-
-.embedded-rate-legend-item {
-  display: flex;
-  min-width: 0;
-  align-items: center;
-  justify-content: flex-start;
-  gap: 6px;
-  border: 1px solid #dbe3ef;
-  border-radius: 999px;
-  background: #ffffff;
-  padding: 6px 10px;
-}
-
-.embedded-rate-legend-item.highlighted {
-  border-color: #f59e0b;
-  background: #fffaf0;
-}
-
-.embedded-rate-legend-main {
-  min-width: 0;
-  display: flex;
-  min-width: 0;
-  align-items: center;
-  gap: 8px;
-  flex: 1;
-}
-
-.embedded-rate-legend-name {
-  overflow: hidden;
-  color: #0f172a;
-  font-size: 12px;
-  font-weight: 600;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
-
-.embedded-rate-legend-value {
-  flex-shrink: 0;
-  overflow: hidden;
-  color: #0f172a;
-  font-size: 13px;
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
-
 .embedded-rate-chart {
   display: block;
   width: 100%;
@@ -1316,14 +1265,6 @@ body {
   border-radius: 8px;
   background: #ffffff;
   border: 1px solid #eef2f7;
-}
-
-.embedded-rate-swatch {
-  flex: 0 0 auto;
-  width: 8px;
-  height: 8px;
-  border-radius: 999px;
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.75);
 }
 
 .embedded-rate-header {

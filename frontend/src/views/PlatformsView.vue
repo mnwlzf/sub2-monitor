@@ -392,21 +392,6 @@
               <span>分组倍率趋势</span>
             </div>
             <div v-if="rateHistoryVisibleSeries(row.id).length > 0" class="embedded-rate-platform-card">
-              <div class="embedded-rate-legend">
-                <div
-                  v-for="(series, index) in rateHistoryVisibleSeries(row.id)"
-                  :key="series.external_group_id"
-                  class="embedded-rate-legend-item"
-                  :class="{ highlighted: series.is_configured }"
-                  :title="series.description ? `${series.group_name} - ${series.description}` : series.group_name"
-                >
-                  <span class="embedded-rate-swatch" :style="{ backgroundColor: seriesColor(index) }" />
-                  <div class="embedded-rate-legend-main">
-                    <strong class="embedded-rate-legend-name">{{ series.group_name }}</strong>
-                    <strong class="embedded-rate-legend-value">{{ latestEffectiveRate(series) }}</strong>
-                  </div>
-                </div>
-              </div>
               <RateLineChart :series="rateHistoryVisibleSeries(row.id)" />
               <div class="history-axis rate-history-axis">
                 <span>{{ platformRateFirstDate(row.id) }}</span>
@@ -1229,11 +1214,6 @@ function rateHistoryVisibleSeries(platformId: number) {
 
 function platformRatePrimarySeries(platformId: number) {
   return rateHistoryVisibleSeries(platformId)[0] ?? null
-}
-
-function seriesColor(index: number) {
-  const palette = ['#2563eb', '#059669', '#d97706', '#7c3aed', '#dc2626', '#0891b2', '#db2777', '#65a30d']
-  return palette[index % palette.length]
 }
 
 function platformRateFirstDate(platformId: number) {

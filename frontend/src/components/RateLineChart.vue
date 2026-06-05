@@ -4,14 +4,14 @@
 
 <script setup lang="ts">
 import { LineChart } from 'echarts/charts'
-import { GridComponent, TooltipComponent } from 'echarts/components'
+import { GridComponent, LegendComponent, TooltipComponent } from 'echarts/components'
 import { init, use, type ECharts, type EChartsCoreOption } from 'echarts/core'
 import { CanvasRenderer } from 'echarts/renderers'
 import { computed, nextTick, onBeforeUnmount, onMounted, shallowRef, watch } from 'vue'
 
 import type { GroupRateHistorySeries } from '@/api/client'
 
-use([LineChart, GridComponent, TooltipComponent, CanvasRenderer])
+use([LineChart, GridComponent, LegendComponent, TooltipComponent, CanvasRenderer])
 
 const props = defineProps<{
   series: GroupRateHistorySeries[]
@@ -72,8 +72,31 @@ function chartOptions(): EChartsCoreOption {
   return {
     animation: false,
     color: chartSeries.value.map((row) => row.color),
+    legend: {
+      type: 'scroll',
+      top: 0,
+      left: 10,
+      right: 10,
+      itemWidth: 10,
+      itemHeight: 10,
+      icon: 'circle',
+      textStyle: {
+        color: '#334155',
+        fontSize: 12,
+        fontWeight: 600,
+      },
+      inactiveColor: '#cbd5e1',
+      pageIconColor: '#64748b',
+      pageIconInactiveColor: '#cbd5e1',
+      pageTextStyle: {
+        color: '#64748b',
+      },
+      tooltip: {
+        show: true,
+      },
+    },
     grid: {
-      top: 30,
+      top: 48,
       right: 28,
       bottom: 42,
       left: 72,

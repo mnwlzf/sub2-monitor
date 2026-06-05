@@ -138,6 +138,31 @@ export interface MonitorRunResult {
   group_monitors: GroupMonitor[]
 }
 
+export interface AccountBalanceHistoryPoint {
+  at: string
+  balance: number | null
+  quota_used: number | null
+  quota_limit: number | null
+}
+
+export interface AccountBalanceHistorySeries {
+  account_id: number
+  account_name: string
+  points: AccountBalanceHistoryPoint[]
+}
+
+export interface GroupRateHistoryPoint {
+  at: string
+  rate_multiplier: number | null
+  rpm_limit: number | null
+}
+
+export interface GroupRateHistorySeries {
+  group_id: number
+  group_name: string
+  points: GroupRateHistoryPoint[]
+}
+
 export const http = axios.create({
   baseURL: `${import.meta.env.BASE_URL}api`,
   withCredentials: true,
@@ -228,6 +253,18 @@ export async function runPlatformBalanceMonitor(id: number) {
 
 export async function runPlatformRateMonitor(id: number) {
   const { data } = await http.post<MonitorRunResult>(`/platforms/${id}/monitor/rate/run`)
+  return data
+}
+
+export async function fetchBalanceHistory(id: number) {
+  const { data } = await http.get<AccountBalanceHistorySeries[]>(
+    `/platforms/${id}/history/balances`,
+  )
+  return data
+}
+
+export async function fetchRateHistory(id: number) {
+  const { data } = await http.get<GroupRateHistorySeries[]>(`/platforms/${id}/history/rates`)
   return data
 }
 

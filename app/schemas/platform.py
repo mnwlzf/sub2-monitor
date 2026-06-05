@@ -204,6 +204,31 @@ class MonitorRunResponse(BaseModel):
     group_monitors: list[GroupMonitorResponse]
 
 
+class AccountBalanceHistoryPoint(BaseModel):
+    at: datetime
+    balance: float | None
+    quota_used: float | None
+    quota_limit: float | None
+
+
+class AccountBalanceHistorySeries(BaseModel):
+    account_id: int
+    account_name: str
+    points: list[AccountBalanceHistoryPoint]
+
+
+class GroupRateHistoryPoint(BaseModel):
+    at: datetime
+    rate_multiplier: float | None
+    rpm_limit: int | None
+
+
+class GroupRateHistorySeries(BaseModel):
+    group_id: int
+    group_name: str
+    points: list[GroupRateHistoryPoint]
+
+
 class DashboardStats(BaseModel):
     total_platforms: int
     enabled_platforms: int

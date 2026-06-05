@@ -1,3 +1,5 @@
+from datetime import datetime, timedelta
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from croniter import croniter
 from sqlalchemy import select
@@ -8,12 +10,14 @@ from app.core.database import get_db
 from app.core.security import encrypt_secret, utcnow
 from app.models.monitor import PlatformAccountMonitor, PlatformGroupMonitor
 from app.models.platform import PlatformStatus, RelayPlatform
-from app.models.snapshot import PlatformSnapshot
+from app.models.snapshot import AccountBalanceSnapshot, GroupRateSnapshot, PlatformSnapshot
 from app.schemas.platform import (
+    AccountBalanceHistorySeries,
     AccountMonitorCreate,
     AccountMonitorResponse,
     AccountMonitorUpdate,
     DashboardStats,
+    GroupRateHistorySeries,
     GroupMonitorCreate,
     GroupMonitorResponse,
     GroupMonitorUpdate,
@@ -234,6 +238,100 @@ async def run_rate_monitor(platform_id: int, db: Session = Depends(get_db)) -> M
         "account_monitors": detail.account_monitors,
         "group_monitors": detail.group_monitors,
     }
+
+
+@router.get(
+    "/platforms/{platform_id}/history/balances",
+    response_model=list[AccountBalanceHistorySeries],
+)
+def get_balance_history(
+    platform_id: int,
+    db: Session = Depends(get_db),
+) -> list[AccountBalanceHistorySeries]:
+    platform = detail_or_404(db, platform_id)
+    now = utcnow()
+    current_hour = now.replace(minute=0, second=0, microsecond=0)
+    hours = [current_hour - timedelta(hours=offset) for offset in range(23, -1, -1)]
+    since = hours[0]
+    snapshots = db.scalars(
+        select(AccountBalanceSnapshot)
+        .where(
+            AccountBalanceSnapshot.platform_id == platform_id,
+            AccountBalanceSnapshot.created_at >= since,
+        )
+        .order_by(AccountBalanceSnapshot.created_at.asc())
+    ).all()
+    by_account: dict[int, list[AccountBalanceSnapshot]] = {}
+    for snapshot in snapshots:
+        by_account.setdefault(snapshot.account_monitor_id, []).append(snapshot)
+
+    return [
+        AccountBalanceHistorySeries(
+            account_id=account.id,
+            account_name=account.name,
+            points=hourly_balance_points(hours, by_account.get(account.id, [])),
+        )
+        for account in platform.account_monitors
+    ]
+
+
+@router.get(
+    "/platforms/{platform_id}/history/rates",
+    response_model=list[GroupRateHistorySeries],
+)
+def get_rate_history(
+    platform_id: int,
+    db: Session = Depends(get_db),
+) -> list[GroupRateHistorySeries]:
+    platform = detail_or_404(db, platform_id)
+    since = utcnow() - timedelta(days=7)
+    snapshots = db.scalars(
+        select(GroupRateSnapshot)
+        .where(
+            GroupRateSnapshot.platform_id == platform_id,
+            GroupRateSnapshot.created_at >= since,
+        )
+        .order_by(GroupRateSnapshot.created_at.asc())
+    ).all()
+    by_group: dict[int, list[GroupRateSnapshot]] = {}
+    for snapshot in snapshots:
+        by_group.setdefault(snapshot.group_monitor_id, []).append(snapshot)
+
+    return [
+        GroupRateHistorySeries(
+            group_id=group.id,
+            group_name=group.name,
+            points=[
+                {
+                    "at": snapshot.created_at,
+                    "rate_multiplier": snapshot.rate_multiplier,
+                    "rpm_limit": snapshot.rpm_limit,
+                }
+                for snapshot in by_group.get(group.id, [])
+            ],
+        )
+        for group in platform.group_monitors
+    ]
+
+
+def hourly_balance_points(
+    hours: list[datetime],
+    snapshots: list[AccountBalanceSnapshot],
+) -> list[dict]:
+    snapshots_by_hour: dict[datetime, AccountBalanceSnapshot] = {}
+    for snapshot in snapshots:
+        snapshot_hour = snapshot.created_at.replace(minute=0, second=0, microsecond=0)
+        snapshots_by_hour[snapshot_hour] = snapshot
+
+    return [
+        {
+            "at": hour,
+            "balance": snapshots_by_hour[hour].balance if hour in snapshots_by_hour else None,
+            "quota_used": snapshots_by_hour[hour].quota_used if hour in snapshots_by_hour else None,
+            "quota_limit": snapshots_by_hour[hour].quota_limit if hour in snapshots_by_hour else None,
+        }
+        for hour in hours
+    ]
 
 
 @router.post(

@@ -453,6 +453,105 @@ body {
   font-size: 13px;
 }
 
+.history-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 12px;
+  min-height: 140px;
+}
+
+.history-card {
+  position: relative;
+  min-width: 0;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 12px;
+}
+
+.history-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.history-card-head span {
+  overflow: hidden;
+  color: #334155;
+  font-size: 13px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.history-card-head strong {
+  color: #0f172a;
+  font-size: 16px;
+}
+
+.trend-chart {
+  display: block;
+  width: 100%;
+  height: 120px;
+  border-radius: 8px;
+  background:
+    linear-gradient(#edf2f7 1px, transparent 1px),
+    linear-gradient(90deg, #edf2f7 1px, transparent 1px),
+    #f8fafc;
+  background-size: 100% 38px, 70px 100%;
+}
+
+.trend-line {
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 3;
+}
+
+.balance-line {
+  stroke: #2563eb;
+}
+
+.rate-line {
+  stroke: #059669;
+}
+
+.trend-dot {
+  stroke: #ffffff;
+  stroke-width: 1.5;
+}
+
+.balance-dot {
+  fill: #2563eb;
+}
+
+.rate-dot {
+  fill: #059669;
+}
+
+.history-axis {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 8px;
+  color: #94a3b8;
+  font-size: 12px;
+}
+
+.history-empty {
+  position: absolute;
+  inset: 52px 12px 34px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #94a3b8;
+  font-size: 13px;
+  pointer-events: none;
+}
+
 .select-hint {
   float: right;
   max-width: 320px;

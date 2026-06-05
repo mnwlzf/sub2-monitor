@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session, selectinload
 
 from app.core.security import utcnow
 from app.models.platform import PlatformStatus, RelayPlatform
+from app.models.snapshot import AccountBalanceSnapshot, GroupRateSnapshot
 from app.services.provider_strategy import provider_registry
 
 
@@ -41,8 +42,20 @@ async def run_platform_balance_monitor(db: Session, platform_id: int) -> RelayPl
         except Exception as exc:  # noqa: BLE001
             account.last_error = str(exc)
             errors.append(f"account {account.name}: {exc}")
-        account.checked_at = utcnow()
+        checked_at = utcnow()
+        account.checked_at = checked_at
         db.add(account)
+        db.add(
+            AccountBalanceSnapshot(
+                platform_id=platform.id,
+                account_monitor_id=account.id,
+                balance=account.balance,
+                quota_used=account.quota_used,
+                quota_limit=account.quota_limit,
+                error_message=account.last_error,
+                created_at=checked_at,
+            )
+        )
 
     account_balances = [
         account.balance
@@ -100,8 +113,19 @@ async def run_platform_rate_monitor(db: Session, platform_id: int) -> RelayPlatf
         except Exception as exc:  # noqa: BLE001
             group.last_error = str(exc)
             errors.append(f"group {group.name}: {exc}")
-        group.checked_at = utcnow()
+        checked_at = utcnow()
+        group.checked_at = checked_at
         db.add(group)
+        db.add(
+            GroupRateSnapshot(
+                platform_id=platform.id,
+                group_monitor_id=group.id,
+                rate_multiplier=group.rate_multiplier,
+                rpm_limit=group.rpm_limit,
+                error_message=group.last_error,
+                created_at=checked_at,
+            )
+        )
 
     now = utcnow()
     platform.rate_last_run_at = now

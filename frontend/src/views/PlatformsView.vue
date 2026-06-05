@@ -318,6 +318,73 @@
         <section>
           <div class="monitor-section-title">
             <div>
+              <h3>余额趋势</h3>
+              <p>每个账号最近 24 小时余额变化，按小时展示。</p>
+            </div>
+          </div>
+          <div v-loading="historyLoading" class="history-grid">
+            <div v-for="series in balanceHistory" :key="series.account_id" class="history-card">
+              <div class="history-card-head">
+                <span>{{ series.account_name }}</span>
+                <strong>{{ latestBalance(series) }}</strong>
+              </div>
+              <svg class="trend-chart" viewBox="0 0 320 120" role="img">
+                <polyline
+                  v-if="chartPath(balanceChartValues(series))"
+                  :points="chartPath(balanceChartValues(series))"
+                  class="trend-line balance-line"
+                />
+                <g v-for="point in chartPoints(balanceChartValues(series))" :key="point.key">
+                  <circle :cx="point.x" :cy="point.y" r="2.5" class="trend-dot balance-dot" />
+                </g>
+              </svg>
+              <div class="history-axis">
+                <span>{{ firstTimeLabel(series.points[0]?.at) }}</span>
+                <span>最近 24 小时</span>
+                <span>{{ firstTimeLabel(lastBalancePoint(series)?.at) }}</span>
+              </div>
+              <div v-if="!hasChartData(balanceChartValues(series))" class="history-empty">暂无余额历史</div>
+            </div>
+          </div>
+        </section>
+
+        <section>
+          <div class="monitor-section-title">
+            <div>
+              <h3>倍率趋势</h3>
+              <p>最近七天分组倍率变化。</p>
+            </div>
+          </div>
+          <div v-loading="historyLoading" class="history-grid">
+            <div v-for="series in rateHistory" :key="series.group_id" class="history-card">
+              <div class="history-card-head">
+                <span>{{ series.group_name }}</span>
+                <strong>{{ latestRate(series) }}</strong>
+              </div>
+              <svg class="trend-chart" viewBox="0 0 320 120" role="img">
+                <polyline
+                  v-if="chartPath(rateChartValues(series))"
+                  :points="chartPath(rateChartValues(series))"
+                  class="trend-line rate-line"
+                />
+                <g v-for="point in chartPoints(rateChartValues(series))" :key="point.key">
+                  <circle :cx="point.x" :cy="point.y" r="2.5" class="trend-dot rate-dot" />
+                </g>
+              </svg>
+              <div class="history-axis">
+                <span>{{ firstDateLabel(series.points[0]?.at) }}</span>
+                <span>最近 7 天</span>
+                <span>{{ firstDateLabel(lastRatePoint(series)?.at) }}</span>
+              </div>
+              <div v-if="!hasChartData(rateChartValues(series))" class="history-empty">暂无倍率历史</div>
+            </div>
+            <el-empty v-if="!historyLoading && rateHistory.length === 0" description="暂无分组倍率历史" />
+          </div>
+        </section>
+
+        <section>
+          <div class="monitor-section-title">
+            <div>
               <h3>账号余额监控</h3>
               <p>配置一个或多个平台账号，用策略读取余额和额度剩余。</p>
             </div>
@@ -446,17 +513,21 @@ import {
   deleteAccountMonitor,
   deleteGroupMonitor,
   deletePlatform,
+  fetchBalanceHistory,
   fetchDashboard,
   fetchPlatform,
   fetchPlatforms,
   fetchProviders,
+  fetchRateHistory,
   fetchSiteStrategies,
   runPlatformBalanceMonitor,
   runPlatformMonitor,
   runPlatformRateMonitor,
   updatePlatform,
   type AccountMonitorPayload,
+  type AccountBalanceHistorySeries,
   type DashboardStats,
+  type GroupRateHistorySeries,
   type GroupMonitorPayload,
   type PlatformDetail,
   type PlatformPayload,
@@ -471,7 +542,10 @@ const siteStrategies = ref<SiteStrategyOption[]>([])
 const platforms = ref<PlatformDetail[]>([])
 const stats = ref<DashboardStats | null>(null)
 const detail = ref<PlatformDetail | null>(null)
+const balanceHistory = ref<AccountBalanceHistorySeries[]>([])
+const rateHistory = ref<GroupRateHistorySeries[]>([])
 const loading = ref(false)
+const historyLoading = ref(false)
 const saving = ref(false)
 const monitoring = ref(false)
 const isEmbedded = ref(detectEmbedded())
@@ -593,6 +667,7 @@ function openEdit(row: RelayPlatform) {
 
 async function openDetail(row: RelayPlatform) {
   detail.value = await fetchPlatform(row.id)
+  await loadHistory(row.id)
   detailVisible.value = true
 }
 
@@ -620,6 +695,21 @@ async function reloadDetail() {
     return
   }
   detail.value = await fetchPlatform(detail.value.id)
+  await loadHistory(detail.value.id)
+}
+
+async function loadHistory(platformId: number) {
+  historyLoading.value = true
+  try {
+    const [balances, rates] = await Promise.all([
+      fetchBalanceHistory(platformId),
+      fetchRateHistory(platformId),
+    ])
+    balanceHistory.value = balances
+    rateHistory.value = rates
+  } finally {
+    historyLoading.value = false
+  }
 }
 
 async function save() {
@@ -813,6 +903,92 @@ function formatTime(value: string | null) {
     return value
   }
   return date.toLocaleString('zh-CN', { hour12: false })
+}
+
+function firstTimeLabel(value: string | undefined) {
+  if (!value) {
+    return '-'
+  }
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) {
+    return '-'
+  }
+  return date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false })
+}
+
+function firstDateLabel(value: string | undefined) {
+  if (!value) {
+    return '-'
+  }
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) {
+    return '-'
+  }
+  return `${date.getMonth() + 1}/${date.getDate()}`
+}
+
+function balanceChartValues(series: AccountBalanceHistorySeries) {
+  return series.points.map((point) => point.balance)
+}
+
+function rateChartValues(series: GroupRateHistorySeries) {
+  return series.points.map((point) => point.rate_multiplier)
+}
+
+function lastBalancePoint(series: AccountBalanceHistorySeries) {
+  return series.points[series.points.length - 1]
+}
+
+function lastRatePoint(series: GroupRateHistorySeries) {
+  return series.points[series.points.length - 1]
+}
+
+function hasChartData(values: Array<number | null>) {
+  return values.some((value) => value !== null)
+}
+
+function chartPoints(values: Array<number | null>) {
+  const validValues = values.filter((value): value is number => value !== null)
+  if (validValues.length === 0) {
+    return []
+  }
+  const min = Math.min(...validValues)
+  const max = Math.max(...validValues)
+  const range = max - min || 1
+  const width = 280
+  const height = 76
+  const xStart = 20
+  const yStart = 20
+  const step = values.length > 1 ? width / (values.length - 1) : width
+
+  return values
+    .map((value, index) => {
+      if (value === null) {
+        return null
+      }
+      return {
+        key: `${index}-${value}`,
+        x: xStart + step * index,
+        y: yStart + height - ((value - min) / range) * height,
+      }
+    })
+    .filter((point): point is { key: string; x: number; y: number } => point !== null)
+}
+
+function chartPath(values: Array<number | null>) {
+  return chartPoints(values)
+    .map((point) => `${point.x},${point.y}`)
+    .join(' ')
+}
+
+function latestBalance(series: AccountBalanceHistorySeries) {
+  const latest = [...series.points].reverse().find((point) => point.balance !== null)
+  return latest ? formatMoney(latest.balance) : '-'
+}
+
+function latestRate(series: GroupRateHistorySeries) {
+  const latest = [...series.points].reverse().find((point) => point.rate_multiplier !== null)
+  return latest?.rate_multiplier ?? '-'
 }
 
 onMounted(load)

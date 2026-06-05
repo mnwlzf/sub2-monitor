@@ -417,13 +417,13 @@
         </div>
 
         <div v-else-if="activeEmbeddedView === 'rates'" class="embedded-panel-list">
-          <article v-for="row in platforms" :key="row.id" class="embedded-trends-section">
-            <div class="embedded-platform-title compact">
+          <article v-for="row in platforms" :key="row.id" class="embedded-trends-section embedded-rate-section">
+            <div class="embedded-platform-title compact embedded-rate-header">
               <div>
                 <strong>{{ row.name }}</strong>
                 <span>{{ row.base_url }}</span>
               </div>
-              <span>分组趋势图</span>
+              <span>分组倍率趋势</span>
             </div>
             <div v-if="rateHistoryVisibleSeries(row.id).length > 0" class="embedded-rate-platform-card">
               <div class="embedded-rate-legend">
@@ -433,6 +433,7 @@
                   class="embedded-rate-legend-item"
                   :class="{ highlighted: series.is_configured }"
                 >
+                  <span class="embedded-rate-swatch" :style="{ backgroundColor: seriesColor(index) }" />
                   <div class="embedded-rate-legend-main">
                     <strong>{{ series.group_name }}</strong>
                     <span v-if="series.description">{{ series.description }}</span>
@@ -449,30 +450,30 @@
                   </div>
                 </div>
               </div>
-              <svg class="embedded-rate-chart" viewBox="0 0 340 180" role="img">
-                <g v-for="tick in chartYTicks(platformRateChartValues(row.id), 120)" :key="tick.key">
-                  <line :x1="chartLeft" :x2="chartRight" :y1="tick.y" :y2="tick.y" class="chart-grid-line" />
-                  <text :x="chartLeft - 7" :y="tick.y + 4" class="chart-y-label" text-anchor="end">
+              <svg class="embedded-rate-chart" viewBox="0 0 1024 260" preserveAspectRatio="none" role="img">
+                <g v-for="tick in rateChartYTicks(platformRateChartValues(row.id), 180)" :key="tick.key">
+                  <line :x1="rateChartLeft" :x2="rateChartRight" :y1="tick.y" :y2="tick.y" class="chart-grid-line" />
+                  <text :x="rateChartLeft - 7" :y="tick.y + 4" class="chart-y-label" text-anchor="end">
                     {{ tick.label }}
                   </text>
                 </g>
-                <line :x1="chartLeft" :x2="chartLeft" :y1="chartTop" :y2="chartBottom(120)" class="chart-axis-line" />
+                <line :x1="rateChartLeft" :x2="rateChartLeft" :y1="chartTop" :y2="chartBottom(180)" class="chart-axis-line" />
                 <line
-                  :x1="chartLeft"
-                  :x2="chartRight"
-                  :y1="chartBottom(120)"
-                  :y2="chartBottom(120)"
+                  :x1="rateChartLeft"
+                  :x2="rateChartRight"
+                  :y1="chartBottom(180)"
+                  :y2="chartBottom(180)"
                   class="chart-axis-line"
                 />
                 <template v-for="(series, index) in rateHistoryVisibleSeries(row.id)" :key="series.external_group_id">
                   <polyline
-                    v-if="chartPathWithBounds(effectiveRateChartValues(series), platformRateChartBounds(row.id), 120)"
-                    :points="chartPathWithBounds(effectiveRateChartValues(series), platformRateChartBounds(row.id), 120)"
+                    v-if="chartPathWithBounds(effectiveRateChartValues(series), rateChartBounds(row.id), 180, rateChartLeft, rateChartRight)"
+                    :points="chartPathWithBounds(effectiveRateChartValues(series), rateChartBounds(row.id), 180, rateChartLeft, rateChartRight)"
                     class="trend-line rate-line"
                     :style="{ stroke: seriesColor(index) }"
                   />
                   <g
-                    v-for="point in platformRateSeriesPoints(series, platformRateChartBounds(row.id), 120)"
+                    v-for="point in platformRateSeriesPoints(series, rateChartBounds(row.id), 180)"
                     :key="point.key"
                   >
                     <circle
@@ -486,10 +487,9 @@
                   </g>
                 </template>
                 <text
-                  v-for="tick in chartXLabels(
+                  v-for="tick in rateChartXLabels(
                     platformRatePrimarySeries(row.id)?.points.map((point) => point.at) ?? [],
-                    120,
-                    'date',
+                    180,
                   )"
                   :key="tick.key"
                   :x="tick.x"
@@ -500,7 +500,7 @@
                   {{ tick.label }}
                 </text>
               </svg>
-              <div class="history-axis">
+              <div class="history-axis rate-history-axis">
                 <span>{{ platformRateFirstDate(row.id) }}</span>
                 <span>分组趋势</span>
                 <span>{{ platformRateLastDate(row.id) }}</span>
@@ -987,6 +987,8 @@ const embeddedViewDescription = computed(() => embeddedView.value.description)
 const chartLeft = 40
 const chartRight = 310
 const chartTop = 16
+const rateChartLeft = 72
+const rateChartRight = 980
 
 const form = reactive<PlatformPayload>({
   name: '',
@@ -1407,7 +1409,13 @@ function platformRateSeriesPoints(
   bounds: { min: number; max: number; range: number } | null,
   chartHeight = 76,
 ) {
-  return chartPointsWithBounds(effectiveRateChartValues(series), bounds, chartHeight).map((point) => {
+  return chartPointsWithBounds(
+    effectiveRateChartValues(series),
+    bounds,
+    chartHeight,
+    rateChartLeft,
+    rateChartRight,
+  ).map((point) => {
     const raw = series.points[point.index]?.rate_multiplier
     return {
       ...point,
@@ -1420,11 +1428,13 @@ function chartPointsWithBounds(
   values: Array<number | null>,
   bounds: { min: number; max: number; range: number } | null,
   chartHeight = 76,
+  left = chartLeft,
+  right = chartRight,
 ) {
   if (!bounds) {
     return []
   }
-  const width = chartRight - chartLeft
+  const width = right - left
   const step = values.length > 1 ? width / (values.length - 1) : width
 
   return values
@@ -1434,7 +1444,7 @@ function chartPointsWithBounds(
       }
       return {
         key: `${index}-${value}`,
-        x: chartLeft + step * index,
+        x: left + step * index,
         y: chartTop + chartHeight - ((value - bounds.min) / bounds.range) * chartHeight,
         value,
         index,
@@ -1450,10 +1460,61 @@ function chartPathWithBounds(
   values: Array<number | null>,
   bounds: { min: number; max: number; range: number } | null,
   chartHeight = 76,
+  left = chartLeft,
+  right = chartRight,
 ) {
-  return chartPointsWithBounds(values, bounds, chartHeight)
+  return chartPointsWithBounds(values, bounds, chartHeight, left, right)
     .map((point) => `${point.x},${point.y}`)
     .join(' ')
+}
+
+function chartBoundsWithPadding(values: Array<number | null>, paddingRatio = 0.08) {
+  const bounds = chartBounds(values)
+  if (!bounds) {
+    return null
+  }
+  const padding = Math.max(bounds.range * paddingRatio, 0.000001)
+  return {
+    min: bounds.min - padding,
+    max: bounds.max + padding,
+    range: bounds.range + padding * 2,
+  }
+}
+
+function rateChartBounds(platformId: number) {
+  return chartBoundsWithPadding(platformRateChartValues(platformId), 0.1)
+}
+
+function rateChartYTicks(values: Array<number | null>, chartHeight = 180) {
+  const bounds = chartBoundsWithPadding(values, 0.1)
+  if (!bounds) {
+    return []
+  }
+
+  return [0, 0.5, 1].map((ratio) => {
+    const value = bounds.max - bounds.range * ratio
+    return {
+      key: `rate-y-${ratio}`,
+      y: chartTop + chartHeight * ratio,
+      label: formatMultiplier(value),
+    }
+  })
+}
+
+function rateChartXLabels(times: string[], chartHeight = 180) {
+  if (times.length === 0) {
+    return []
+  }
+  const indexes = Array.from(new Set([0, Math.floor((times.length - 1) / 2), times.length - 1]))
+  const width = rateChartRight - rateChartLeft
+  const step = times.length > 1 ? width / (times.length - 1) : width
+
+  return indexes.map((index) => ({
+    key: `rate-x-${index}`,
+    x: rateChartLeft + step * index,
+    y: chartBottom(chartHeight) + 18,
+    label: firstDateLabel(times[index]),
+  }))
 }
 
 function seriesColor(index: number) {

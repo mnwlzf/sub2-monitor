@@ -309,9 +309,36 @@
                   <strong>{{ formatRateConversion(row) }}</strong>
                 </div>
                 <div>
-                  <span>实际倍率系数</span>
+                  <span>充值倍率系数</span>
                   <strong>{{ formatMultiplier(row.effective_rate_factor) }}</strong>
                 </div>
+              </div>
+
+              <div class="embedded-group-rate-panel">
+                <div class="embedded-section-label">分组实际消耗倍率</div>
+                <div v-if="row.group_monitors.length > 0" class="embedded-group-rate-list">
+                  <div
+                    v-for="group in row.group_monitors"
+                    :key="group.id"
+                    class="embedded-group-rate-row"
+                  >
+                    <div class="embedded-group-rate-main">
+                      <strong>{{ group.name }}</strong>
+                      <span>{{ group.external_group_id }}</span>
+                    </div>
+                    <div class="embedded-group-rate-values">
+                      <div>
+                        <span>渠道倍率</span>
+                        <strong>{{ formatMultiplier(group.rate_multiplier) }}</strong>
+                      </div>
+                      <div>
+                        <span>实际消耗倍率</span>
+                        <strong>{{ formatMultiplier(group.effective_rate_multiplier) }}</strong>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <div v-else class="embedded-empty">未配置分组</div>
               </div>
             </div>
           </article>

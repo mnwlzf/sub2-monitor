@@ -893,6 +893,76 @@ body {
   white-space: nowrap;
 }
 
+.embedded-trends {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.embedded-trend-panel {
+  min-width: 0;
+}
+
+.embedded-trend-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 8px;
+}
+
+.embedded-trend-card {
+  position: relative;
+  min-width: 0;
+  border: 1px solid #e8edf5;
+  border-radius: 8px;
+  background: #fbfdff;
+  padding: 10px;
+}
+
+.embedded-trend-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+
+.embedded-trend-head span {
+  overflow: hidden;
+  color: #334155;
+  font-size: 12px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.embedded-trend-head strong {
+  color: #0f172a;
+  font-size: 13px;
+}
+
+.embedded-trend-chart {
+  display: block;
+  width: 100%;
+  height: 96px;
+  border-radius: 6px;
+  background:
+    linear-gradient(#edf2f7 1px, transparent 1px),
+    linear-gradient(90deg, #edf2f7 1px, transparent 1px),
+    #ffffff;
+  background-size: 100% 28px, 70px 100%;
+}
+
+.embedded-trend-empty {
+  position: absolute;
+  inset: 40px 10px 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #94a3b8;
+  font-size: 12px;
+  pointer-events: none;
+}
+
 @media (max-width: 1200px) {
   .embedded-shell .hero-meta {
     margin-right: 0;
@@ -909,7 +979,8 @@ body {
 
 @media (max-width: 760px) {
   .embedded-shell .stats-grid,
-  .embedded-metrics {
+  .embedded-metrics,
+  .embedded-trends {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
@@ -943,6 +1014,10 @@ body {
     grid-template-columns: 1fr;
   }
 
+  .embedded-trends {
+    grid-template-columns: 1fr;
+  }
+
   .embedded-account-row {
     grid-template-columns: 1fr;
   }
@@ -956,7 +1031,8 @@ body {
 @media (max-width: 460px) {
   .embedded-shell .stats-grid,
   .embedded-metrics,
-  .embedded-account-values {
+  .embedded-account-values,
+  .embedded-trend-grid {
     grid-template-columns: 1fr;
   }
 

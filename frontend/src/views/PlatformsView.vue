@@ -246,6 +246,78 @@
               <strong>{{ formatTime(row.checked_at) }}</strong>
             </div>
           </div>
+
+          <div class="embedded-trends">
+            <div class="embedded-trend-panel">
+              <div class="embedded-section-label">余额变化</div>
+              <div class="embedded-trend-grid">
+                <div
+                  v-for="series in platformBalanceHistory[row.id] ?? []"
+                  :key="series.account_id"
+                  class="embedded-trend-card"
+                >
+                  <div class="embedded-trend-head">
+                    <span>{{ series.account_name }}</span>
+                    <strong>{{ latestBalance(series) }}</strong>
+                  </div>
+                  <svg class="embedded-trend-chart" viewBox="0 0 320 96" role="img">
+                    <polyline
+                      v-if="chartPath(balanceChartValues(series), 56)"
+                      :points="chartPath(balanceChartValues(series), 56)"
+                      class="trend-line balance-line"
+                    />
+                    <g v-for="point in chartPoints(balanceChartValues(series), 56)" :key="point.key">
+                      <circle :cx="point.x" :cy="point.y" r="2.2" class="trend-dot balance-dot" />
+                    </g>
+                  </svg>
+                  <div v-if="!hasChartData(balanceChartValues(series))" class="embedded-trend-empty">
+                    暂无历史
+                  </div>
+                </div>
+                <div
+                  v-if="!historyLoading && (platformBalanceHistory[row.id] ?? []).length === 0"
+                  class="embedded-empty"
+                >
+                  暂无账号余额历史
+                </div>
+              </div>
+            </div>
+
+            <div class="embedded-trend-panel">
+              <div class="embedded-section-label">倍率变化</div>
+              <div class="embedded-trend-grid">
+                <div
+                  v-for="series in platformRateHistory[row.id] ?? []"
+                  :key="series.group_id"
+                  class="embedded-trend-card"
+                >
+                  <div class="embedded-trend-head">
+                    <span>{{ series.group_name }}</span>
+                    <strong>{{ latestRate(series) }}</strong>
+                  </div>
+                  <svg class="embedded-trend-chart" viewBox="0 0 320 96" role="img">
+                    <polyline
+                      v-if="chartPath(rateChartValues(series), 56)"
+                      :points="chartPath(rateChartValues(series), 56)"
+                      class="trend-line rate-line"
+                    />
+                    <g v-for="point in chartPoints(rateChartValues(series), 56)" :key="point.key">
+                      <circle :cx="point.x" :cy="point.y" r="2.2" class="trend-dot rate-dot" />
+                    </g>
+                  </svg>
+                  <div v-if="!hasChartData(rateChartValues(series))" class="embedded-trend-empty">
+                    暂无历史
+                  </div>
+                </div>
+                <div
+                  v-if="!historyLoading && (platformRateHistory[row.id] ?? []).length === 0"
+                  class="embedded-empty"
+                >
+                  暂无分组倍率历史
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
       </article>
 
@@ -544,6 +616,8 @@ const stats = ref<DashboardStats | null>(null)
 const detail = ref<PlatformDetail | null>(null)
 const balanceHistory = ref<AccountBalanceHistorySeries[]>([])
 const rateHistory = ref<GroupRateHistorySeries[]>([])
+const platformBalanceHistory = ref<Record<number, AccountBalanceHistorySeries[]>>({})
+const platformRateHistory = ref<Record<number, GroupRateHistorySeries[]>>({})
 const loading = ref(false)
 const historyLoading = ref(false)
 const saving = ref(false)
@@ -685,6 +759,9 @@ async function load() {
     siteStrategies.value = siteStrategyRows
     stats.value = dashboard
     platforms.value = details
+    if (isEmbedded.value) {
+      await loadPlatformHistories(details.map((row) => row.id))
+    }
   } finally {
     loading.value = false
   }
@@ -707,6 +784,29 @@ async function loadHistory(platformId: number) {
     ])
     balanceHistory.value = balances
     rateHistory.value = rates
+    platformBalanceHistory.value = { ...platformBalanceHistory.value, [platformId]: balances }
+    platformRateHistory.value = { ...platformRateHistory.value, [platformId]: rates }
+  } finally {
+    historyLoading.value = false
+  }
+}
+
+async function loadPlatformHistories(platformIds: number[]) {
+  historyLoading.value = true
+  try {
+    const rows = await Promise.all(
+      platformIds.map(async (platformId) => {
+        const [balances, rates] = await Promise.all([
+          fetchBalanceHistory(platformId),
+          fetchRateHistory(platformId),
+        ])
+        return { platformId, balances, rates }
+      }),
+    )
+    platformBalanceHistory.value = Object.fromEntries(
+      rows.map((row) => [row.platformId, row.balances]),
+    )
+    platformRateHistory.value = Object.fromEntries(rows.map((row) => [row.platformId, row.rates]))
   } finally {
     historyLoading.value = false
   }
@@ -754,6 +854,9 @@ async function runMonitor(row: RelayPlatform) {
     await runPlatformMonitor(row.id)
     ElMessage.success('采集完成')
     await load()
+    if (isEmbedded.value) {
+      await loadHistory(row.id)
+    }
   } finally {
     monitoring.value = false
   }
@@ -947,7 +1050,7 @@ function hasChartData(values: Array<number | null>) {
   return values.some((value) => value !== null)
 }
 
-function chartPoints(values: Array<number | null>) {
+function chartPoints(values: Array<number | null>, chartHeight = 76) {
   const validValues = values.filter((value): value is number => value !== null)
   if (validValues.length === 0) {
     return []
@@ -956,7 +1059,7 @@ function chartPoints(values: Array<number | null>) {
   const max = Math.max(...validValues)
   const range = max - min || 1
   const width = 280
-  const height = 76
+  const height = chartHeight
   const xStart = 20
   const yStart = 20
   const step = values.length > 1 ? width / (values.length - 1) : width
@@ -975,8 +1078,8 @@ function chartPoints(values: Array<number | null>) {
     .filter((point): point is { key: string; x: number; y: number } => point !== null)
 }
 
-function chartPath(values: Array<number | null>) {
-  return chartPoints(values)
+function chartPath(values: Array<number | null>, chartHeight = 76) {
+  return chartPoints(values, chartHeight)
     .map((point) => `${point.x},${point.y}`)
     .join(' ')
 }

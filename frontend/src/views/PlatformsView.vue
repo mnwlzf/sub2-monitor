@@ -440,13 +440,6 @@
                   </div>
                   <div class="embedded-rate-legend-metrics">
                     <strong>{{ latestEffectiveRate(series) }}</strong>
-                    <el-button
-                      :icon="Close"
-                      circle
-                      size="small"
-                      title="取消展示"
-                      @click="toggleRateSeries(row.id, series.external_group_id)"
-                    />
                   </div>
                 </div>
               </div>
@@ -896,7 +889,7 @@
 </template>
 
 <script setup lang="ts">
-import { Close, Delete, Edit, Plus, Refresh, Setting } from '@element-plus/icons-vue'
+import { Delete, Edit, Plus, Refresh, Setting } from '@element-plus/icons-vue'
 import type { FormInstance, FormRules } from 'element-plus'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { computed, onMounted, reactive, ref } from 'vue'
@@ -1505,15 +1498,24 @@ function rateChartXLabels(times: string[], chartHeight = 180) {
   if (times.length === 0) {
     return []
   }
-  const indexes = Array.from(new Set([0, Math.floor((times.length - 1) / 2), times.length - 1]))
+  const indexes = Array.from(
+    new Set([
+      0,
+      Math.floor((times.length - 1) * 0.25),
+      Math.floor((times.length - 1) * 0.5),
+      Math.floor((times.length - 1) * 0.75),
+      times.length - 1,
+    ]),
+  )
   const width = rateChartRight - rateChartLeft
   const step = times.length > 1 ? width / (times.length - 1) : width
+  const keyIndexes = new Set([0, Math.floor((times.length - 1) / 2), times.length - 1])
 
   return indexes.map((index) => ({
     key: `rate-x-${index}`,
     x: rateChartLeft + step * index,
     y: chartBottom(chartHeight) + 18,
-    label: firstDateLabel(times[index]),
+    label: keyIndexes.has(index) ? firstDateLabel(times[index]) : firstTimeLabel(times[index]),
   }))
 }
 
@@ -1529,16 +1531,6 @@ function platformRateFirstDate(platformId: number) {
 function platformRateLastDate(platformId: number) {
   const series = platformRatePrimarySeries(platformId)
   return firstDateLabel(series?.points[series.points.length - 1]?.at)
-}
-
-function toggleRateSeries(platformId: number, externalGroupId: string) {
-  const hidden = new Set(hiddenRateSeries.value[platformId] ?? [])
-  if (hidden.has(externalGroupId)) {
-    hidden.delete(externalGroupId)
-  } else {
-    hidden.add(externalGroupId)
-  }
-  hiddenRateSeries.value = { ...hiddenRateSeries.value, [platformId]: Array.from(hidden) }
 }
 
 type OverviewDiscoveredGroupRate = DiscoveredGroupRate & {

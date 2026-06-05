@@ -704,7 +704,41 @@
         <section>
           <div class="monitor-section-title">
             <div>
-              <h3>分组倍率监控</h3>
+              <h3>接口分组倍率</h3>
+              <p>展示接口返回的全部分组倍率，已监控分组会高亮。</p>
+            </div>
+          </div>
+          <div v-if="detail.discovered_group_rates.length > 0" class="embedded-group-rate-list">
+            <div
+              v-for="group in detail.discovered_group_rates"
+              :key="group.external_group_id"
+              class="embedded-group-rate-row"
+              :class="{ highlighted: group.is_configured }"
+            >
+              <div class="embedded-group-rate-main">
+                <strong>{{ group.name }}</strong>
+                <span>{{ group.external_group_id }}</span>
+                <span v-if="group.description" class="embedded-group-rate-desc">{{ group.description }}</span>
+              </div>
+              <div class="embedded-group-rate-values">
+                <div>
+                  <span>原始倍率</span>
+                  <strong>{{ formatMultiplier(group.rate_multiplier) }}</strong>
+                </div>
+                <div>
+                  <span>实际倍率</span>
+                  <strong>{{ formatMultiplier(group.effective_rate_multiplier) }}</strong>
+                </div>
+              </div>
+            </div>
+          </div>
+          <el-empty v-else description="暂无接口分组" />
+        </section>
+
+        <section>
+          <div class="monitor-section-title">
+            <div>
+              <h3>已监控分组</h3>
               <p>配置指定分组，云锦策略填写 codex 即读取 group_ratio.codex。</p>
             </div>
             <el-button :icon="Plus" @click="groupDialogVisible = true">添加分组</el-button>

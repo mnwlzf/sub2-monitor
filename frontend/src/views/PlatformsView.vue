@@ -407,56 +407,7 @@
                   </div>
                 </div>
               </div>
-              <svg class="embedded-rate-chart" viewBox="0 0 1024 260" preserveAspectRatio="none" role="img">
-                <g v-for="tick in rateChartYTicks(platformRateChartValues(row.id), 180)" :key="tick.key">
-                  <line :x1="rateChartLeft" :x2="rateChartRight" :y1="tick.y" :y2="tick.y" class="chart-grid-line" />
-                  <text :x="rateChartLeft - 7" :y="tick.y + 4" class="chart-y-label" text-anchor="end">
-                    {{ tick.label }}
-                  </text>
-                </g>
-                <line :x1="rateChartLeft" :x2="rateChartLeft" :y1="chartTop" :y2="chartBottom(180)" class="chart-axis-line" />
-                <line
-                  :x1="rateChartLeft"
-                  :x2="rateChartRight"
-                  :y1="chartBottom(180)"
-                  :y2="chartBottom(180)"
-                  class="chart-axis-line"
-                />
-                <template v-for="(series, index) in rateHistoryVisibleSeries(row.id)" :key="series.external_group_id">
-                  <polyline
-                    v-if="chartPathWithBounds(effectiveRateChartValues(series), rateChartBounds(row.id), 180, rateChartLeft, rateChartRight)"
-                    :points="chartPathWithBounds(effectiveRateChartValues(series), rateChartBounds(row.id), 180, rateChartLeft, rateChartRight)"
-                    class="trend-line rate-line"
-                    :style="{ stroke: seriesColor(index) }"
-                  />
-                  <g
-                    v-for="point in platformRateSeriesPoints(series, rateChartBounds(row.id), 180)"
-                    :key="point.key"
-                  >
-                    <circle
-                      :cx="point.x"
-                      :cy="point.y"
-                      r="3"
-                      class="trend-dot rate-dot"
-                      :style="{ fill: seriesColor(index) }"
-                    />
-                    <title>{{ point.tooltip }}</title>
-                  </g>
-                </template>
-                <text
-                  v-for="tick in rateChartXLabels(
-                    platformRatePrimarySeries(row.id)?.points.map((point) => point.at) ?? [],
-                    180,
-                  )"
-                  :key="tick.key"
-                  :x="tick.x"
-                  :y="tick.y"
-                  class="chart-x-label"
-                  text-anchor="middle"
-                >
-                  {{ tick.label }}
-                </text>
-              </svg>
+              <RateLineChart :series="rateHistoryVisibleSeries(row.id)" />
               <div class="history-axis rate-history-axis">
                 <span>{{ platformRateFirstDate(row.id) }}</span>
                 <span>分组趋势</span>
@@ -612,41 +563,7 @@
                 <strong>{{ latestEffectiveRate(series) }}</strong>
               </div>
               <div v-if="series.description" class="history-card-desc">{{ series.description }}</div>
-              <svg class="trend-chart" viewBox="0 0 340 150" role="img">
-                <g v-for="tick in chartYTicks(effectiveRateChartValues(series), 86)" :key="tick.key">
-                  <line :x1="chartLeft" :x2="chartRight" :y1="tick.y" :y2="tick.y" class="chart-grid-line" />
-                  <text :x="chartLeft - 7" :y="tick.y + 4" class="chart-y-label" text-anchor="end">
-                    {{ tick.label }}
-                  </text>
-                </g>
-                <line :x1="chartLeft" :x2="chartLeft" :y1="chartTop" :y2="chartBottom(86)" class="chart-axis-line" />
-                <line
-                  :x1="chartLeft"
-                  :x2="chartRight"
-                  :y1="chartBottom(86)"
-                  :y2="chartBottom(86)"
-                  class="chart-axis-line"
-                />
-                <polyline
-                  v-if="chartPath(effectiveRateChartValues(series), 86)"
-                  :points="chartPath(effectiveRateChartValues(series), 86)"
-                  class="trend-line rate-line"
-                />
-                <g v-for="point in rateChartPoints(series, 86)" :key="point.key">
-                  <circle :cx="point.x" :cy="point.y" r="3" class="trend-dot rate-dot" />
-                  <title>{{ point.tooltip }}</title>
-                </g>
-                <text
-                  v-for="tick in chartXLabels(series.points.map((point) => point.at), 86, 'date')"
-                  :key="tick.key"
-                  :x="tick.x"
-                  :y="tick.y"
-                  class="chart-x-label"
-                  text-anchor="middle"
-                >
-                  {{ tick.label }}
-                </text>
-              </svg>
+              <RateLineChart :series="[series]" />
               <div class="history-axis">
                 <span>{{ firstDateLabel(series.points[0]?.at) }}</span>
                 <span>倍率 Cron: {{ detail.rate_cron }}</span>
@@ -825,6 +742,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { computed, onMounted, reactive, ref } from 'vue'
 
 import BalanceLineChart from '@/components/BalanceLineChart.vue'
+import RateLineChart from '@/components/RateLineChart.vue'
 import {
   createAccountMonitor,
   createGroupMonitor,
@@ -907,11 +825,6 @@ const embeddedView = computed(
 )
 const embeddedViewTitle = computed(() => embeddedView.value.label)
 const embeddedViewDescription = computed(() => embeddedView.value.description)
-const chartLeft = 40
-const chartRight = 310
-const chartTop = 16
-const rateChartLeft = 72
-const rateChartRight = 980
 
 const form = reactive<PlatformPayload>({
   name: '',
@@ -1318,136 +1231,6 @@ function platformRatePrimarySeries(platformId: number) {
   return rateHistoryVisibleSeries(platformId)[0] ?? null
 }
 
-function platformRateChartValues(platformId: number) {
-  return rateHistoryVisibleSeries(platformId).flatMap((series) => effectiveRateChartValues(series))
-}
-
-function platformRateChartBounds(platformId: number) {
-  return chartBounds(platformRateChartValues(platformId))
-}
-
-function platformRateSeriesPoints(
-  series: GroupRateHistorySeries,
-  bounds: { min: number; max: number; range: number } | null,
-  chartHeight = 76,
-) {
-  return chartPointsWithBounds(
-    effectiveRateChartValues(series),
-    bounds,
-    chartHeight,
-    rateChartLeft,
-    rateChartRight,
-  ).map((point) => {
-    const raw = series.points[point.index]?.rate_multiplier
-    return {
-      ...point,
-      tooltip: `${series.group_name}\n时间: ${chartTimeLabel(series.points[point.index]?.at)}\n实际倍率: ${formatMultiplier(point.value)}\n原始倍率: ${formatMultiplier(raw)}`,
-    }
-  })
-}
-
-function chartPointsWithBounds(
-  values: Array<number | null>,
-  bounds: { min: number; max: number; range: number } | null,
-  chartHeight = 76,
-  left = chartLeft,
-  right = chartRight,
-) {
-  if (!bounds) {
-    return []
-  }
-  const width = right - left
-  const step = values.length > 1 ? width / (values.length - 1) : width
-
-  return values
-    .map((value, index) => {
-      if (value === null) {
-        return null
-      }
-      return {
-        key: `${index}-${value}`,
-        x: left + step * index,
-        y: chartTop + chartHeight - ((value - bounds.min) / bounds.range) * chartHeight,
-        value,
-        index,
-      }
-    })
-    .filter(
-      (point): point is { key: string; x: number; y: number; value: number; index: number } =>
-        point !== null,
-    )
-}
-
-function chartPathWithBounds(
-  values: Array<number | null>,
-  bounds: { min: number; max: number; range: number } | null,
-  chartHeight = 76,
-  left = chartLeft,
-  right = chartRight,
-) {
-  return chartPointsWithBounds(values, bounds, chartHeight, left, right)
-    .map((point) => `${point.x},${point.y}`)
-    .join(' ')
-}
-
-function chartBoundsWithPadding(values: Array<number | null>, paddingRatio = 0.08) {
-  const bounds = chartBounds(values)
-  if (!bounds) {
-    return null
-  }
-  const padding = Math.max(bounds.range * paddingRatio, 0.000001)
-  return {
-    min: bounds.min - padding,
-    max: bounds.max + padding,
-    range: bounds.range + padding * 2,
-  }
-}
-
-function rateChartBounds(platformId: number) {
-  return chartBoundsWithPadding(platformRateChartValues(platformId), 0.1)
-}
-
-function rateChartYTicks(values: Array<number | null>, chartHeight = 180) {
-  const bounds = chartBoundsWithPadding(values, 0.1)
-  if (!bounds) {
-    return []
-  }
-
-  return [0, 0.5, 1].map((ratio) => {
-    const value = bounds.max - bounds.range * ratio
-    return {
-      key: `rate-y-${ratio}`,
-      y: chartTop + chartHeight * ratio,
-      label: formatMultiplier(value),
-    }
-  })
-}
-
-function rateChartXLabels(times: string[], chartHeight = 180) {
-  if (times.length === 0) {
-    return []
-  }
-  const indexes = Array.from(
-    new Set([
-      0,
-      Math.floor((times.length - 1) * 0.25),
-      Math.floor((times.length - 1) * 0.5),
-      Math.floor((times.length - 1) * 0.75),
-      times.length - 1,
-    ]),
-  )
-  const width = rateChartRight - rateChartLeft
-  const step = times.length > 1 ? width / (times.length - 1) : width
-  const keyIndexes = new Set([0, Math.floor((times.length - 1) / 2), times.length - 1])
-
-  return indexes.map((index) => ({
-    key: `rate-x-${index}`,
-    x: rateChartLeft + step * index,
-    y: chartBottom(chartHeight) + 18,
-    label: keyIndexes.has(index) ? firstDateLabel(times[index]) : firstTimeLabel(times[index]),
-  }))
-}
-
 function seriesColor(index: number) {
   const palette = ['#2563eb', '#059669', '#d97706', '#7c3aed', '#dc2626', '#0891b2', '#db2777', '#65a30d']
   return palette[index % palette.length]
@@ -1538,24 +1321,6 @@ function firstDateLabel(value: string | undefined) {
   })
 }
 
-function chartTimeLabel(value: string | undefined) {
-  if (!value) {
-    return '-'
-  }
-  const date = parseApiTime(value)
-  if (Number.isNaN(date.getTime())) {
-    return '-'
-  }
-  return date.toLocaleString('zh-CN', {
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false,
-    timeZone: 'Asia/Shanghai',
-  })
-}
-
 function parseApiTime(value: string) {
   const normalized = /[zZ]|[+-]\d{2}:\d{2}$/.test(value) ? value : `${value}Z`
   return new Date(normalized)
@@ -1563,10 +1328,6 @@ function parseApiTime(value: string) {
 
 function balanceChartValues(series: AccountBalanceHistorySeries) {
   return series.points.map((point) => point.balance)
-}
-
-function rateChartValues(series: GroupRateHistorySeries) {
-  return series.points.map((point) => point.rate_multiplier)
 }
 
 function effectiveRateChartValues(series: GroupRateHistorySeries) {
@@ -1583,108 +1344,6 @@ function lastRatePoint(series: GroupRateHistorySeries) {
 
 function hasChartData(values: Array<number | null>) {
   return values.some((value) => value !== null)
-}
-
-function chartBottom(chartHeight = 76) {
-  return chartTop + chartHeight
-}
-
-function chartBounds(values: Array<number | null>) {
-  const validValues = values.filter((value): value is number => value !== null)
-  if (validValues.length === 0) {
-    return null
-  }
-  const minValue = Math.min(...validValues)
-  const maxValue = Math.max(...validValues)
-  if (minValue === maxValue) {
-    const padding = Math.max(Math.abs(maxValue) * 0.1, 1)
-    return {
-      min: minValue - padding,
-      max: maxValue + padding,
-      range: padding * 2,
-    }
-  }
-  return {
-    min: minValue,
-    max: maxValue,
-    range: maxValue - minValue,
-  }
-}
-
-function chartPoints(values: Array<number | null>, chartHeight = 76) {
-  const bounds = chartBounds(values)
-  if (!bounds) {
-    return []
-  }
-  const width = chartRight - chartLeft
-  const height = chartHeight
-  const step = values.length > 1 ? width / (values.length - 1) : width
-
-  return values
-    .map((value, index) => {
-      if (value === null) {
-        return null
-      }
-      return {
-        key: `${index}-${value}`,
-        x: chartLeft + step * index,
-        y: chartTop + height - ((value - bounds.min) / bounds.range) * height,
-        value,
-        index,
-      }
-    })
-    .filter(
-      (point): point is { key: string; x: number; y: number; value: number; index: number } =>
-        point !== null,
-    )
-}
-
-function chartPath(values: Array<number | null>, chartHeight = 76) {
-  return chartPoints(values, chartHeight)
-    .map((point) => `${point.x},${point.y}`)
-    .join(' ')
-}
-
-function chartYTicks(values: Array<number | null>, chartHeight = 76) {
-  const bounds = chartBounds(values)
-  if (!bounds) {
-    return []
-  }
-
-  return [0, 0.5, 1].map((ratio) => {
-    const value = bounds.max - bounds.range * ratio
-    return {
-      key: `y-${ratio}`,
-      y: chartTop + chartHeight * ratio,
-      label: formatMoney(value),
-    }
-  })
-}
-
-function chartXLabels(times: string[], chartHeight = 76, mode: 'time' | 'date' = 'time') {
-  if (times.length === 0) {
-    return []
-  }
-  const indexes = Array.from(new Set([0, Math.floor((times.length - 1) / 2), times.length - 1]))
-  const width = chartRight - chartLeft
-  const step = times.length > 1 ? width / (times.length - 1) : width
-
-  return indexes.map((index) => ({
-    key: `x-${index}`,
-    x: chartLeft + step * index,
-    y: chartBottom(chartHeight) + 18,
-    label: mode === 'date' ? firstDateLabel(times[index]) : firstTimeLabel(times[index]),
-  }))
-}
-
-function rateChartPoints(series: GroupRateHistorySeries, chartHeight = 76) {
-  return chartPoints(effectiveRateChartValues(series), chartHeight).map((point) => {
-    const raw = series.points[point.index]?.rate_multiplier
-    return {
-      ...point,
-      tooltip: `${series.group_name}\n时间: ${chartTimeLabel(series.points[point.index]?.at)}\n实际倍率: ${formatMultiplier(point.value)}\n原始倍率: ${formatMultiplier(raw)}`,
-    }
-  })
 }
 
 function latestBalance(series: AccountBalanceHistorySeries) {

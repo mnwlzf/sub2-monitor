@@ -544,6 +544,14 @@ body {
   background: #ffffff;
 }
 
+.rate-line-chart {
+  width: 100%;
+  height: 320px;
+  border: 1px solid #eef2f7;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
 .trend-line {
   fill: none;
   stroke-linecap: round;

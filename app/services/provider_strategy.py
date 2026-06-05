@@ -1004,7 +1004,9 @@ class NewApiStrategy(ProviderStrategy):
         self,
         platform: RelayPlatform,
     ) -> list[DiscoveredChannelRateResult] | None:
-        headers = self.admin_headers(platform)
+        headers = self.management_headers(platform)
+        if self.access_token_value(platform) is None:
+            raise ValueError("newapi channel rate monitoring requires an access token")
         if "New-Api-User" not in headers:
             raise ValueError("newapi channel rate monitoring requires a numeric root user id in account monitor")
         async with httpx.AsyncClient(
@@ -1108,14 +1110,38 @@ class NewApiStrategy(ProviderStrategy):
         strategy = self.site_strategies.get(platform.site_strategy)
         return await strategy.fetch_group_catalog(self, platform)
 
-    def admin_headers(self, platform: RelayPlatform) -> dict[str, str]:
-        headers = self.auth_headers(platform)
+    async def get_json(self, platform: RelayPlatform, path: str) -> tuple[int, Any, int]:
+        base_url = platform.base_url.rstrip("/")
+        url = f"{base_url}/{path.lstrip('/')}"
+        async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
+            response = await client.get(url, headers=self.management_headers(platform))
+        try:
+            latency_ms = int(response.elapsed.total_seconds() * 1000)
+        except Exception:  # noqa: BLE001
+            latency_ms = 0
+        if not response.headers.get("content-type", "").lower().startswith("application/json"):
+            return response.status_code, {}, latency_ms
+        return response.status_code, response.json(), latency_ms
+
+    def management_headers(self, platform: RelayPlatform) -> dict[str, str]:
+        headers: dict[str, str] = {}
+        access_token = self.access_token_value(platform)
+        if access_token:
+            headers[platform.auth_header_name] = access_token
         user_id = self.management_user_id(platform)
         if user_id:
-            headers["New-Api-User"] = (
-                user_id if user_id.lower().startswith("bearer ") else f"Bearer {user_id}"
-            )
+            headers["New-Api-User"] = user_id
         return headers
+
+    @staticmethod
+    def access_token_value(platform: RelayPlatform) -> str | None:
+        token = decrypt_secret(platform.api_key_encrypted)
+        if not token:
+            return None
+        token = token.strip()
+        if token.lower().startswith("bearer "):
+            token = token[7:].strip()
+        return token or None
 
     @staticmethod
     def management_user_id(platform: RelayPlatform) -> str | None:
@@ -1131,20 +1157,6 @@ class NewApiStrategy(ProviderStrategy):
                 if candidate.isdigit():
                     return candidate
         return None
-
-    @staticmethod
-    def user_id_variants(user_id: str) -> list[str]:
-        variants: list[str] = []
-        normalized = user_id.strip()
-        if not normalized:
-            return variants
-        for candidate in (
-            normalized if normalized.lower().startswith("bearer ") else f"Bearer {normalized}",
-            normalized,
-        ):
-            if candidate not in variants:
-                variants.append(candidate)
-        return variants
 
     @staticmethod
     def site_url(platform: RelayPlatform) -> str:
@@ -1178,26 +1190,18 @@ class NewApiStrategy(ProviderStrategy):
         self,
         platform: RelayPlatform,
     ) -> tuple[dict[str, str | None], ...]:
-        user_id = self.management_user_id(platform)
-        if not user_id:
+        headers = self.management_headers(platform)
+        if self.access_token_value(platform) is None:
+            raise ValueError("newapi key monitoring requires an access token")
+        if "New-Api-User" not in headers:
             raise ValueError("newapi key monitoring requires an enabled account monitor with New-Api-User")
 
-        last_error: str | None = None
-        for user_id_variant in self.user_id_variants(user_id):
-            try:
-                async with httpx.AsyncClient(
-                    base_url=self.site_url(platform),
-                    headers={**self.auth_headers(platform), "New-Api-User": user_id_variant},
-                    timeout=self.timeout_seconds,
-                ) as client:
-                    summaries = await self.fetch_token_summaries(client)
-                    if summaries is not None:
-                        return summaries
-            except httpx.HTTPError as exc:
-                last_error = str(exc)
-            except ValueError as exc:
-                last_error = str(exc)
-        raise ValueError(last_error or "newapi token catalog fetch failed")
+        async with httpx.AsyncClient(
+            base_url=self.site_url(platform),
+            headers=headers,
+            timeout=self.timeout_seconds,
+        ) as client:
+            return await self.fetch_token_summaries(client)
 
     async def fetch_token_summaries(
         self,

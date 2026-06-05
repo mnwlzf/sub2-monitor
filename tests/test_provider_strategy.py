@@ -230,7 +230,8 @@ def test_newapi_fetch_account_balance_reads_key_summaries(monkeypatch) -> None:
             if target.startswith("https://"):
                 target = target.split("https://newapi.example.com/", 1)[-1]
             if path == "api/token/":
-                assert self.headers.get("New-Api-User") == "Bearer 123"
+                assert self.headers.get("Authorization") == "token-123"
+                assert self.headers.get("New-Api-User") == "123"
                 return httpx.Response(
                     200,
                     json={
@@ -279,11 +280,11 @@ def test_newapi_fetch_account_balance_reads_key_summaries(monkeypatch) -> None:
             SimpleNamespace(
                 base_url="https://newapi.example.com",
                 site_strategy="generic",
-                api_key_encrypted=None,
+                api_key_encrypted=encrypt_secret("Bearer token-123"),
                 auth_header_name="Authorization",
                 auth_header_prefix="Bearer",
                 account_monitors=[
-                    SimpleNamespace(enabled=True, external_account_id="123", username=None)
+                    SimpleNamespace(enabled=True, external_account_id="123", username="Bearer 123")
                 ],
             ),
             SimpleNamespace(

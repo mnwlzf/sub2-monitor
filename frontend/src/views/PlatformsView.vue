@@ -524,7 +524,7 @@
           <el-input v-model="form.name" placeholder="例如 主站 Sub2API" />
         </el-form-item>
         <el-form-item label="服务商类型" prop="provider_type">
-          <el-select v-model="form.provider_type" class="full-width">
+          <el-select v-model="form.provider_type" class="full-width" @change="onProviderTypeChange">
             <el-option
               v-for="provider in providers"
               :key="provider.value"
@@ -552,13 +552,13 @@
         <el-form-item label="鉴权 Header" prop="auth_header_name">
           <el-input v-model="form.auth_header_name" />
         </el-form-item>
-        <el-form-item label="鉴权前缀" prop="auth_header_prefix">
+        <el-form-item v-if="form.provider_type !== 'newapi'" label="鉴权前缀" prop="auth_header_prefix">
           <el-input v-model="form.auth_header_prefix" placeholder="Bearer" />
         </el-form-item>
-        <el-form-item label="管理 API Key">
+        <el-form-item :label="form.provider_type === 'newapi' ? 'Access Token' : '管理 API Key'">
           <el-input
             v-model="form.api_key"
-            placeholder="留空则不修改已有凭据"
+            :placeholder="form.provider_type === 'newapi' ? '原始 access token，不带 Bearer' : '留空则不修改已有凭据'"
             show-password
             type="password"
           />
@@ -1003,6 +1003,17 @@ function resetForm() {
   })
 }
 
+function onProviderTypeChange(value: string | number | boolean | undefined) {
+  if (value === 'newapi') {
+    form.auth_header_name = 'Authorization'
+    form.auth_header_prefix = ''
+    return
+  }
+  if (!form.auth_header_prefix) {
+    form.auth_header_prefix = 'Bearer'
+  }
+}
+
 function resetAccountForm() {
   Object.assign(accountForm, {
     name: '',
@@ -1134,6 +1145,8 @@ async function save() {
     const payload = { ...form }
     if (payload.provider_type !== 'newapi') {
       payload.site_strategy = 'generic'
+    } else {
+      payload.auth_header_prefix = ''
     }
     if (!payload.api_key) {
       delete payload.api_key

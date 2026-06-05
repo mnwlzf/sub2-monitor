@@ -13,6 +13,7 @@ from app.models.monitor import PlatformAccountMonitor, PlatformGroupMonitor
 from app.models.platform import PlatformStatus, RelayPlatform
 from app.models.snapshot import (
     AccountBalanceSnapshot,
+    DiscoveredGroupRateSnapshot,
     GroupRateSnapshot,
     PlatformSnapshot,
 )
@@ -295,6 +296,17 @@ def get_rate_history(
     ticks = build_history_ticks(platform.rate_cron, since, now)
     start = ticks[0]
 
+    discovered_snapshots = db.scalars(
+        select(DiscoveredGroupRateSnapshot)
+        .where(
+            DiscoveredGroupRateSnapshot.platform_id == platform_id,
+            DiscoveredGroupRateSnapshot.created_at >= start,
+        )
+        .order_by(DiscoveredGroupRateSnapshot.created_at.asc())
+    ).all()
+    by_external_group_id: dict[str, list[DiscoveredGroupRateSnapshot]] = {}
+    for snapshot in discovered_snapshots:
+        by_external_group_id.setdefault(snapshot.external_group_id, []).append(snapshot)
     group_snapshots = db.scalars(
         select(GroupRateSnapshot)
         .where(
@@ -306,6 +318,33 @@ def get_rate_history(
     by_group_monitor_id: dict[int, list[GroupRateSnapshot]] = {}
     for snapshot in group_snapshots:
         by_group_monitor_id.setdefault(snapshot.group_monitor_id, []).append(snapshot)
+
+    configured_groups = {
+        group.external_group_id: group
+        for group in platform.group_monitors
+    }
+
+    if platform.discovered_group_rates:
+        return [
+            GroupRateHistorySeries(
+                group_id=configured_groups.get(group.external_group_id).id
+                if group.external_group_id in configured_groups
+                else None,
+                external_group_id=group.external_group_id,
+                group_name=group.name,
+                description=group.description,
+                configured_monitor_id=configured_groups.get(group.external_group_id).id
+                if group.external_group_id in configured_groups
+                else None,
+                is_configured=group.external_group_id in configured_groups,
+                points=build_discovered_rate_points(
+                    ticks,
+                    by_external_group_id.get(group.external_group_id, []),
+                    effective_rate_factor,
+                ),
+            )
+            for group in platform.discovered_group_rates
+        ]
 
     return [
         GroupRateHistorySeries(
@@ -368,6 +407,36 @@ def build_rate_points(
     effective_rate_factor: float | None,
 ) -> list[dict]:
     snapshots_by_tick: dict[datetime, GroupRateSnapshot] = {}
+    for snapshot in snapshots:
+        tick_index = bisect_right(ticks, snapshot.created_at) - 1
+        if tick_index >= 0:
+            snapshots_by_tick[ticks[tick_index]] = snapshot
+
+    return [
+        {
+            "at": tick,
+            "rate_multiplier": (
+                snapshots_by_tick[tick].rate_multiplier if tick in snapshots_by_tick else None
+            ),
+            "effective_rate_multiplier": (
+                snapshots_by_tick[tick].rate_multiplier * effective_rate_factor
+                if tick in snapshots_by_tick
+                and snapshots_by_tick[tick].rate_multiplier is not None
+                and effective_rate_factor is not None
+                else None
+            ),
+            "rpm_limit": snapshots_by_tick[tick].rpm_limit if tick in snapshots_by_tick else None,
+        }
+        for tick in ticks
+    ]
+
+
+def build_discovered_rate_points(
+    ticks: list[datetime],
+    snapshots: list[DiscoveredGroupRateSnapshot],
+    effective_rate_factor: float | None,
+) -> list[dict]:
+    snapshots_by_tick: dict[datetime, DiscoveredGroupRateSnapshot] = {}
     for snapshot in snapshots:
         tick_index = bisect_right(ticks, snapshot.created_at) - 1
         if tick_index >= 0:

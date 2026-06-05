@@ -7,7 +7,11 @@ from sqlalchemy.orm import Session, selectinload
 from app.core.security import utcnow
 from app.models.monitor import PlatformDiscoveredGroupRate, PlatformGroupMonitor
 from app.models.platform import PlatformStatus, RelayPlatform
-from app.models.snapshot import AccountBalanceSnapshot, GroupRateSnapshot
+from app.models.snapshot import (
+    AccountBalanceSnapshot,
+    DiscoveredGroupRateSnapshot,
+    GroupRateSnapshot,
+)
 from app.services.provider_strategy import (
     DiscoveredGroupRateResult,
     provider_registry,
@@ -138,6 +142,18 @@ async def run_platform_rate_monitor(db: Session, platform_id: int) -> RelayPlatf
                 rpm_limit=item.rpm_limit,
                 error=item.error,
                 checked_at=checked_at,
+            )
+            db.add(
+                DiscoveredGroupRateSnapshot(
+                    platform_id=platform.id,
+                    external_group_id=item.external_group_id,
+                    name=item.name,
+                    description=item.description,
+                    rate_multiplier=item.rate_multiplier,
+                    rpm_limit=item.rpm_limit,
+                    error_message=item.error,
+                    created_at=checked_at,
+                )
             )
             if configured_group is not None:
                 record_configured_group_rate(

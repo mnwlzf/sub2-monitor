@@ -428,7 +428,7 @@
             <div v-if="rateHistoryVisibleSeries(row.id).length > 0" class="embedded-rate-platform-card">
               <div class="embedded-rate-legend">
                 <div
-                  v-for="series in rateHistoryVisibleSeries(row.id)"
+                  v-for="(series, index) in rateHistoryVisibleSeries(row.id)"
                   :key="series.external_group_id"
                   class="embedded-rate-legend-item"
                   :class="{ highlighted: series.is_configured }"
@@ -449,11 +449,7 @@
                   </div>
                 </div>
               </div>
-              <svg
-                class="embedded-rate-chart"
-                viewBox="0 0 340 180"
-                role="img"
-              >
+              <svg class="embedded-rate-chart" viewBox="0 0 340 180" role="img">
                 <g v-for="tick in chartYTicks(platformRateChartValues(row.id), 120)" :key="tick.key">
                   <line :x1="chartLeft" :x2="chartRight" :y1="tick.y" :y2="tick.y" class="chart-grid-line" />
                   <text :x="chartLeft - 7" :y="tick.y + 4" class="chart-y-label" text-anchor="end">
@@ -468,10 +464,7 @@
                   :y2="chartBottom(120)"
                   class="chart-axis-line"
                 />
-                <template
-                  v-for="(series, index) in rateHistoryVisibleSeries(row.id)"
-                  :key="series.external_group_id"
-                >
+                <template v-for="(series, index) in rateHistoryVisibleSeries(row.id)" :key="series.external_group_id">
                   <polyline
                     v-if="chartPathWithBounds(effectiveRateChartValues(series), platformRateChartBounds(row.id), 120)"
                     :points="chartPathWithBounds(effectiveRateChartValues(series), platformRateChartBounds(row.id), 120)"

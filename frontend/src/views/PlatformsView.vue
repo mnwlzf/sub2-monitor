@@ -315,19 +315,26 @@
               </div>
 
               <div class="embedded-group-rate-panel">
-                <div class="embedded-section-label">接口分组</div>
+                <div class="embedded-section-label">接口分组速览</div>
                 <div
-                  v-if="uniqueDiscoveredGroupRates(row.discovered_group_rates).length > 0"
+                  v-if="overviewDiscoveredGroupRates(row.discovered_group_rates).length > 0"
                   class="embedded-group-rate-list"
                 >
                   <div
-                    v-for="group in uniqueDiscoveredGroupRates(row.discovered_group_rates)"
+                    v-for="group in overviewDiscoveredGroupRates(row.discovered_group_rates)"
                     :key="group.external_group_id"
                     class="embedded-group-rate-row"
                     :class="{ highlighted: group.is_configured }"
                   >
                     <div class="embedded-group-rate-main">
-                      <strong>{{ group.name }}</strong>
+                      <div class="embedded-group-rate-title">
+                        <strong>{{ group.name }}</strong>
+                        <div class="embedded-group-rate-tags">
+                          <el-tag v-if="group.is_highest" size="small" type="success" effect="light">最高</el-tag>
+                          <el-tag v-if="group.is_lowest" size="small" type="info" effect="light">最低</el-tag>
+                          <el-tag v-if="group.is_configured" size="small" type="warning" effect="light">监控</el-tag>
+                        </div>
+                      </div>
                       <span>{{ group.external_group_id }}</span>
                       <span v-if="group.description" class="embedded-group-rate-desc">{{ group.description }}</span>
                     </div>
@@ -1307,6 +1314,37 @@ function uniqueDiscoveredGroupRates(rows: DiscoveredGroupRate[]) {
     seen.set(row.external_group_id, row)
   }
   return Array.from(seen.values())
+}
+
+type OverviewDiscoveredGroupRate = DiscoveredGroupRate & {
+  is_highest: boolean
+  is_lowest: boolean
+}
+
+function overviewDiscoveredGroupRates(rows: DiscoveredGroupRate[]): OverviewDiscoveredGroupRate[] {
+  const unique = uniqueDiscoveredGroupRates(rows)
+  const configured = unique.filter((row) => row.is_configured)
+  const ranked = unique
+    .filter((row) => row.rate_multiplier !== null)
+    .slice()
+    .sort((a, b) => (a.rate_multiplier ?? 0) - (b.rate_multiplier ?? 0))
+  const highest = ranked[ranked.length - 1]
+  const lowest = ranked[0]
+  const selected = [...configured, highest, lowest].filter(
+    (row): row is DiscoveredGroupRate => row !== undefined,
+  )
+  const seen = new Set<string>()
+  return selected.filter((row) => {
+    if (seen.has(row.external_group_id)) {
+      return false
+    }
+    seen.add(row.external_group_id)
+    return true
+  }).map((row) => ({
+    ...row,
+    is_highest: row.external_group_id === highest?.external_group_id,
+    is_lowest: row.external_group_id === lowest?.external_group_id,
+  }))
 }
 
 function formatTime(value: string | null) {

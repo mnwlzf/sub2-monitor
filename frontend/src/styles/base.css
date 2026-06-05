@@ -1074,6 +1074,28 @@ body {
   min-width: 0;
 }
 
+.embedded-group-rate-title {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.embedded-group-rate-tags {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.embedded-group-rate-title strong {
+  display: inline-block;
+  overflow: hidden;
+  min-width: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .embedded-group-rate-main strong,
 .embedded-group-rate-main span {
   display: block;

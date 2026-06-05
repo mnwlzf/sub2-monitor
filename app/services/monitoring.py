@@ -5,7 +5,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.core.security import utcnow
-from app.models.monitor import PlatformDiscoveredGroupRate, PlatformGroupMonitor
+from app.models.monitor import PlatformAccountMonitor, PlatformDiscoveredGroupRate, PlatformGroupMonitor
 from app.models.platform import PlatformStatus, RelayPlatform
 from app.models.snapshot import (
     AccountBalanceSnapshot,
@@ -29,6 +29,7 @@ async def run_platform_balance_monitor(db: Session, platform_id: int) -> RelayPl
         select(RelayPlatform)
         .options(
             selectinload(RelayPlatform.account_monitors),
+            selectinload(RelayPlatform.group_monitors),
         )
         .where(RelayPlatform.id == platform_id)
     )
@@ -67,6 +68,8 @@ async def run_platform_balance_monitor(db: Session, platform_id: int) -> RelayPl
                 created_at=checked_at,
             )
         )
+
+    sync_key_group_monitors(db, platform)
 
     account_balances = [
         account.balance
@@ -111,6 +114,7 @@ async def run_platform_rate_monitor(db: Session, platform_id: int) -> RelayPlatf
 
     strategy = provider_registry.get(platform.provider_type)
     errors: list[str] = []
+    sync_key_group_monitors(db, platform)
 
     discovered_catalog: list[DiscoveredGroupRateResult] | None
     try:
@@ -222,6 +226,54 @@ def update_platform_status(platform: RelayPlatform, errors: list[str]) -> None:
     platform.checked_at = utcnow()
     platform.last_error = "\n".join(errors) if errors else None
     platform.status = PlatformStatus.degraded if errors else PlatformStatus.healthy
+
+
+def sync_key_group_monitors(db: Session, platform: RelayPlatform) -> None:
+    candidates = key_group_monitor_candidates(platform.account_monitors)
+    if not candidates:
+        return
+
+    existing_groups = {group.external_group_id: group for group in platform.group_monitors}
+    changed = False
+    for external_group_id, name in candidates.items():
+        existing_group = existing_groups.get(external_group_id)
+        if existing_group is not None:
+            default_names = {external_group_id, f"分组 {external_group_id}"}
+            if existing_group.name in default_names and existing_group.name != name:
+                existing_group.name = name
+                db.add(existing_group)
+                changed = True
+            continue
+
+        group = PlatformGroupMonitor(
+            platform_id=platform.id,
+            name=name,
+            external_group_id=external_group_id,
+            enabled=True,
+        )
+        platform.group_monitors.append(group)
+        db.add(group)
+        existing_groups[external_group_id] = group
+        changed = True
+
+    if changed:
+        db.flush()
+
+
+def key_group_monitor_candidates(
+    accounts: list[PlatformAccountMonitor],
+) -> dict[str, str]:
+    candidates: dict[str, str] = {}
+    for account in accounts:
+        if not account.enabled:
+            continue
+        for key_summary in account.key_summaries:
+            external_group_id = (key_summary.get("group_id") or "").strip()
+            if not external_group_id or external_group_id == "0":
+                continue
+            name = (key_summary.get("group_name") or f"分组 {external_group_id}").strip()
+            candidates.setdefault(external_group_id, name[:120] or f"分组 {external_group_id}")
+    return candidates
 
 
 def get_platform_detail(db: Session, platform_id: int) -> RelayPlatform | None:

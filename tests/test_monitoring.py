@@ -11,8 +11,13 @@ from app.core.database import Base
 from app.models.monitor import PlatformAccountMonitor, PlatformGroupMonitor
 from app.models.platform import PlatformStatus, RelayPlatform
 from app.models.snapshot import GroupRateSnapshot
-from app.services.monitoring import run_platform_rate_monitor
-from app.services.provider_strategy import GroupRateResult, provider_registry
+from app.services.monitoring import run_platform_balance_monitor, run_platform_rate_monitor
+from app.services.provider_strategy import (
+    AccountBalanceResult,
+    DiscoveredGroupRateResult,
+    GroupRateResult,
+    provider_registry,
+)
 
 
 class FakeProvider:
@@ -25,6 +30,64 @@ class FakeProvider:
         group: PlatformGroupMonitor,
     ) -> GroupRateResult:
         return GroupRateResult(rate_multiplier=0.25, rpm_limit=120)
+
+
+class FakeBalanceProvider:
+    async def fetch_account_balance(
+        self,
+        platform: RelayPlatform,
+        account: PlatformAccountMonitor,
+    ) -> AccountBalanceResult:
+        return AccountBalanceResult(
+            balance=12.5,
+            quota_used=3.5,
+            quota_limit=20.0,
+            key_summaries=(
+                {"id": "101", "name": "prod-key", "group_id": "7", "group_name": "codex"},
+                {"id": "102", "name": "ungrouped-key", "group_id": None, "group_name": None},
+            ),
+        )
+
+    async def fetch_group_catalog(self, platform: RelayPlatform):
+        return None
+
+    async def fetch_group_rate(
+        self,
+        platform: RelayPlatform,
+        group: PlatformGroupMonitor,
+    ) -> GroupRateResult:
+        return GroupRateResult()
+
+
+class FakeCatalogProvider:
+    async def fetch_account_balance(
+        self,
+        platform: RelayPlatform,
+        account: PlatformAccountMonitor,
+    ) -> AccountBalanceResult:
+        return AccountBalanceResult()
+
+    async def fetch_group_catalog(self, platform: RelayPlatform):
+        return [
+            DiscoveredGroupRateResult(
+                external_group_id="7",
+                name="codex",
+                rate_multiplier=0.12,
+                rpm_limit=60,
+            ),
+            DiscoveredGroupRateResult(
+                external_group_id="8",
+                name="premium",
+                rate_multiplier=0.8,
+            ),
+        ]
+
+    async def fetch_group_rate(
+        self,
+        platform: RelayPlatform,
+        group: PlatformGroupMonitor,
+    ) -> GroupRateResult:
+        return GroupRateResult(rate_multiplier=0.99)
 
 
 def make_session():
@@ -69,6 +132,81 @@ def test_rate_monitor_persists_configured_group_snapshot_without_catalog(monkeyp
         assert refreshed_group.rate_multiplier == 0.25
         assert refreshed_group.rpm_limit == 120
         assert refreshed_group.checked_at is not None
+    finally:
+        db.close()
+
+
+def test_balance_monitor_adds_key_group_as_group_monitor(monkeypatch) -> None:
+    monkeypatch.setitem(provider_registry._strategies, "fake-balance", FakeBalanceProvider())
+    db = make_session()
+    try:
+        platform = RelayPlatform(
+            name="Fake Balance",
+            base_url="https://example.com",
+            provider_type="fake-balance",
+            rate_cron="*/5 * * * *",
+            balance_cron="*/10 * * * *",
+            status=PlatformStatus.unknown,
+        )
+        db.add(platform)
+        db.flush()
+        db.add(
+            PlatformAccountMonitor(
+                platform_id=platform.id,
+                name="Main",
+                external_account_id="user@example.com",
+                enabled=True,
+            )
+        )
+        db.commit()
+
+        asyncio.run(run_platform_balance_monitor(db, platform.id))
+
+        groups = db.scalars(select(PlatformGroupMonitor)).all()
+        assert len(groups) == 1
+        assert groups[0].external_group_id == "7"
+        assert groups[0].name == "codex"
+        assert groups[0].enabled is True
+    finally:
+        db.close()
+
+
+def test_rate_monitor_records_key_group_from_stored_summaries(monkeypatch) -> None:
+    monkeypatch.setitem(provider_registry._strategies, "fake-catalog", FakeCatalogProvider())
+    db = make_session()
+    try:
+        platform = RelayPlatform(
+            name="Fake Catalog",
+            base_url="https://example.com",
+            provider_type="fake-catalog",
+            rate_cron="*/5 * * * *",
+            balance_cron="*/10 * * * *",
+            status=PlatformStatus.unknown,
+        )
+        db.add(platform)
+        db.flush()
+        account = PlatformAccountMonitor(
+            platform_id=platform.id,
+            name="Main",
+            external_account_id="user@example.com",
+            enabled=True,
+        )
+        account.key_summaries = (
+            {"id": "101", "name": "prod-key", "group_id": "7", "group_name": "codex"},
+        )
+        db.add(account)
+        db.commit()
+
+        asyncio.run(run_platform_rate_monitor(db, platform.id))
+
+        group = db.scalar(select(PlatformGroupMonitor).where(PlatformGroupMonitor.external_group_id == "7"))
+        assert group is not None
+        assert group.name == "codex"
+
+        snapshots = db.scalars(select(GroupRateSnapshot)).all()
+        assert len(snapshots) == 1
+        assert snapshots[0].group_monitor_id == group.id
+        assert snapshots[0].rate_multiplier == 0.12
     finally:
         db.close()
 

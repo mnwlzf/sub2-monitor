@@ -60,6 +60,23 @@ uv run uvicorn app.main:app --host 0.0.0.0 --port 8000
 - 平台监控快照接口预留
 - 仪表盘统计接口
 
+## Sub2API 监控配置
+
+新增平台时选择 `Sub2API`，在“站点地址”填目标 Sub2API 的 base URL，例如
+`https://example.com`、`https://example.com/sub2` 或 `https://example.com/api/v1`。
+监控服务会自动归一化到 `/api/v1`。
+
+添加账号余额监控时，“登录账号”填写 Sub2API 用户邮箱，“登录密码”填写用户密码；
+“平台账号 ID”可填 `me` 或邮箱。采集时会调用：
+
+- `POST /api/v1/auth/login`，请求体为 `email`、`password`
+- `GET /api/v1/usage/dashboard/stats` 获取总消耗
+- `GET /api/v1/keys?page=1&page_size=100` 作为 API Key 配额兜底
+- `GET /api/v1/groups/available` 获取可用分组
+- `GET /api/v1/groups/rates` 获取用户专属分组倍率覆盖
+
+如果目标账号启用了 TOTP 2FA，当前自动采集不支持二次验证码。
+
 ## GitHub Actions
 
 仓库包含 `.github/workflows/ci.yml`，在推送到 `main` / `master` 或提交 Pull Request 时会自动执行：

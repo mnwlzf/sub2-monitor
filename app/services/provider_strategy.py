@@ -549,23 +549,70 @@ class NewApiSiteStrategyRegistry:
 class Sub2ApiStrategy(ProviderStrategy):
     provider_type = "sub2api"
     label = "Sub2API"
-    description = "面向 Sub2API 部署实例的监控策略骨架"
+    description = "通过用户邮箱密码登录 Sub2API，读取余额、总消耗和可用分组倍率"
+
+    FRONTEND_PAGE_SUFFIXES = {
+        "login",
+        "register",
+        "dashboard",
+        "keys",
+        "usage",
+        "profile",
+        "purchase",
+    }
 
     async def fetch_account_balance(
         self,
         platform: RelayPlatform,
         account: PlatformAccountMonitor,
     ) -> AccountBalanceResult:
-        status, payload, _ = await self.get_json(
-            platform,
-            f"/api/v1/admin/accounts/{account.external_account_id}",
+        email = self.account_email(account)
+        if not email:
+            return AccountBalanceResult(error="Sub2API 账号余额监控需要配置登录邮箱")
+
+        password = decrypt_secret(account.password_encrypted)
+        if not password:
+            return AccountBalanceResult(error="Sub2API 账号余额监控需要配置登录密码")
+
+        async with self.api_client(platform) as client:
+            login_payload, login_error = await self.login(client, email, password)
+            if login_error:
+                return AccountBalanceResult(error=login_error)
+
+            user_payload = login_payload.get("user") if isinstance(login_payload, dict) else None
+            if not isinstance(user_payload, dict):
+                user_payload, user_error = await self.get_sub2api_data(client, "auth/me")
+                if user_error:
+                    return AccountBalanceResult(error=user_error)
+
+            dashboard_payload, dashboard_error = await self.get_sub2api_data(
+                client,
+                "usage/dashboard/stats",
+            )
+            keys_payload, _ = await self.get_sub2api_data(client, "keys?page=1&page_size=100")
+
+        balance = self.first_number(user_payload, ("balance",))
+        total_recharged = self.first_number(user_payload, ("total_recharged",))
+        quota_used = self.first_number(
+            dashboard_payload,
+            ("total_actual_cost", "actual_cost", "total_cost"),
         )
-        if status >= 400:
-            return AccountBalanceResult(error=f"sub2api account endpoint returned HTTP {status}")
+        key_quota_used, key_quota_limit = self.sum_api_key_quotas(keys_payload)
+        if quota_used is None:
+            quota_used = key_quota_used
+        quota_limit = total_recharged if total_recharged is not None else key_quota_limit
+
+        if dashboard_error and quota_used is None:
+            return AccountBalanceResult(
+                balance=balance,
+                quota_limit=quota_limit,
+                error=dashboard_error,
+            )
+
         return AccountBalanceResult(
-            balance=self.first_number(payload, ("balance", "remaining_balance", "quota_remaining")),
-            quota_used=self.first_number(payload, ("quota_used", "used_quota", "usage")),
-            quota_limit=self.first_number(payload, ("quota", "quota_limit", "limit")),
+            balance=balance,
+            quota_used=quota_used,
+            quota_limit=quota_limit,
         )
 
     async def fetch_group_rate(
@@ -573,15 +620,262 @@ class Sub2ApiStrategy(ProviderStrategy):
         platform: RelayPlatform,
         group: PlatformGroupMonitor,
     ) -> GroupRateResult:
-        status, payload, _ = await self.get_json(
-            platform,
-            f"/api/v1/admin/groups/{group.external_group_id}",
+        catalog = await self.fetch_group_catalog(platform)
+        target = group.external_group_id.strip()
+        for item in catalog or []:
+            if item.external_group_id == target or item.name == target:
+                return GroupRateResult(
+                    rate_multiplier=item.rate_multiplier,
+                    rpm_limit=item.rpm_limit,
+                    error=item.error,
+                )
+        return GroupRateResult(error=f"Sub2API 可用分组中未找到 {group.external_group_id!r}")
+
+    async def fetch_group_catalog(
+        self,
+        platform: RelayPlatform,
+    ) -> list[DiscoveredGroupRateResult] | None:
+        account = self.first_login_account(platform)
+        if account is None:
+            raise ValueError("Sub2API 分组采集需要至少配置一个启用账号，并填写邮箱和密码")
+
+        email = self.account_email(account)
+        password = decrypt_secret(account.password_encrypted)
+        if not email or not password:
+            raise ValueError("Sub2API 分组采集账号缺少登录邮箱或密码")
+
+        async with self.api_client(platform) as client:
+            _, login_error = await self.login(client, email, password)
+            if login_error:
+                raise ValueError(login_error)
+
+            groups_payload, groups_error = await self.get_sub2api_data(client, "groups/available")
+            if groups_error:
+                raise ValueError(groups_error)
+            rates_payload, rates_error = await self.get_sub2api_data(client, "groups/rates")
+            if rates_error:
+                raise ValueError(rates_error)
+
+        return self.parse_group_catalog_payload(groups_payload, rates_payload)
+
+    def api_client(self, platform: RelayPlatform) -> httpx.AsyncClient:
+        return httpx.AsyncClient(
+            base_url=f"{self.api_base_url(platform)}/",
+            follow_redirects=True,
+            headers={"Accept": "application/json"},
+            timeout=self.timeout_seconds,
         )
-        if status >= 400:
-            return GroupRateResult(error=f"sub2api group endpoint returned HTTP {status}")
-        rate = self.first_number(payload, ("rate_multiplier", "multiplier", "rate"))
-        rpm = self.first_number(payload, ("rpm_limit", "rpm", "request_per_minute"))
-        return GroupRateResult(rate_multiplier=rate, rpm_limit=int(rpm) if rpm is not None else None)
+
+    async def login(
+        self,
+        client: httpx.AsyncClient,
+        email: str,
+        password: str,
+    ) -> tuple[dict[str, Any], str | None]:
+        response = await client.post(
+            "auth/login",
+            json={
+                "email": email,
+                "password": password,
+            },
+        )
+        payload = self.safe_json(response)
+        data, api_error = self.unwrap_sub2api_response(payload)
+        if response.status_code >= 400:
+            return {}, f"Sub2API 登录接口返回 HTTP {response.status_code}: {api_error or ''}".strip()
+        if api_error:
+            return {}, f"Sub2API 登录失败: {api_error}"
+        if not isinstance(data, dict):
+            return {}, "Sub2API 登录响应缺少 data"
+        if data.get("requires_2fa") is True:
+            return {}, "Sub2API 账号启用了 TOTP 2FA，当前监控不支持二次验证码"
+
+        access_token = data.get("access_token")
+        if not isinstance(access_token, str) or not access_token.strip():
+            return {}, "Sub2API 登录响应缺少 access_token"
+        client.headers["Authorization"] = f"Bearer {access_token.strip()}"
+        return data, None
+
+    async def get_sub2api_data(
+        self,
+        client: httpx.AsyncClient,
+        path: str,
+    ) -> tuple[Any, str | None]:
+        response = await client.get(path)
+        payload = self.safe_json(response)
+        data, api_error = self.unwrap_sub2api_response(payload)
+        if response.status_code >= 400:
+            return None, f"Sub2API {path} 返回 HTTP {response.status_code}: {api_error or ''}".strip()
+        if api_error:
+            return None, f"Sub2API {path} 返回错误: {api_error}"
+        return data, None
+
+    @classmethod
+    def api_base_url(cls, platform: RelayPlatform) -> str:
+        raw = platform.base_url.strip().rstrip("/")
+        parts = urlsplit(raw)
+        if not parts.scheme or not parts.netloc:
+            if raw.endswith("/api/v1"):
+                return raw
+            if raw.endswith("/api"):
+                return f"{raw}/v1"
+            return f"{raw}/api/v1"
+        path = cls.api_base_path(parts.path)
+        return urlunsplit((parts.scheme, parts.netloc, path, "", "")).rstrip("/")
+
+    @classmethod
+    def api_base_path(cls, path: str) -> str:
+        parts = [item for item in path.strip("/").split("/") if item]
+        if len(parts) >= 2 and parts[-2:] == ["api", "v1"]:
+            return "/" + "/".join(parts)
+        if parts and parts[-1] == "api":
+            return "/" + "/".join([*parts, "v1"])
+        if parts and parts[-1] in cls.FRONTEND_PAGE_SUFFIXES:
+            parts = parts[:-1]
+        return "/" + "/".join([*parts, "api", "v1"])
+
+    @staticmethod
+    def account_email(account: PlatformAccountMonitor) -> str:
+        return (account.username or account.external_account_id or "").strip()
+
+    @staticmethod
+    def first_login_account(platform: RelayPlatform) -> PlatformAccountMonitor | None:
+        return next(
+            (
+                account
+                for account in platform.account_monitors
+                if account.enabled
+                and (account.username or account.external_account_id)
+                and account.password_encrypted
+            ),
+            None,
+        )
+
+    @staticmethod
+    def safe_json(response: httpx.Response) -> Any:
+        try:
+            return response.json()
+        except ValueError:
+            return {}
+
+    @staticmethod
+    def unwrap_sub2api_response(payload: Any) -> tuple[Any, str | None]:
+        if not isinstance(payload, dict) or "code" not in payload:
+            return payload, None
+        if payload.get("code") in (0, "0"):
+            return payload.get("data"), None
+        message = payload.get("message") or payload.get("detail") or payload.get("error")
+        return None, str(message or f"code={payload.get('code')}")
+
+    @classmethod
+    def parse_group_catalog_payload(
+        cls,
+        groups_payload: Any,
+        rates_payload: Any | None = None,
+    ) -> list[DiscoveredGroupRateResult]:
+        rows = cls.group_rows(groups_payload)
+        user_rates = cls.normalized_rate_map(rates_payload)
+        groups: list[DiscoveredGroupRateResult] = []
+        for raw_group in rows:
+            if not isinstance(raw_group, dict):
+                continue
+            group_id = raw_group.get("id")
+            if group_id is None:
+                continue
+            external_group_id = str(group_id)
+            name = str(raw_group.get("name") or external_group_id)
+            base_rate = cls.number_from_value(raw_group.get("rate_multiplier"))
+            rate_multiplier = user_rates.get(external_group_id, base_rate)
+            rpm_limit = cls.int_from_value(raw_group.get("rpm_limit"))
+            description = cls.group_description(raw_group, user_rates, external_group_id, base_rate)
+            groups.append(
+                DiscoveredGroupRateResult(
+                    external_group_id=external_group_id,
+                    name=name,
+                    description=description,
+                    rate_multiplier=rate_multiplier,
+                    rpm_limit=rpm_limit,
+                )
+            )
+        return groups
+
+    @staticmethod
+    def group_rows(groups_payload: Any) -> list[Any]:
+        if isinstance(groups_payload, list):
+            return groups_payload
+        if not isinstance(groups_payload, dict):
+            return []
+        for key in ("items", "groups", "data"):
+            value = groups_payload.get(key)
+            if isinstance(value, list):
+                return value
+        return []
+
+    @classmethod
+    def normalized_rate_map(cls, rates_payload: Any | None) -> dict[str, float]:
+        if not isinstance(rates_payload, dict):
+            return {}
+        result: dict[str, float] = {}
+        for key, value in rates_payload.items():
+            number = cls.number_from_value(value)
+            if number is not None:
+                result[str(key)] = number
+        return result
+
+    @classmethod
+    def group_description(
+        cls,
+        raw_group: dict[str, Any],
+        user_rates: dict[str, float],
+        external_group_id: str,
+        base_rate: float | None,
+    ) -> str | None:
+        parts: list[str] = []
+        description = raw_group.get("description")
+        if isinstance(description, str) and description.strip():
+            parts.append(description.strip())
+        platform = raw_group.get("platform")
+        if isinstance(platform, str) and platform.strip():
+            parts.append(f"平台: {platform.strip()}")
+        if external_group_id in user_rates and base_rate is not None:
+            parts.append(f"专属倍率覆盖: {base_rate:g} -> {user_rates[external_group_id]:g}")
+        return "；".join(parts) if parts else None
+
+    @classmethod
+    def sum_api_key_quotas(cls, keys_payload: Any) -> tuple[float | None, float | None]:
+        rows = cls.group_rows(keys_payload)
+        quota_used = 0.0
+        quota_limit = 0.0
+        has_used = False
+        has_limit = False
+        for raw_key in rows:
+            if not isinstance(raw_key, dict):
+                continue
+            used = cls.number_from_value(raw_key.get("quota_used"))
+            if used is not None:
+                quota_used += used
+                has_used = True
+            limit = cls.number_from_value(raw_key.get("quota"))
+            if limit is not None and limit > 0:
+                quota_limit += limit
+                has_limit = True
+        return quota_used if has_used else None, quota_limit if has_limit else None
+
+    @staticmethod
+    def number_from_value(value: Any) -> float | None:
+        if isinstance(value, int | float):
+            return float(value)
+        if isinstance(value, str):
+            try:
+                return float(value)
+            except ValueError:
+                return None
+        return None
+
+    @classmethod
+    def int_from_value(cls, value: Any) -> int | None:
+        number = cls.number_from_value(value)
+        return int(number) if number is not None else None
 
 
 class NewApiStrategy(ProviderStrategy):

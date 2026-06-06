@@ -4,14 +4,14 @@
 
 <script setup lang="ts">
 import { LineChart } from 'echarts/charts'
-import { GridComponent, LegendComponent, TooltipComponent } from 'echarts/components'
+import { DataZoomComponent, GridComponent, LegendComponent, TooltipComponent } from 'echarts/components'
 import { init, use, type ECharts, type EChartsCoreOption } from 'echarts/core'
 import { CanvasRenderer } from 'echarts/renderers'
 import { computed, nextTick, onBeforeUnmount, onMounted, shallowRef, watch } from 'vue'
 
 import type { GroupRateHistorySeries } from '@/api/client'
 
-use([LineChart, GridComponent, LegendComponent, TooltipComponent, CanvasRenderer])
+use([LineChart, DataZoomComponent, GridComponent, LegendComponent, TooltipComponent, CanvasRenderer])
 
 const props = defineProps<{
   series: GroupRateHistorySeries[]
@@ -133,13 +133,67 @@ function chartOptions(): EChartsCoreOption {
     },
     grid: {
       top: legendGridTop(),
-      right: 28,
+      right: 54,
       bottom: 42,
       left: 72,
       containLabel: false,
     },
+    dataZoom: [
+      {
+        type: 'inside',
+        xAxisIndex: 0,
+        filterMode: 'none',
+        throttle: 60,
+      },
+      {
+        type: 'inside',
+        yAxisIndex: 0,
+        filterMode: 'none',
+        throttle: 60,
+      },
+      {
+        type: 'slider',
+        yAxisIndex: 0,
+        filterMode: 'none',
+        right: 8,
+        top: legendGridTop(),
+        bottom: 42,
+        width: 18,
+        borderColor: '#cbd5e1',
+        fillerColor: 'rgba(37, 99, 235, 0.12)',
+        backgroundColor: '#f8fafc',
+        dataBackground: {
+          lineStyle: {
+            color: '#94a3b8',
+          },
+          areaStyle: {
+            color: '#e2e8f0',
+          },
+        },
+        selectedDataBackground: {
+          lineStyle: {
+            color: '#2563eb',
+          },
+          areaStyle: {
+            color: 'rgba(37, 99, 235, 0.18)',
+          },
+        },
+        handleSize: 14,
+        handleStyle: {
+          color: '#ffffff',
+          borderColor: '#64748b',
+        },
+        moveHandleStyle: {
+          color: '#94a3b8',
+        },
+        labelFormatter(value: number) {
+          return formatNumber(value)
+        },
+      },
+    ],
     tooltip: {
       trigger: 'axis',
+      order: 'valueDesc',
       enterable: true,
       hideDelay: 500,
       confine: true,

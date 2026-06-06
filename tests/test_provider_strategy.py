@@ -845,7 +845,6 @@ def test_newapi_channel_catalog_uses_login_user_id_when_account_id_missing(monke
                 return httpx.Response(200, text="ok", request=httpx.Request("GET", f"{self.base_url}{path}"))
             if path == "api/ratio_sync/channels":
                 assert self.headers == {
-                    "Authorization": "Bearer token-123",
                     "Cookie": "session=session-token-123",
                     "New-Api-User": "647",
                 }
@@ -1052,7 +1051,11 @@ def test_newapi_channel_catalog_falls_back_when_platform_token_invalid(monkeypat
                     json={
                         "success": True,
                         "message": "",
-                        "data": {"id": 647, "username": "user@example.com"},
+                        "data": {
+                            "id": 647,
+                            "username": "user@example.com",
+                            "access_token": "invalid-token-123",
+                        },
                     },
                     headers={"Set-Cookie": "session=session-token-123; Path=/; HttpOnly; SameSite=Strict"},
                     request=httpx.Request("POST", f"{self.base_url}{path}"),
@@ -1093,6 +1096,76 @@ def test_newapi_channel_catalog_falls_back_when_platform_token_invalid(monkeypat
 
     assert result is not None
     assert result[0].external_channel_id == "11"
+
+
+def test_newapi_channel_catalog_skips_when_all_login_accounts_lack_privileges(monkeypatch) -> None:
+    class StubAsyncClient:
+        def __init__(self, *args, **kwargs) -> None:
+            self.base_url = str(kwargs.get("base_url") or "")
+            self.headers = dict(kwargs.get("headers") or {})
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def get(self, path: str):
+            if path == "login":
+                return httpx.Response(200, text="ok", request=httpx.Request("GET", f"{self.base_url}{path}"))
+            if path == "api/ratio_sync/channels":
+                assert self.headers["New-Api-User"] in {"686", "647"}
+                return httpx.Response(
+                    200,
+                    json={"success": False, "message": "Unauthorized, insufficient privileges"},
+                    request=httpx.Request("GET", f"{self.base_url}{path}"),
+                )
+            raise AssertionError(path)
+
+        async def post(self, path: str, json: dict):
+            if path == "api/user/login?turnstile=":
+                user_id = 686 if json["username"] == "first@example.com" else 647
+                return httpx.Response(
+                    200,
+                    json={
+                        "success": True,
+                        "message": "",
+                        "data": {"id": user_id, "username": json["username"]},
+                    },
+                    headers={"Set-Cookie": f"session=session-token-{user_id}; Path=/; HttpOnly; SameSite=Strict"},
+                    request=httpx.Request("POST", f"{self.base_url}{path}"),
+                )
+            raise AssertionError(path)
+
+    monkeypatch.setattr(provider_module.httpx, "AsyncClient", StubAsyncClient)
+
+    result = asyncio.run(
+        NewApiStrategy().fetch_channel_catalog(
+            SimpleNamespace(
+                base_url="https://newapi.example.com",
+                site_strategy="generic",
+                api_key_encrypted=None,
+                auth_header_name="Authorization",
+                auth_header_prefix="Bearer",
+                account_monitors=[
+                    SimpleNamespace(
+                        enabled=True,
+                        external_account_id="first@example.com",
+                        username="first@example.com",
+                        password_encrypted=encrypt_secret("pw"),
+                    ),
+                    SimpleNamespace(
+                        enabled=True,
+                        external_account_id="second@example.com",
+                        username="second@example.com",
+                        password_encrypted=encrypt_secret("pw"),
+                    ),
+                ],
+            )
+        )
+    )
+
+    assert result is None
 
 
 def test_generic_newapi_group_catalog_uses_login_session(monkeypatch) -> None:

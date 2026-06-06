@@ -1200,7 +1200,36 @@ class NewApiStrategy(ProviderStrategy):
         self,
         platform: RelayPlatform,
     ) -> list[DiscoveredChannelRateResult] | None:
-        headers = await self.resolve_management_headers(platform)
+        header_candidates = await self.login_management_header_candidates(platform)
+        management_headers = self.management_headers(platform)
+        if management_headers and all(
+            candidate.get("New-Api-User") != management_headers.get("New-Api-User")
+            for candidate in header_candidates
+        ):
+            header_candidates.append(management_headers)
+        if not header_candidates:
+            header_candidates = [management_headers]
+
+        errors: list[str] = []
+        for headers in header_candidates:
+            try:
+                return await self.fetch_channel_catalog_with_headers(platform, headers)
+            except ValueError as exc:
+                message = str(exc)
+                errors.append(message)
+                if not self.is_retryable_auth_error_message(message):
+                    raise
+        if errors and all(self.is_insufficient_privileges_message(error) for error in errors):
+            return None
+        if errors:
+            raise ValueError(errors[-1])
+        raise ValueError("newapi channel rate monitoring requires an enabled login account")
+
+    async def fetch_channel_catalog_with_headers(
+        self,
+        platform: RelayPlatform,
+        headers: dict[str, str],
+    ) -> list[DiscoveredChannelRateResult] | None:
         if "New-Api-User" not in headers:
             raise ValueError("newapi channel rate monitoring requires an enabled login account")
         async with httpx.AsyncClient(
@@ -1213,8 +1242,13 @@ class NewApiStrategy(ProviderStrategy):
                 channels_response.status_code in {401, 403}
                 and self.looks_like_invalid_token(channels_response)
             ):
-                fallback_headers = await self.login_management_headers(platform)
-                if fallback_headers is not None and fallback_headers != headers:
+                fallback_headers = None
+                if "Authorization" in headers and "Cookie" in headers:
+                    fallback_headers = dict(headers)
+                    fallback_headers.pop("Authorization", None)
+                else:
+                    fallback_headers = await self.login_management_headers(platform)
+                if fallback_headers is not None:
                     client.headers.clear()
                     client.headers.update(fallback_headers)
                     headers = dict(fallback_headers)
@@ -1373,7 +1407,24 @@ class NewApiStrategy(ProviderStrategy):
 
     async def login_management_headers(self, platform: RelayPlatform) -> dict[str, str] | None:
         account = self.first_login_account(platform)
+        return await self.login_management_headers_for_account(platform, account)
+
+    async def login_management_header_candidates(self, platform: RelayPlatform) -> list[dict[str, str]]:
+        candidates: list[dict[str, str]] = []
+        for account in platform.account_monitors:
+            headers = await self.login_management_headers_for_account(platform, account)
+            if headers is not None:
+                candidates.append(headers)
+        return candidates
+
+    async def login_management_headers_for_account(
+        self,
+        platform: RelayPlatform,
+        account: PlatformAccountMonitor | None,
+    ) -> dict[str, str] | None:
         if account is None or not account.username or not account.password_encrypted:
+            return None
+        if not account.enabled:
             return None
 
         password = decrypt_secret(account.password_encrypted)
@@ -1544,6 +1595,16 @@ class NewApiStrategy(ProviderStrategy):
     def looks_like_invalid_token(response: httpx.Response) -> bool:
         text = response.text.lower()
         return "invalid access token" in text or "unauthorized" in text
+
+    @staticmethod
+    def is_retryable_auth_error_message(message: str) -> bool:
+        text = message.lower()
+        return "invalid access token" in text or "unauthorized" in text or "insufficient privileges" in text
+
+    @staticmethod
+    def is_insufficient_privileges_message(message: str) -> bool:
+        text = message.lower()
+        return "insufficient privileges" in text
 
     @staticmethod
     def session_cookie_header(response: httpx.Response, client: httpx.AsyncClient) -> str | None:

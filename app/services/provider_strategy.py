@@ -184,7 +184,7 @@ class NewApiSiteStrategy(ABC):
 class GenericNewApiSiteStrategy(NewApiSiteStrategy):
     site_strategy = "generic"
     label = "通用 New API"
-    description = "通用占位策略，按 /api/group/{group_id} 读取倍率字段"
+    description = "通用 New API 策略：登录后读取 /api/user/self、/api/user/self/groups 和渠道倍率接口"
 
     async def fetch_account_balance(
         self,
@@ -222,12 +222,20 @@ class GenericNewApiSiteStrategy(NewApiSiteStrategy):
         platform: RelayPlatform,
         group: PlatformGroupMonitor,
     ) -> GroupRateResult:
-        status, payload, _ = await provider.get_json(platform, f"/api/group/{group.external_group_id}")
-        if status >= 400:
-            return GroupRateResult(error=f"newapi group endpoint returned HTTP {status}")
-        rate = provider.first_number(payload, ("rate_multiplier", "ratio", "multiplier"))
-        rpm = provider.first_number(payload, ("rpm_limit", "rpm"))
-        return GroupRateResult(rate_multiplier=rate, rpm_limit=int(rpm) if rpm is not None else None)
+        result = await YunjinNewApiSiteStrategy().fetch_group_rate(provider, platform, group)
+        if result.error:
+            return replace(result, error=result.error.replace("yunjin", "newapi"))
+        return result
+
+    async def fetch_group_catalog(
+        self,
+        provider: "NewApiStrategy",
+        platform: RelayPlatform,
+    ) -> list[DiscoveredGroupRateResult] | None:
+        try:
+            return await YunjinNewApiSiteStrategy().fetch_group_catalog(provider, platform)
+        except ValueError as exc:
+            raise ValueError(str(exc).replace("yunjin", "newapi")) from exc
 
 
 class YunjinNewApiSiteStrategy(NewApiSiteStrategy):
@@ -670,30 +678,15 @@ class YunjinNewApiSiteStrategy(NewApiSiteStrategy):
 
     @staticmethod
     def site_url(platform: RelayPlatform) -> str:
-        parts = urlsplit(platform.base_url)
-        if not parts.scheme or not parts.netloc:
-            return platform.base_url.rstrip("/")
-        path = YunjinNewApiSiteStrategy.site_base_path(parts.path)
-        return urlunsplit((parts.scheme, parts.netloc, path, "", "")).rstrip("/") + "/"
+        return NewApiStrategy.site_url(platform)
 
     @staticmethod
     def site_origin(platform: RelayPlatform) -> str:
-        parts = urlsplit(platform.base_url)
-        if not parts.scheme or not parts.netloc:
-            return platform.base_url.rstrip("/")
-        return urlunsplit((parts.scheme, parts.netloc, "", "", "")).rstrip("/")
+        return NewApiStrategy.site_origin(platform)
 
     @staticmethod
     def site_base_path(path: str) -> str:
-        path = path.strip("/")
-        if not path:
-            return ""
-        parts = path.split("/")
-        if parts[-1] in {"login", "register", "pricing"}:
-            parts = parts[:-1]
-        if parts and parts[-1] == "api":
-            parts = parts[:-1]
-        return "/" + "/".join(parts) if parts else ""
+        return NewApiStrategy.site_base_path(path)
 
     @staticmethod
     def safe_json(response: httpx.Response) -> Any:
@@ -722,77 +715,26 @@ class YunjinNewApiSiteStrategy(NewApiSiteStrategy):
 
     @staticmethod
     def extract_user_id(payload: Any) -> int | str | None:
-        if not isinstance(payload, dict):
-            return None
-        data = payload.get("data")
-        if not isinstance(data, dict):
-            return None
-        user_id = data.get("id")
-        if isinstance(user_id, int | str) and str(user_id):
-            return user_id
-        return None
+        return NewApiStrategy.extract_user_id(payload)
 
     @staticmethod
     def extract_access_token(payload: Any) -> str | None:
-        if not isinstance(payload, dict):
-            return None
-        candidates: list[Any] = [payload.get("data"), payload.get("result"), payload]
-        for candidate in candidates:
-            if not isinstance(candidate, dict):
-                continue
-            for key in ("access_token", "accessToken", "token", "access", "jwt"):
-                access_token = candidate.get(key)
-                if isinstance(access_token, str) and access_token.strip():
-                    return access_token.strip()
-            auth = candidate.get("auth")
-            if isinstance(auth, dict):
-                for key in ("access_token", "accessToken", "token", "jwt"):
-                    access_token = auth.get(key)
-                    if isinstance(access_token, str) and access_token.strip():
-                        return access_token.strip()
-        return None
+        return NewApiStrategy.extract_access_token(payload)
 
     @staticmethod
     def looks_like_invalid_token(response: httpx.Response) -> bool:
-        text = response.text.lower()
-        return "invalid access token" in text or "unauthorized" in text
+        return NewApiStrategy.looks_like_invalid_token(response)
 
     @staticmethod
     def session_cookie_header(response: httpx.Response, client: httpx.AsyncClient) -> str | None:
-        session_value = response.cookies.get("session")
-        client_cookies = getattr(client, "cookies", None)
-        if not session_value and client_cookies is not None:
-            session_value = client_cookies.get("session")
-        if session_value:
-            return f"session={session_value}"
-
-        raw_set_cookie = response.headers.get("set-cookie")
-        if not raw_set_cookie:
-            return None
-        parsed = SimpleCookie()
-        try:
-            parsed.load(raw_set_cookie)
-        except Exception:  # noqa: BLE001
-            return None
-        session = parsed.get("session")
-        if session is None or not session.value:
-            return None
-        return f"session={session.value}"
+        return NewApiStrategy.session_cookie_header(response, client)
 
     @staticmethod
     async def get_first_available(
         client: httpx.AsyncClient,
         endpoints: tuple[str, ...],
     ) -> tuple[httpx.Response, str]:
-        last_response: httpx.Response | None = None
-        for endpoint in endpoints:
-            response = await client.get(endpoint)
-            if response.status_code != 404:
-                return response, endpoint
-            last_response = response
-        if last_response is None:
-            raise ValueError("no endpoints configured")
-        return last_response, endpoints[-1]
+        return await NewApiStrategy.get_first_available(client, endpoints)
 
     @staticmethod
     async def post_first_available(
@@ -801,15 +743,12 @@ class YunjinNewApiSiteStrategy(NewApiSiteStrategy):
         retry_statuses: set[int] | frozenset[int] | tuple[int, ...] = (404,),
         **kwargs: Any,
     ) -> tuple[httpx.Response, str]:
-        last_response: httpx.Response | None = None
-        for endpoint in endpoints:
-            response = await client.post(endpoint, **kwargs)
-            if response.status_code not in retry_statuses:
-                return response, endpoint
-            last_response = response
-        if last_response is None:
-            raise ValueError("no endpoints configured")
-        return last_response, endpoints[-1]
+        return await NewApiStrategy.post_first_available(
+            client,
+            endpoints,
+            retry_statuses=retry_statuses,
+            **kwargs,
+        )
 
 
 class NewApiSiteStrategyRegistry:
@@ -1243,6 +1182,7 @@ class NewApiStrategy(ProviderStrategy):
     provider_type = "newapi"
     label = "New API"
     description = "面向 New API 部署实例的监控策略骨架"
+    LOGIN_ENDPOINTS = ("api/user/login?turnstile=", "api/user/login")
     RATIO_SYNC_CHANNELS_ENDPOINT = "api/ratio_sync/channels"
     RATIO_SYNC_FETCH_ENDPOINT = "api/ratio_sync/fetch"
     CHANNEL_LIST_ENDPOINT = "api/channel/"
@@ -1261,8 +1201,6 @@ class NewApiStrategy(ProviderStrategy):
         platform: RelayPlatform,
     ) -> list[DiscoveredChannelRateResult] | None:
         headers = await self.resolve_management_headers(platform)
-        if self.access_token_value(platform) is None:
-            raise ValueError("newapi channel rate monitoring requires an access token")
         if "New-Api-User" not in headers:
             raise ValueError("newapi channel rate monitoring requires an enabled login account")
         async with httpx.AsyncClient(
@@ -1271,11 +1209,22 @@ class NewApiStrategy(ProviderStrategy):
             timeout=self.timeout_seconds,
         ) as client:
             channels_response = await client.get(self.RATIO_SYNC_CHANNELS_ENDPOINT)
+            if (
+                channels_response.status_code in {401, 403}
+                and self.looks_like_invalid_token(channels_response)
+            ):
+                fallback_headers = await self.login_management_headers(platform)
+                if fallback_headers is not None and fallback_headers != headers:
+                    client.headers.clear()
+                    client.headers.update(fallback_headers)
+                    headers = dict(fallback_headers)
+                    channels_response = await client.get(self.RATIO_SYNC_CHANNELS_ENDPOINT)
             channels_payload = self.safe_json(channels_response)
             if channels_response.status_code >= 400:
-                raise ValueError(
-                    f"newapi ratio sync channels returned HTTP {channels_response.status_code}",
-                )
+                message = self.response_message(channels_payload)
+                if message:
+                    raise ValueError(message)
+                raise ValueError(f"newapi ratio sync channels returned HTTP {channels_response.status_code}")
             if self.response_failed(channels_payload):
                 raise ValueError(self.response_message(channels_payload) or "newapi ratio sync channels failed")
 
@@ -1435,7 +1384,7 @@ class NewApiStrategy(ProviderStrategy):
         request_headers = {
             "Accept": "application/json, text/plain, */*",
             "Cache-Control": "no-store",
-            "Origin": YunjinNewApiSiteStrategy.site_origin(platform),
+            "Origin": self.site_origin(platform),
             "Referer": f"{site_url}login",
         }
         async with httpx.AsyncClient(
@@ -1445,9 +1394,9 @@ class NewApiStrategy(ProviderStrategy):
             timeout=self.timeout_seconds,
         ) as client:
             await client.get("login")
-            login_response, _ = await YunjinNewApiSiteStrategy.post_first_available(
+            login_response, _ = await self.post_first_available(
                 client,
-                YunjinNewApiSiteStrategy.LOGIN_ENDPOINTS,
+                self.LOGIN_ENDPOINTS,
                 retry_statuses={404, 429},
                 json={
                     "username": account.username,
@@ -1459,15 +1408,15 @@ class NewApiStrategy(ProviderStrategy):
             login_payload = self.safe_json(login_response)
             if self.response_failed(login_payload):
                 return None
-            user_id = YunjinNewApiSiteStrategy.extract_user_id(login_payload)
+            user_id = self.extract_user_id(login_payload)
             if user_id is None:
                 return None
 
             headers: dict[str, str] = {"New-Api-User": str(user_id)}
-            access_token = YunjinNewApiSiteStrategy.extract_access_token(login_payload)
+            access_token = self.extract_access_token(login_payload)
             if access_token:
                 headers["Authorization"] = f"Bearer {access_token}"
-            cookie_header = YunjinNewApiSiteStrategy.session_cookie_header(login_response, client)
+            cookie_header = self.session_cookie_header(login_response, client)
             if cookie_header:
                 headers["Cookie"] = cookie_header
             return headers
@@ -1517,8 +1466,27 @@ class NewApiStrategy(ProviderStrategy):
         parts = urlsplit(platform.base_url)
         if not parts.scheme or not parts.netloc:
             return platform.base_url.rstrip("/") + "/"
-        path = YunjinNewApiSiteStrategy.site_base_path(parts.path)
+        path = NewApiStrategy.site_base_path(parts.path)
         return urlunsplit((parts.scheme, parts.netloc, path, "", "")).rstrip("/") + "/"
+
+    @staticmethod
+    def site_origin(platform: RelayPlatform) -> str:
+        parts = urlsplit(platform.base_url)
+        if not parts.scheme or not parts.netloc:
+            return platform.base_url.rstrip("/")
+        return urlunsplit((parts.scheme, parts.netloc, "", "", "")).rstrip("/")
+
+    @staticmethod
+    def site_base_path(path: str) -> str:
+        path = path.strip("/")
+        if not path:
+            return ""
+        parts = path.split("/")
+        if parts[-1] in {"login", "register", "pricing"}:
+            parts = parts[:-1]
+        if parts and parts[-1] == "api":
+            parts = parts[:-1]
+        return "/" + "/".join(parts) if parts else ""
 
     @staticmethod
     def safe_json(response: httpx.Response) -> Any:
@@ -1539,6 +1507,97 @@ class NewApiStrategy(ProviderStrategy):
             return None
         message = payload.get("message") or payload.get("msg") or payload.get("error")
         return str(message) if message else None
+
+    @staticmethod
+    def extract_user_id(payload: Any) -> int | str | None:
+        if not isinstance(payload, dict):
+            return None
+        data = payload.get("data")
+        if not isinstance(data, dict):
+            return None
+        user_id = data.get("id")
+        if isinstance(user_id, int | str) and str(user_id):
+            return user_id
+        return None
+
+    @staticmethod
+    def extract_access_token(payload: Any) -> str | None:
+        if not isinstance(payload, dict):
+            return None
+        candidates: list[Any] = [payload.get("data"), payload.get("result"), payload]
+        for candidate in candidates:
+            if not isinstance(candidate, dict):
+                continue
+            for key in ("access_token", "accessToken", "token", "access", "jwt"):
+                access_token = candidate.get(key)
+                if isinstance(access_token, str) and access_token.strip():
+                    return access_token.strip()
+            auth = candidate.get("auth")
+            if isinstance(auth, dict):
+                for key in ("access_token", "accessToken", "token", "jwt"):
+                    access_token = auth.get(key)
+                    if isinstance(access_token, str) and access_token.strip():
+                        return access_token.strip()
+        return None
+
+    @staticmethod
+    def looks_like_invalid_token(response: httpx.Response) -> bool:
+        text = response.text.lower()
+        return "invalid access token" in text or "unauthorized" in text
+
+    @staticmethod
+    def session_cookie_header(response: httpx.Response, client: httpx.AsyncClient) -> str | None:
+        session_value = response.cookies.get("session")
+        client_cookies = getattr(client, "cookies", None)
+        if not session_value and client_cookies is not None:
+            session_value = client_cookies.get("session")
+        if session_value:
+            return f"session={session_value}"
+
+        raw_set_cookie = response.headers.get("set-cookie")
+        if not raw_set_cookie:
+            return None
+        parsed = SimpleCookie()
+        try:
+            parsed.load(raw_set_cookie)
+        except Exception:  # noqa: BLE001
+            return None
+        session = parsed.get("session")
+        if session is None or not session.value:
+            return None
+        return f"session={session.value}"
+
+    @staticmethod
+    async def get_first_available(
+        client: httpx.AsyncClient,
+        endpoints: tuple[str, ...],
+    ) -> tuple[httpx.Response, str]:
+        last_response: httpx.Response | None = None
+        for endpoint in endpoints:
+            response = await client.get(endpoint)
+            if response.status_code != 404:
+                return response, endpoint
+            last_response = response
+        if last_response is None:
+            raise ValueError("no endpoints configured")
+        return last_response, endpoints[-1]
+
+    @staticmethod
+    async def post_first_available(
+        client: httpx.AsyncClient,
+        endpoints: tuple[str, ...],
+        retry_statuses: set[int] | frozenset[int] | tuple[int, ...] = (404,),
+        **kwargs: Any,
+    ) -> tuple[httpx.Response, str]:
+        last_response: httpx.Response | None = None
+        for endpoint in endpoints:
+            response = await client.post(endpoint, **kwargs)
+            if response.status_code not in retry_statuses:
+                return response, endpoint
+            last_response = response
+        if last_response is None:
+            raise ValueError("no endpoints configured")
+        return last_response, endpoints[-1]
 
     async def fetch_key_summaries(
         self,

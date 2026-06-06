@@ -917,6 +917,263 @@ def test_newapi_channel_catalog_uses_login_user_id_when_account_id_missing(monke
     assert result[0].external_channel_id == "11"
 
 
+def test_newapi_channel_catalog_works_without_platform_access_token(monkeypatch) -> None:
+    class StubAsyncClient:
+        def __init__(self, *args, **kwargs) -> None:
+            self.base_url = str(kwargs.get("base_url") or "")
+            self.headers = dict(kwargs.get("headers") or {})
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def get(self, path: str):
+            if path == "login":
+                return httpx.Response(200, text="ok", request=httpx.Request("GET", f"{self.base_url}{path}"))
+            if path == "api/ratio_sync/channels":
+                assert self.headers == {
+                    "Cookie": "session=session-token-123",
+                    "New-Api-User": "647",
+                }
+                return httpx.Response(
+                    200,
+                    json={"success": True, "data": [{"id": 11, "name": "prod-channel"}]},
+                    request=httpx.Request("GET", f"{self.base_url}{path}"),
+                )
+            if path == "api/channel/":
+                assert self.headers["New-Api-User"] == "647"
+                return httpx.Response(
+                    200,
+                    json={"success": True, "data": [{"id": 11, "name": "prod-channel"}]},
+                    request=httpx.Request("GET", f"{self.base_url}{path}"),
+                )
+            raise AssertionError(path)
+
+        async def post(self, path: str, json: dict):
+            if path == "api/user/login?turnstile=":
+                return httpx.Response(
+                    200,
+                    json={
+                        "success": True,
+                        "message": "",
+                        "data": {"id": 647, "username": "user@example.com"},
+                    },
+                    headers={"Set-Cookie": "session=session-token-123; Path=/; HttpOnly; SameSite=Strict"},
+                    request=httpx.Request("POST", f"{self.base_url}{path}"),
+                )
+            if path == "api/ratio_sync/fetch":
+                assert self.headers["New-Api-User"] == "647"
+                return httpx.Response(
+                    200,
+                    json={"success": True, "data": {"11": {"gpt-4o": 1.0}}},
+                    request=httpx.Request("POST", f"{self.base_url}{path}"),
+                )
+            raise AssertionError(path)
+
+    monkeypatch.setattr(provider_module.httpx, "AsyncClient", StubAsyncClient)
+
+    result = asyncio.run(
+        NewApiStrategy().fetch_channel_catalog(
+            SimpleNamespace(
+                base_url="https://newapi.example.com",
+                site_strategy="generic",
+                api_key_encrypted=None,
+                auth_header_name="Authorization",
+                auth_header_prefix="Bearer",
+                account_monitors=[
+                    SimpleNamespace(
+                        enabled=True,
+                        external_account_id="user@example.com",
+                        username="user@example.com",
+                        password_encrypted=encrypt_secret("pw"),
+                    ),
+                ],
+            )
+        )
+    )
+
+    assert result is not None
+    assert result[0].external_channel_id == "11"
+
+
+def test_newapi_channel_catalog_falls_back_when_platform_token_invalid(monkeypatch) -> None:
+    class StubAsyncClient:
+        def __init__(self, *args, **kwargs) -> None:
+            self.base_url = str(kwargs.get("base_url") or "")
+            self.headers = dict(kwargs.get("headers") or {})
+            self.retry_count = 0
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def get(self, path: str):
+            if path == "login":
+                return httpx.Response(200, text="ok", request=httpx.Request("GET", f"{self.base_url}{path}"))
+            if path == "api/ratio_sync/channels":
+                if self.retry_count == 0:
+                    self.retry_count += 1
+                    assert self.headers == {
+                        "Authorization": "Bearer invalid-token-123",
+                        "Cookie": "session=session-token-123",
+                        "New-Api-User": "647",
+                    }
+                    return httpx.Response(
+                        401,
+                        text="Unauthorized, invalid access token",
+                        request=httpx.Request("GET", f"{self.base_url}{path}"),
+                    )
+                assert self.headers == {
+                    "Cookie": "session=session-token-123",
+                    "New-Api-User": "647",
+                }
+                return httpx.Response(
+                    200,
+                    json={"success": True, "data": [{"id": 11, "name": "prod-channel"}]},
+                    request=httpx.Request("GET", f"{self.base_url}{path}"),
+                )
+            if path == "api/channel/":
+                assert self.headers["New-Api-User"] == "647"
+                return httpx.Response(
+                    200,
+                    json={"success": True, "data": [{"id": 11, "name": "prod-channel"}]},
+                    request=httpx.Request("GET", f"{self.base_url}{path}"),
+                )
+            raise AssertionError(path)
+
+        async def post(self, path: str, json: dict):
+            if path == "api/user/login?turnstile=":
+                return httpx.Response(
+                    200,
+                    json={
+                        "success": True,
+                        "message": "",
+                        "data": {"id": 647, "username": "user@example.com"},
+                    },
+                    headers={"Set-Cookie": "session=session-token-123; Path=/; HttpOnly; SameSite=Strict"},
+                    request=httpx.Request("POST", f"{self.base_url}{path}"),
+                )
+            if path == "api/ratio_sync/fetch":
+                assert self.headers == {
+                    "Cookie": "session=session-token-123",
+                    "New-Api-User": "647",
+                }
+                return httpx.Response(
+                    200,
+                    json={"success": True, "data": {"11": {"gpt-4o": 1.0}}},
+                    request=httpx.Request("POST", f"{self.base_url}{path}"),
+                )
+            raise AssertionError(path)
+
+    monkeypatch.setattr(provider_module.httpx, "AsyncClient", StubAsyncClient)
+
+    result = asyncio.run(
+        NewApiStrategy().fetch_channel_catalog(
+            SimpleNamespace(
+                base_url="https://newapi.example.com",
+                site_strategy="generic",
+                api_key_encrypted=encrypt_secret("Bearer invalid-token-123"),
+                auth_header_name="Authorization",
+                auth_header_prefix="Bearer",
+                account_monitors=[
+                    SimpleNamespace(
+                        enabled=True,
+                        external_account_id="user@example.com",
+                        username="user@example.com",
+                        password_encrypted=encrypt_secret("pw"),
+                    ),
+                ],
+            )
+        )
+    )
+
+    assert result is not None
+    assert result[0].external_channel_id == "11"
+
+
+def test_generic_newapi_group_catalog_uses_login_session(monkeypatch) -> None:
+    class StubAsyncClient:
+        def __init__(self, *args, **kwargs) -> None:
+            self.base_url = str(kwargs.get("base_url") or "")
+            self.headers = dict(kwargs.get("headers") or {})
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def get(self, path: str, headers: dict | None = None):
+            if path == "login":
+                return httpx.Response(200, text="ok", request=httpx.Request("GET", f"{self.base_url}{path}"))
+            if path == "api/user/self/groups":
+                assert headers == {
+                    "Cookie": "session=session-token-123",
+                    "New-Api-User": "647",
+                }
+                return httpx.Response(
+                    200,
+                    json={
+                        "success": True,
+                        "message": "",
+                        "data": {
+                            "codex": {
+                                "desc": "Codex group",
+                                "ratio": 0.08,
+                                "rpm_limit": 120,
+                            },
+                        },
+                    },
+                    request=httpx.Request("GET", f"{self.base_url}{path}"),
+                )
+            raise AssertionError(path)
+
+        async def post(self, path: str, json: dict):
+            if path == "api/user/login?turnstile=":
+                return httpx.Response(
+                    200,
+                    json={
+                        "success": True,
+                        "message": "",
+                        "data": {"id": 647, "username": "user@example.com"},
+                    },
+                    headers={"Set-Cookie": "session=session-token-123; Path=/; HttpOnly; SameSite=Strict"},
+                    request=httpx.Request("POST", f"{self.base_url}{path}"),
+                )
+            raise AssertionError(path)
+
+    monkeypatch.setattr(provider_module.httpx, "AsyncClient", StubAsyncClient)
+
+    result = asyncio.run(
+        NewApiStrategy().fetch_group_catalog(
+            SimpleNamespace(
+                base_url="https://newapi.example.com",
+                site_strategy="generic",
+                api_key_encrypted=None,
+                auth_header_name="Authorization",
+                auth_header_prefix="Bearer",
+                account_monitors=[
+                    SimpleNamespace(
+                        enabled=True,
+                        username="user@example.com",
+                        password_encrypted=encrypt_secret("pw"),
+                    ),
+                ],
+            )
+        )
+    )
+
+    assert result is not None
+    assert result[0].external_group_id == "codex"
+    assert result[0].description == "Codex group"
+    assert result[0].rate_multiplier == 0.08
+    assert result[0].rpm_limit == 120
+
+
 def test_sub2api_fetch_account_balance_logs_in_and_reads_user_usage(monkeypatch) -> None:
     class StubAsyncClient:
         def __init__(self, *args, **kwargs) -> None:

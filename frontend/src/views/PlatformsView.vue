@@ -331,78 +331,86 @@
         <div v-else-if="activeEmbeddedView === 'groupRates'" class="embedded-panel-list">
           <section v-for="group in previewPlatformGroups" :key="`group-rates-${group.key}`" class="embedded-provider-group">
             <div class="embedded-section-label">{{ group.label }}</div>
-            <article v-for="row in group.items" :key="row.id" class="embedded-platform-card">
-              <header class="embedded-platform-header">
-                <div class="embedded-platform-title">
-                  <div>
-                    <strong>{{ row.name }}</strong>
-                    <span>{{ row.base_url }}</span>
+            <el-collapse v-model="collapsedGroupRatePanels" class="embedded-group-rate-collapse">
+              <el-collapse-item v-for="row in group.items" :key="row.id" :name="row.id">
+                <template #title>
+                  <div class="embedded-group-rate-collapse-title">
+                    <div class="embedded-platform-title compact">
+                      <strong>{{ row.name }}</strong>
+                      <span>{{ row.base_url }}</span>
+                    </div>
+                    <div class="platform-badges">
+                      <el-tag size="small" effect="plain">{{ providerLabel(row.provider_type) }}</el-tag>
+                      <el-tag size="small" effect="light" type="info">{{ siteStrategyLabel(row) }}</el-tag>
+                      <el-tag size="small" effect="light" type="success">
+                        {{ uniqueDiscoveredGroupRates(row.discovered_group_rates).length }} 个分组
+                      </el-tag>
+                    </div>
+                    <el-button
+                      :icon="Refresh"
+                      :loading="monitoring"
+                      size="small"
+                      @click.stop="runDetailRateMonitorFor(row)"
+                    >
+                      采集倍率
+                    </el-button>
                   </div>
-                  <div class="platform-badges">
-                    <el-tag size="small" effect="plain">{{ providerLabel(row.provider_type) }}</el-tag>
-                    <el-tag size="small" effect="light" type="info">{{ siteStrategyLabel(row) }}</el-tag>
-                  </div>
-                </div>
-                <div class="embedded-platform-controls">
-                  <el-button :icon="Refresh" :loading="monitoring" @click="runDetailRateMonitorFor(row)">
-                    采集倍率
-                  </el-button>
-                </div>
-              </header>
-              <div class="embedded-group-rate-page">
-                <div
-                  v-if="uniqueDiscoveredGroupRates(row.discovered_group_rates).length > 0"
-                  class="embedded-group-rate-list"
-                >
+                </template>
+                <div class="embedded-group-rate-page">
                   <div
-                    v-for="groupRate in uniqueDiscoveredGroupRates(row.discovered_group_rates)"
-                    :key="groupRate.external_group_id"
-                    class="embedded-group-rate-row"
-                    :class="{ highlighted: groupRate.is_configured }"
+                    v-if="uniqueDiscoveredGroupRates(row.discovered_group_rates).length > 0"
+                    class="embedded-group-rate-list"
                   >
-                    <div class="embedded-group-rate-main">
-                      <div class="embedded-group-rate-title">
-                        <strong>{{ groupRate.name }}</strong>
-                        <div class="embedded-group-rate-tags">
-                          <el-tag v-if="groupRate.is_configured" size="small" type="warning" effect="light">
-                            监控
-                          </el-tag>
-                          <el-tag v-if="groupRate.last_error" size="small" type="danger" effect="light">
-                            异常
-                          </el-tag>
+                    <div
+                      v-for="groupRate in uniqueDiscoveredGroupRates(row.discovered_group_rates)"
+                      :key="groupRate.external_group_id"
+                      class="embedded-group-rate-row"
+                      :class="{ highlighted: groupRate.is_configured }"
+                    >
+                      <div class="embedded-group-rate-main">
+                        <div class="embedded-group-rate-title">
+                          <strong>{{ groupRate.name }}</strong>
+                          <div class="embedded-group-rate-tags">
+                            <el-tag v-if="groupRate.is_configured" size="small" type="warning" effect="light">
+                              监控
+                            </el-tag>
+                            <el-tag v-if="groupRate.last_error" size="small" type="danger" effect="light">
+                              异常
+                            </el-tag>
+                          </div>
+                        </div>
+                        <span>{{ groupRate.external_group_id }}</span>
+                        <span v-if="groupRate.description" class="embedded-group-rate-desc">
+                          {{ groupRate.description }}
+                        </span>
+                      </div>
+                      <div class="embedded-group-rate-values">
+                        <div>
+                          <span>原始倍率</span>
+                          <strong>{{ formatMultiplier(groupRate.rate_multiplier) }}</strong>
+                        </div>
+                        <div>
+                          <span>实际倍率</span>
+                          <strong>{{ formatMultiplier(groupRate.effective_rate_multiplier) }}</strong>
+                        </div>
+                        <div>
+                          <span>RPM</span>
+                          <strong>{{ groupRate.rpm_limit ?? '-' }}</strong>
+                        </div>
+                        <div>
+                          <span>最后采集</span>
+                          <strong>{{ formatTime(groupRate.checked_at) }}</strong>
                         </div>
                       </div>
-                      <span>{{ groupRate.external_group_id }}</span>
-                      <span v-if="groupRate.description" class="embedded-group-rate-desc">
-                        {{ groupRate.description }}
-                      </span>
-                    </div>
-                    <div class="embedded-group-rate-values">
-                      <div>
-                        <span>原始倍率</span>
-                        <strong>{{ formatMultiplier(groupRate.rate_multiplier) }}</strong>
+                      <div v-if="groupRate.last_error" class="embedded-account-error">
+                        {{ groupRate.last_error }}
                       </div>
-                      <div>
-                        <span>实际倍率</span>
-                        <strong>{{ formatMultiplier(groupRate.effective_rate_multiplier) }}</strong>
-                      </div>
-                      <div>
-                        <span>RPM</span>
-                        <strong>{{ groupRate.rpm_limit ?? '-' }}</strong>
-                      </div>
-                      <div>
-                        <span>最后采集</span>
-                        <strong>{{ formatTime(groupRate.checked_at) }}</strong>
-                      </div>
-                    </div>
-                    <div v-if="groupRate.last_error" class="embedded-account-error">
-                      {{ groupRate.last_error }}
                     </div>
                   </div>
+                  <div v-else class="embedded-empty">暂无分组倍率</div>
                 </div>
-                <div v-else class="embedded-empty">暂无分组倍率</div>
-              </div>
-            </article>
+              </el-collapse-item>
+            </el-collapse>
           </section>
         </div>
 
@@ -807,6 +815,7 @@ const groupDialogVisible = ref(false)
 const editing = ref<RelayPlatform | null>(null)
 const accountEditing = ref<AccountMonitor | null>(null)
 const formRef = ref<FormInstance>()
+const collapsedGroupRatePanels = ref<Array<number | string>>([])
 const activeEmbeddedView = ref<'overview' | 'balances' | 'rates' | 'groupRates' | 'settings'>('overview')
 const maxAccountKeysShown = 3
 

@@ -864,6 +864,42 @@ body {
   padding: 12px;
 }
 
+.embedded-group-rate-collapse {
+  border: 0;
+}
+
+.embedded-group-rate-collapse .el-collapse-item {
+  overflow: hidden;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.embedded-group-rate-collapse .el-collapse-item + .el-collapse-item {
+  margin-top: 10px;
+}
+
+.embedded-group-rate-collapse .el-collapse-item__header {
+  height: auto;
+  min-height: 62px;
+  border-bottom: 0;
+  padding: 10px 14px;
+  line-height: 1.4;
+}
+
+.embedded-group-rate-collapse .el-collapse-item__wrap {
+  border-bottom: 0;
+}
+
+.embedded-group-rate-collapse-title {
+  display: grid;
+  width: 100%;
+  min-width: 0;
+  grid-template-columns: minmax(220px, 1fr) auto auto;
+  gap: 12px;
+  align-items: center;
+}
+
 .embedded-group-rate-page .embedded-group-rate-list {
   grid-template-columns: 1fr;
 }
@@ -1210,6 +1246,12 @@ body {
 
   .embedded-group-rate-page .embedded-group-rate-row {
     grid-template-columns: 1fr;
+  }
+
+  .embedded-group-rate-collapse-title {
+    grid-template-columns: 1fr;
+    gap: 8px;
+    align-items: flex-start;
   }
 
   .embedded-group-rate-page .embedded-group-rate-values {

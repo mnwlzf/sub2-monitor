@@ -1,5 +1,7 @@
+import logging
 import json
 from datetime import datetime
+from time import monotonic
 
 from croniter import croniter
 from sqlalchemy import delete, select
@@ -26,6 +28,8 @@ from app.services.provider_strategy import (
     provider_registry,
 )
 
+logger = logging.getLogger(__name__)
+
 
 async def run_platform_monitor(db: Session, platform_id: int) -> RelayPlatform:
     platform = await run_platform_balance_monitor(db, platform_id)
@@ -47,10 +51,27 @@ async def run_platform_balance_monitor(db: Session, platform_id: int) -> RelayPl
 
     strategy = provider_registry.get(platform.provider_type)
     errors: list[str] = []
+    started_at = monotonic()
+    logger.info(
+        "balance monitor start platform_id=%s name=%s provider=%s site_strategy=%s accounts=%s groups=%s",
+        platform.id,
+        platform.name,
+        platform.provider_type,
+        platform.site_strategy,
+        len(platform.account_monitors),
+        len(platform.group_monitors),
+    )
 
     for account in platform.account_monitors:
         if not account.enabled:
             continue
+        logger.debug(
+            "balance monitor account start platform_id=%s account_id=%s account_name=%s external_account_id=%s",
+            platform.id,
+            account.id,
+            account.name,
+            account.external_account_id,
+        )
         try:
             result = await strategy.fetch_account_balance(platform, account)
             account.balance = result.balance
@@ -60,9 +81,32 @@ async def run_platform_balance_monitor(db: Session, platform_id: int) -> RelayPl
             account.last_error = result.error
             if result.error:
                 errors.append(f"account {account.name}: {result.error}")
+                logger.warning(
+                    "balance monitor account failed platform_id=%s account_id=%s account_name=%s error=%s",
+                    platform.id,
+                    account.id,
+                    account.name,
+                    result.error,
+                )
+            else:
+                logger.debug(
+                    "balance monitor account done platform_id=%s account_id=%s balance=%s quota_used=%s quota_limit=%s keys=%s",
+                    platform.id,
+                    account.id,
+                    account.balance,
+                    account.quota_used,
+                    account.quota_limit,
+                    len(account.key_summaries),
+                )
         except Exception as exc:  # noqa: BLE001
             account.last_error = str(exc)
             errors.append(f"account {account.name}: {exc}")
+            logger.exception(
+                "balance monitor account exception platform_id=%s account_id=%s account_name=%s",
+                platform.id,
+                account.id,
+                account.name,
+            )
         checked_at = utcnow()
         account.checked_at = checked_at
         db.add(account)
@@ -106,6 +150,14 @@ async def run_platform_balance_monitor(db: Session, platform_id: int) -> RelayPl
     db.add(platform)
     db.commit()
     db.refresh(platform)
+    logger.info(
+        "balance monitor done platform_id=%s name=%s status=%s errors=%s elapsed_ms=%s",
+        platform.id,
+        platform.name,
+        platform.status,
+        len(errors),
+        int((monotonic() - started_at) * 1000),
+    )
     return platform
 
 
@@ -123,6 +175,15 @@ async def run_platform_rate_monitor(db: Session, platform_id: int) -> RelayPlatf
 
     strategy = provider_registry.get(platform.provider_type)
     errors: list[str] = []
+    started_at = monotonic()
+    logger.info(
+        "rate monitor start platform_id=%s name=%s provider=%s site_strategy=%s groups=%s",
+        platform.id,
+        platform.name,
+        platform.provider_type,
+        platform.site_strategy,
+        len(platform.group_monitors),
+    )
     sync_key_group_monitors(db, platform)
     key_group_catalog_fetcher = getattr(strategy, "fetch_key_group_catalog", None)
     if callable(key_group_catalog_fetcher):
@@ -131,6 +192,11 @@ async def run_platform_rate_monitor(db: Session, platform_id: int) -> RelayPlatf
         except Exception as exc:  # noqa: BLE001
             key_group_catalog = None
             errors.append(f"key group catalog fetch failed: {exc}")
+            logger.exception(
+                "rate monitor key group catalog failed platform_id=%s name=%s",
+                platform.id,
+                platform.name,
+            )
     else:
         key_group_catalog = None
     if key_group_catalog is not None:
@@ -144,6 +210,11 @@ async def run_platform_rate_monitor(db: Session, platform_id: int) -> RelayPlatf
         except Exception as exc:  # noqa: BLE001
             discovered_channel_catalog = None
             errors.append(f"channel catalog fetch failed: {exc}")
+            logger.exception(
+                "rate monitor channel catalog failed platform_id=%s name=%s",
+                platform.id,
+                platform.name,
+            )
     else:
         discovered_channel_catalog = None
 
@@ -190,6 +261,21 @@ async def run_platform_rate_monitor(db: Session, platform_id: int) -> RelayPlatf
             )
             if item.error:
                 errors.append(f"channel {item.name}: {item.error}")
+                logger.warning(
+                    "rate monitor channel failed platform_id=%s channel_id=%s channel_name=%s error=%s",
+                    platform.id,
+                    item.external_channel_id,
+                    item.name,
+                    item.error,
+                )
+            else:
+                logger.debug(
+                    "rate monitor channel done platform_id=%s channel_id=%s channel_name=%s rate_multiplier=%s",
+                    platform.id,
+                    item.external_channel_id,
+                    item.name,
+                    item.rate_multiplier,
+                )
 
     discovered_catalog: list[DiscoveredGroupRateResult] | None
     try:
@@ -248,6 +334,13 @@ async def run_platform_rate_monitor(db: Session, platform_id: int) -> RelayPlatf
                     )
             if item.error:
                 errors.append(f"group {item.name}: {item.error}")
+                logger.warning(
+                    "rate monitor discovered group failed platform_id=%s group_id=%s group_name=%s error=%s",
+                    platform.id,
+                    item.external_group_id,
+                    item.name,
+                    item.error,
+                )
 
     recorded_group_ids: set[int] = set()
     if discovered_catalog is not None:
@@ -275,6 +368,22 @@ async def run_platform_rate_monitor(db: Session, platform_id: int) -> RelayPlatf
             )
             if result.error:
                 errors.append(f"group {group.name}: {result.error}")
+                logger.warning(
+                    "rate monitor configured group failed platform_id=%s group_id=%s group_name=%s error=%s",
+                    platform.id,
+                    group.external_group_id,
+                    group.name,
+                    result.error,
+                )
+            else:
+                logger.debug(
+                    "rate monitor configured group done platform_id=%s group_id=%s group_name=%s rate_multiplier=%s rpm_limit=%s",
+                    platform.id,
+                    group.external_group_id,
+                    group.name,
+                    result.rate_multiplier,
+                    result.rpm_limit,
+                )
         except Exception as exc:  # noqa: BLE001
             record_configured_group_rate(
                 db=db,
@@ -286,6 +395,12 @@ async def run_platform_rate_monitor(db: Session, platform_id: int) -> RelayPlatf
                 checked_at=checked_at,
             )
             errors.append(f"group {group.name}: {exc}")
+            logger.exception(
+                "rate monitor configured group exception platform_id=%s group_id=%s group_name=%s",
+                platform.id,
+                group.external_group_id,
+                group.name,
+            )
 
     now = utcnow()
     platform.rate_last_run_at = now
@@ -294,6 +409,14 @@ async def run_platform_rate_monitor(db: Session, platform_id: int) -> RelayPlatf
     db.add(platform)
     db.commit()
     db.refresh(platform)
+    logger.info(
+        "rate monitor done platform_id=%s name=%s status=%s errors=%s elapsed_ms=%s",
+        platform.id,
+        platform.name,
+        platform.status,
+        len(errors),
+        int((monotonic() - started_at) * 1000),
+    )
     return platform
 
 

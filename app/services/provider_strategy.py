@@ -1,6 +1,8 @@
+import logging
 import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from http.cookies import SimpleCookie
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
@@ -9,6 +11,8 @@ import httpx
 from app.core.security import decrypt_secret
 from app.models.monitor import PlatformAccountMonitor, PlatformGroupMonitor
 from app.models.platform import RelayPlatform
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -230,6 +234,19 @@ class YunjinNewApiSiteStrategy(NewApiSiteStrategy):
         platform: RelayPlatform,
         account: PlatformAccountMonitor,
     ) -> AccountBalanceResult:
+        platform_id = getattr(platform, "id", None)
+        platform_name = getattr(platform, "name", None)
+        account_id = getattr(account, "id", None)
+        account_name = getattr(account, "name", None)
+        external_account_id = getattr(account, "external_account_id", None)
+        logger.debug(
+            "yunjin balance start platform_id=%s platform_name=%s account_id=%s account_name=%s external_account_id=%s",
+            platform_id,
+            platform_name,
+            account_id,
+            account_name,
+            external_account_id,
+        )
         if not account.username or not account.password_encrypted:
             return AccountBalanceResult(error="云锦账号余额监控需要配置账号和密码")
 
@@ -260,12 +277,20 @@ class YunjinNewApiSiteStrategy(NewApiSiteStrategy):
             login_response, login_endpoint = await self.post_first_available(
                 client,
                 self.LOGIN_ENDPOINTS,
+                retry_statuses={404, 429},
                 json={
                     "username": account.username,
                     "password": password,
                 },
             )
             if login_response.status_code >= 400:
+                logger.warning(
+                    "yunjin login failed platform_id=%s account_id=%s endpoint=%s status=%s",
+                    platform_id,
+                    account_id,
+                    login_endpoint,
+                    login_response.status_code,
+                )
                 return AccountBalanceResult(
                     error=(
                         "yunjin login endpoint returned "
@@ -275,19 +300,105 @@ class YunjinNewApiSiteStrategy(NewApiSiteStrategy):
             login_payload_json = self.safe_json(login_response)
             if isinstance(login_payload_json, dict) and login_payload_json.get("success") is False:
                 message = login_payload_json.get("message") or "登录失败"
+                logger.warning(
+                    "yunjin login rejected platform_id=%s account_id=%s message=%s",
+                    platform_id,
+                    account_id,
+                    message,
+                )
                 return AccountBalanceResult(error=f"yunjin login failed: {message}")
 
             user_id = self.extract_user_id(login_payload_json)
             if user_id is None:
+                logger.warning(
+                    "yunjin login missing user id platform_id=%s account_id=%s payload=%s",
+                    platform_id,
+                    account_id,
+                    login_payload_json,
+                )
                 return AccountBalanceResult(error="yunjin login response missing data.id")
 
-            auth_headers = provider.management_headers(platform)
+            auth_headers = {}
+            access_token = self.extract_access_token(login_payload_json)
+            if access_token:
+                auth_headers["Authorization"] = f"Bearer {access_token}"
+                logger.debug(
+                    "yunjin login access token extracted platform_id=%s account_id=%s user_id=%s auth_mode=bearer",
+                    platform_id,
+                    account_id,
+                    user_id,
+                )
+            else:
+                logger.debug(
+                    "yunjin login access token missing, using session cookie platform_id=%s account_id=%s user_id=%s",
+                    platform_id,
+                    account_id,
+                    user_id,
+                )
+            cookie_header = self.session_cookie_header(login_response, client)
+            if cookie_header:
+                auth_headers["Cookie"] = cookie_header
+                logger.debug(
+                    "yunjin login session cookie extracted platform_id=%s account_id=%s user_id=%s",
+                    platform_id,
+                    account_id,
+                    user_id,
+                )
+            else:
+                logger.warning(
+                    "yunjin login response missing session cookie platform_id=%s account_id=%s user_id=%s",
+                    platform_id,
+                    account_id,
+                    user_id,
+                )
             auth_headers["New-Api-User"] = str(user_id)
             self_response = await client.get(
                 "api/user/self",
                 headers=auth_headers,
             )
+            if (
+                access_token
+                and self_response.status_code in {401, 403}
+                and self.looks_like_invalid_token(self_response)
+            ):
+                retry_headers = {"Authorization": access_token, "New-Api-User": str(user_id)}
+                if cookie_header:
+                    retry_headers["Cookie"] = cookie_header
+                logger.warning(
+                    "yunjin self rejected bearer token, retrying raw token platform_id=%s account_id=%s status=%s",
+                    platform_id,
+                    account_id,
+                    self_response.status_code,
+                )
+                self_response = await client.get(
+                    "api/user/self",
+                    headers=retry_headers,
+                )
+            if (
+                access_token
+                and self_response.status_code in {401, 403}
+                and self.looks_like_invalid_token(self_response)
+            ):
+                retry_headers = {"New-Api-User": str(user_id)}
+                if cookie_header:
+                    retry_headers["Cookie"] = cookie_header
+                logger.warning(
+                    "yunjin self rejected login token, retrying session cookie platform_id=%s account_id=%s status=%s",
+                    platform_id,
+                    account_id,
+                    self_response.status_code,
+                )
+                self_response = await client.get(
+                    "api/user/self",
+                    headers=retry_headers,
+                )
             if self_response.status_code >= 400:
+                logger.warning(
+                    "yunjin self failed platform_id=%s account_id=%s status=%s",
+                    platform_id,
+                    account_id,
+                    self_response.status_code,
+                )
                 return AccountBalanceResult(
                     error=f"yunjin self endpoint returned HTTP {self_response.status_code}"
                 )
@@ -295,8 +406,22 @@ class YunjinNewApiSiteStrategy(NewApiSiteStrategy):
 
         quota = provider.first_number(payload, ("quota",))
         if quota is None:
+            logger.warning(
+                "yunjin self missing quota platform_id=%s account_id=%s payload=%s",
+                platform_id,
+                account_id,
+                payload,
+            )
             return AccountBalanceResult(error="yunjin self response missing numeric data.quota")
         used_quota = provider.first_number(payload, ("used_quota",))
+        logger.debug(
+            "yunjin balance done platform_id=%s account_id=%s balance=%s used_quota=%s quota_per_unit=%s",
+            platform_id,
+            account_id,
+            quota / quota_per_unit,
+            used_quota / quota_per_unit if used_quota is not None else None,
+            quota_per_unit,
+        )
         return AccountBalanceResult(
             balance=quota / quota_per_unit,
             quota_used=used_quota / quota_per_unit if used_quota is not None else None,
@@ -308,6 +433,19 @@ class YunjinNewApiSiteStrategy(NewApiSiteStrategy):
         platform: RelayPlatform,
         group: PlatformGroupMonitor,
     ) -> GroupRateResult:
+        platform_id = getattr(platform, "id", None)
+        platform_name = getattr(platform, "name", None)
+        group_id = getattr(group, "id", None)
+        group_name = getattr(group, "name", None)
+        external_group_id = getattr(group, "external_group_id", None)
+        logger.debug(
+            "yunjin group rate start platform_id=%s platform_name=%s group_id=%s group_name=%s external_group_id=%s",
+            platform_id,
+            platform_name,
+            group_id,
+            group_name,
+            external_group_id,
+        )
         headers = provider.management_headers(platform)
         if "New-Api-User" not in headers:
             return GroupRateResult(
@@ -321,8 +459,15 @@ class YunjinNewApiSiteStrategy(NewApiSiteStrategy):
             response, pricing_endpoint = await self.get_first_available(
                 client,
                 self.PRICING_ENDPOINTS,
-            )
+        )
         if response.status_code >= 400:
+            logger.warning(
+                "yunjin pricing failed platform_id=%s group_id=%s status=%s endpoint=%s",
+                platform_id,
+                group_id,
+                response.status_code,
+                pricing_endpoint,
+            )
             return GroupRateResult(
                 error=(
                     "yunjin pricing endpoint returned "
@@ -334,8 +479,15 @@ class YunjinNewApiSiteStrategy(NewApiSiteStrategy):
             return GroupRateResult(error="yunjin pricing response missing group_ratio")
         raw_rate = payload["group_ratio"].get(group.external_group_id)
         if raw_rate is None:
+            logger.warning(
+                "yunjin pricing missing group ratio platform_id=%s group_id=%s group_name=%s target=%s",
+                platform_id,
+                group_id,
+                group_name,
+                external_group_id,
+            )
             return GroupRateResult(
-                error=f"yunjin group_ratio missing group {group.external_group_id!r}"
+                error=f"yunjin group_ratio missing group {external_group_id!r}"
             )
         try:
             return GroupRateResult(rate_multiplier=float(raw_rate))
@@ -384,6 +536,7 @@ class YunjinNewApiSiteStrategy(NewApiSiteStrategy):
             login_response, login_endpoint = await self.post_first_available(
                 client,
                 self.LOGIN_ENDPOINTS,
+                retry_statuses={404, 429},
                 json={
                     "username": account.username,
                     "password": password,
@@ -403,7 +556,10 @@ class YunjinNewApiSiteStrategy(NewApiSiteStrategy):
             if user_id is None:
                 raise ValueError("yunjin group catalog login response missing data.id")
 
-            auth_headers = provider.management_headers(platform)
+            auth_headers: dict[str, str] = {}
+            cookie_header = self.session_cookie_header(login_response, client)
+            if cookie_header:
+                auth_headers["Cookie"] = cookie_header
             auth_headers["New-Api-User"] = str(user_id)
             response = await client.get(
                 self.GROUPS_ENDPOINT,
@@ -535,6 +691,53 @@ class YunjinNewApiSiteStrategy(NewApiSiteStrategy):
         return None
 
     @staticmethod
+    def extract_access_token(payload: Any) -> str | None:
+        if not isinstance(payload, dict):
+            return None
+        candidates: list[Any] = [payload.get("data"), payload.get("result"), payload]
+        for candidate in candidates:
+            if not isinstance(candidate, dict):
+                continue
+            for key in ("access_token", "accessToken", "token", "access", "jwt"):
+                access_token = candidate.get(key)
+                if isinstance(access_token, str) and access_token.strip():
+                    return access_token.strip()
+            auth = candidate.get("auth")
+            if isinstance(auth, dict):
+                for key in ("access_token", "accessToken", "token", "jwt"):
+                    access_token = auth.get(key)
+                    if isinstance(access_token, str) and access_token.strip():
+                        return access_token.strip()
+        return None
+
+    @staticmethod
+    def looks_like_invalid_token(response: httpx.Response) -> bool:
+        text = response.text.lower()
+        return "invalid access token" in text or "unauthorized" in text
+
+    @staticmethod
+    def session_cookie_header(response: httpx.Response, client: httpx.AsyncClient) -> str | None:
+        session_value = response.cookies.get("session")
+        client_cookies = getattr(client, "cookies", None)
+        if not session_value and client_cookies is not None:
+            session_value = client_cookies.get("session")
+        if session_value:
+            return f"session={session_value}"
+
+        raw_set_cookie = response.headers.get("set-cookie")
+        if not raw_set_cookie:
+            return None
+        parsed = SimpleCookie()
+        try:
+            parsed.load(raw_set_cookie)
+        except Exception:  # noqa: BLE001
+            return None
+        session = parsed.get("session")
+        if session is None or not session.value:
+            return None
+        return f"session={session.value}"
+
+    @staticmethod
     async def get_first_available(
         client: httpx.AsyncClient,
         endpoints: tuple[str, ...],
@@ -553,12 +756,13 @@ class YunjinNewApiSiteStrategy(NewApiSiteStrategy):
     async def post_first_available(
         client: httpx.AsyncClient,
         endpoints: tuple[str, ...],
+        retry_statuses: set[int] | frozenset[int] | tuple[int, ...] = (404,),
         **kwargs: Any,
     ) -> tuple[httpx.Response, str]:
         last_response: httpx.Response | None = None
         for endpoint in endpoints:
             response = await client.post(endpoint, **kwargs)
-            if response.status_code != 404:
+            if response.status_code not in retry_statuses:
                 return response, endpoint
             last_response = response
         if last_response is None:
@@ -1087,12 +1291,13 @@ class NewApiStrategy(ProviderStrategy):
 
         key_summaries: tuple[dict[str, str | None], ...] = balance_result.key_summaries
         key_summary_error: str | None = None
-        try:
-            fetched_key_summaries = await self.fetch_key_summaries(platform)
-            if fetched_key_summaries:
-                key_summaries = fetched_key_summaries
-        except Exception as exc:  # noqa: BLE001
-            key_summary_error = str(exc)
+        if platform.site_strategy != YunjinNewApiSiteStrategy.site_strategy:
+            try:
+                fetched_key_summaries = await self.fetch_key_summaries(platform)
+                if fetched_key_summaries:
+                    key_summaries = fetched_key_summaries
+            except Exception as exc:  # noqa: BLE001
+                key_summary_error = str(exc)
 
         error = balance_result.error
         if key_summary_error:
@@ -1121,6 +1326,7 @@ class NewApiStrategy(ProviderStrategy):
         return await strategy.fetch_group_catalog(self, platform)
 
     async def get_json(self, platform: RelayPlatform, path: str) -> tuple[int, Any, int]:
+        platform_id = getattr(platform, "id", None)
         base_url = platform.base_url.rstrip("/")
         url = f"{base_url}/{path.lstrip('/')}"
         async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
@@ -1130,7 +1336,22 @@ class NewApiStrategy(ProviderStrategy):
         except Exception:  # noqa: BLE001
             latency_ms = 0
         if not response.headers.get("content-type", "").lower().startswith("application/json"):
+            logger.debug(
+                "newapi get non-json platform_id=%s path=%s status=%s latency_ms=%s",
+                platform_id,
+                path,
+                response.status_code,
+                latency_ms,
+            )
             return response.status_code, {}, latency_ms
+        if response.status_code >= 400:
+            logger.warning(
+                "newapi get failed platform_id=%s path=%s status=%s latency_ms=%s",
+                platform_id,
+                path,
+                response.status_code,
+                latency_ms,
+            )
         return response.status_code, response.json(), latency_ms
 
     def management_headers(self, platform: RelayPlatform) -> dict[str, str]:

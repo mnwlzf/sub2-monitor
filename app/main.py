@@ -90,3 +90,7 @@ mount_frontend(app, settings.frontend_dist)
 
 def run() -> None:
     uvicorn.run("app.main:app", host=settings.host, port=settings.port, reload=settings.env == "development")
+
+
+if __name__ == "__main__":
+    run()

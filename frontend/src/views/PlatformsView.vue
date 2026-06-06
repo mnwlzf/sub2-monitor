@@ -44,6 +44,15 @@
             <div class="stat-card">
               <span>异常</span>
               <strong class="bad">{{ (stats?.degraded_platforms ?? 0) + (stats?.down_platforms ?? 0) }}</strong>
+              <el-button
+                :disabled="errorSummaryItems.length === 0"
+                link
+                size="small"
+                type="danger"
+                @click="errorDialogVisible = true"
+              >
+                查看明细
+              </el-button>
             </div>
             <div class="stat-card">
               <span>账号监控</span>
@@ -517,6 +526,29 @@
       </template>
     </el-dialog>
 
+    <el-dialog v-model="errorDialogVisible" title="异常明细" width="860px">
+      <div v-if="errorSummaryItems.length > 0" class="error-summary-list">
+        <article v-for="item in errorSummaryItems" :key="item.key" class="error-summary-item">
+          <div class="error-summary-head">
+            <div>
+              <strong>{{ item.platformName }}</strong>
+              <span>{{ item.source }}</span>
+            </div>
+            <el-tag size="small" type="danger" effect="light">{{ item.providerLabel }}</el-tag>
+          </div>
+          <pre>{{ item.message }}</pre>
+          <div class="error-summary-meta">
+            <span>{{ item.target }}</span>
+            <span>{{ formatTime(item.checkedAt) }}</span>
+          </div>
+        </article>
+      </div>
+      <el-empty v-else description="暂无异常明细" />
+      <template #footer>
+        <el-button @click="errorDialogVisible = false">关闭</el-button>
+      </template>
+    </el-dialog>
+
     <el-dialog v-model="detailVisible" :title="detail ? `监控项 - ${detail.name}` : '监控项'" width="980px">
       <div v-if="detail" class="monitor-config">
         <section>
@@ -809,6 +841,7 @@ const loading = ref(false)
 const saving = ref(false)
 const monitoring = ref(false)
 const dialogVisible = ref(false)
+const errorDialogVisible = ref(false)
 const detailVisible = ref(false)
 const accountDialogVisible = ref(false)
 const groupDialogVisible = ref(false)
@@ -861,6 +894,9 @@ const previewPlatformGroups = computed(() => {
     { key: 'sub2api', label: 'sub2api', items: sub2api },
     { key: 'other', label: '其他', items: others },
   ].filter((group) => group.items.length > 0)
+})
+const errorSummaryItems = computed(() => {
+  return platforms.value.flatMap((platform) => platformErrorSummaryItems(platform))
 })
 
 const form = reactive<PlatformPayload>({
@@ -1329,6 +1365,81 @@ type OverviewDiscoveredGroupRate = DiscoveredGroupRate & {
 type OverviewDiscoveredChannelRate = DiscoveredChannelRate & {
   is_highest: boolean
   is_lowest: boolean
+}
+
+type ErrorSummaryItem = {
+  key: string
+  platformName: string
+  providerLabel: string
+  source: string
+  target: string
+  message: string
+  checkedAt: string | null
+}
+
+function platformErrorSummaryItems(platform: PlatformDetail): ErrorSummaryItem[] {
+  const provider = providerLabel(platform.provider_type)
+  const items: ErrorSummaryItem[] = []
+  if (platform.last_error) {
+    items.push({
+      key: `platform:${platform.id}`,
+      platformName: platform.name,
+      providerLabel: provider,
+      source: '平台',
+      target: platform.base_url,
+      message: platform.last_error,
+      checkedAt: platform.checked_at,
+    })
+  }
+  for (const account of platform.account_monitors) {
+    if (!account.last_error) continue
+    items.push({
+      key: `account:${account.id}`,
+      platformName: platform.name,
+      providerLabel: provider,
+      source: '账号余额',
+      target: `${account.name} / ${accountDisplayLabel(account)}`,
+      message: account.last_error,
+      checkedAt: account.checked_at,
+    })
+  }
+  for (const group of platform.group_monitors) {
+    if (!group.last_error) continue
+    items.push({
+      key: `group:${group.id}`,
+      platformName: platform.name,
+      providerLabel: provider,
+      source: '监控分组',
+      target: `${group.name} / ${group.external_group_id}`,
+      message: group.last_error,
+      checkedAt: group.checked_at,
+    })
+  }
+  for (const groupRate of uniqueDiscoveredGroupRates(platform.discovered_group_rates)) {
+    if (!groupRate.last_error) continue
+    items.push({
+      key: `discovered-group:${groupRate.id}`,
+      platformName: platform.name,
+      providerLabel: provider,
+      source: '发现分组',
+      target: `${groupRate.name} / ${groupRate.external_group_id}`,
+      message: groupRate.last_error,
+      checkedAt: groupRate.checked_at,
+    })
+  }
+  for (const channel of uniqueDiscoveredChannelRates(platform.discovered_channel_rates)) {
+    if (!channel.last_error) continue
+    items.push({
+      key: `channel:${channel.id}`,
+      platformName: platform.name,
+      providerLabel: provider,
+      source: '渠道倍率',
+      target: `${channel.name} / ${channel.external_channel_id}`,
+      message: channel.last_error,
+      checkedAt: channel.checked_at,
+    })
+  }
+  return items
 }
 
 function overviewDiscoveredGroupRates(rows: DiscoveredGroupRate[]): OverviewDiscoveredGroupRate[] {

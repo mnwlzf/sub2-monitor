@@ -170,6 +170,11 @@ body {
   color: #dc2626;
 }
 
+.stat-card .el-button {
+  margin-top: 2px;
+  padding: 0;
+}
+
 .platform-badges {
   display: flex;
   gap: 6px;
@@ -295,6 +300,65 @@ body {
   margin: 3px 0 0;
   color: #6b7280;
   font-size: 13px;
+}
+
+.error-summary-list {
+  display: grid;
+  gap: 10px;
+  max-height: min(68vh, 720px);
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.error-summary-item {
+  min-width: 0;
+  border: 1px solid #fecaca;
+  border-radius: 8px;
+  background: #fffafa;
+  padding: 12px;
+}
+
+.error-summary-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.error-summary-head strong,
+.error-summary-head span {
+  display: block;
+}
+
+.error-summary-head strong {
+  color: #991b1b;
+  font-size: 14px;
+}
+
+.error-summary-head span,
+.error-summary-meta {
+  color: #64748b;
+  font-size: 12px;
+}
+
+.error-summary-item pre {
+  overflow-x: auto;
+  margin: 10px 0;
+  border-radius: 6px;
+  background: #ffffff;
+  padding: 10px;
+  color: #7f1d1d;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.error-summary-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
 }
 
 .balance-line-chart {

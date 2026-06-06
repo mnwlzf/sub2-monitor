@@ -337,7 +337,12 @@ def test_yunjin_fetch_account_balance_sends_authorization_header(monkeypatch) ->
         async def __aexit__(self, exc_type, exc, tb):
             return None
 
-        async def get(self, path: str, headers: dict | None = None):
+        async def get(
+            self,
+            path: str,
+            params: dict | None = None,
+            headers: dict | None = None,
+        ):
             self.requests.append(("GET", path, headers))
             if path == "login":
                 return httpx.Response(200, text="ok", request=httpx.Request("GET", f"{self.base_url}{path}"))
@@ -352,6 +357,13 @@ def test_yunjin_fetch_account_balance_sends_authorization_header(monkeypatch) ->
                 return httpx.Response(
                     200,
                     json={"success": True, "data": {"id": 789, "quota": 1000000, "used_quota": 250000}},
+                    request=httpx.Request("GET", f"{self.base_url}{path}"),
+                )
+            if path == "api/token/":
+                assert headers == {"Authorization": "Bearer login-token-123", "New-Api-User": "789"}
+                return httpx.Response(
+                    200,
+                    json={"success": True, "data": {"items": [], "total": 0, "page_size": 100}},
                     request=httpx.Request("GET", f"{self.base_url}{path}"),
                 )
             raise AssertionError(path)
@@ -407,7 +419,12 @@ def test_yunjin_fetch_account_balance_prefers_login_access_token(monkeypatch) ->
         async def __aexit__(self, exc_type, exc, tb):
             return None
 
-        async def get(self, path: str, headers: dict | None = None):
+        async def get(
+            self,
+            path: str,
+            params: dict | None = None,
+            headers: dict | None = None,
+        ):
             if path == "login":
                 return httpx.Response(200, text="ok", request=httpx.Request("GET", f"{self.base_url}{path}"))
             if path == "api/status":
@@ -429,6 +446,13 @@ def test_yunjin_fetch_account_balance_prefers_login_access_token(monkeypatch) ->
                 return httpx.Response(
                     200,
                     json={"success": True, "data": {"id": 789, "quota": 1000000, "used_quota": 250000}},
+                    request=httpx.Request("GET", f"{self.base_url}{path}"),
+                )
+            if path == "api/token/":
+                assert headers == {"Authorization": "login-token-123", "New-Api-User": "789"}
+                return httpx.Response(
+                    200,
+                    json={"success": True, "data": {"items": [], "total": 0, "page_size": 100}},
                     request=httpx.Request("GET", f"{self.base_url}{path}"),
                 )
             raise AssertionError(path)
@@ -482,7 +506,12 @@ def test_yunjin_fetch_account_balance_uses_session_cookie_without_access_token(m
         async def __aexit__(self, exc_type, exc, tb):
             return None
 
-        async def get(self, path: str, headers: dict | None = None):
+        async def get(
+            self,
+            path: str,
+            params: dict | None = None,
+            headers: dict | None = None,
+        ):
             if path == "login":
                 return httpx.Response(200, text="ok", request=httpx.Request("GET", f"{self.base_url}{path}"))
             if path == "api/status":
@@ -496,6 +525,32 @@ def test_yunjin_fetch_account_balance_uses_session_cookie_without_access_token(m
                 return httpx.Response(
                     200,
                     json={"success": True, "data": {"id": 647, "quota": 1500000, "used_quota": 500000}},
+                    request=httpx.Request("GET", f"{self.base_url}{path}"),
+                )
+            if path == "api/token/":
+                assert headers == {"Cookie": "session=session-token-123", "New-Api-User": "647"}
+                return httpx.Response(
+                    200,
+                    json={
+                        "success": True,
+                        "data": {
+                            "items": [
+                                {"id": 811, "name": "111", "group": "codex（特价分组-1）"},
+                            ],
+                            "total": 1,
+                            "page_size": 10,
+                        },
+                    },
+                    request=httpx.Request("GET", f"{self.base_url}{path}"),
+                )
+            if path == "api/token/811":
+                assert headers == {"Cookie": "session=session-token-123", "New-Api-User": "647"}
+                return httpx.Response(
+                    200,
+                    json={
+                        "success": True,
+                        "data": {"id": 811, "name": "111", "group": "codex（特价分组-1）"},
+                    },
                     request=httpx.Request("GET", f"{self.base_url}{path}"),
                 )
             raise AssertionError(path)
@@ -545,6 +600,9 @@ def test_yunjin_fetch_account_balance_uses_session_cookie_without_access_token(m
     assert result.error is None
     assert result.balance == 3.0
     assert result.quota_used == 1.0
+    assert result.key_summaries == (
+        {"id": "811", "name": "111", "group_id": "codex", "group_name": "codex（特价分组-1）"},
+    )
 
 
 def test_yunjin_fetch_group_rate_sends_management_headers(monkeypatch) -> None:

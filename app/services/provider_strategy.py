@@ -374,6 +374,8 @@ class YunjinNewApiSiteStrategy(NewApiSiteStrategy):
                     "api/user/self",
                     headers=retry_headers,
                 )
+                if self_response.status_code < 400:
+                    auth_headers = retry_headers
             if (
                 access_token
                 and self_response.status_code in {401, 403}
@@ -392,6 +394,8 @@ class YunjinNewApiSiteStrategy(NewApiSiteStrategy):
                     "api/user/self",
                     headers=retry_headers,
                 )
+                if self_response.status_code < 400:
+                    auth_headers = retry_headers
             if self_response.status_code >= 400:
                 logger.warning(
                     "yunjin self failed platform_id=%s account_id=%s status=%s",
@@ -403,6 +407,30 @@ class YunjinNewApiSiteStrategy(NewApiSiteStrategy):
                     error=f"yunjin self endpoint returned HTTP {self_response.status_code}"
                 )
             payload = self.safe_json(self_response)
+            key_summaries: tuple[dict[str, str | None], ...] = ()
+            key_summary_error: str | None = None
+            try:
+                fetched_key_summaries = await provider.fetch_token_summaries(
+                    client,
+                    request_headers=auth_headers,
+                    string_group_as_id=True,
+                )
+                if fetched_key_summaries:
+                    key_summaries = fetched_key_summaries
+                    logger.debug(
+                        "yunjin token summaries fetched platform_id=%s account_id=%s keys=%s",
+                        platform_id,
+                        account_id,
+                        len(key_summaries),
+                    )
+            except Exception as exc:  # noqa: BLE001
+                key_summary_error = str(exc)
+                logger.warning(
+                    "yunjin token summaries failed platform_id=%s account_id=%s error=%s",
+                    platform_id,
+                    account_id,
+                    key_summary_error,
+                )
 
         quota = provider.first_number(payload, ("quota",))
         if quota is None:
@@ -425,6 +453,8 @@ class YunjinNewApiSiteStrategy(NewApiSiteStrategy):
         return AccountBalanceResult(
             balance=quota / quota_per_unit,
             quota_used=used_quota / quota_per_unit if used_quota is not None else None,
+            key_summaries=key_summaries,
+            error=key_summary_error,
         )
 
     async def fetch_group_rate(
@@ -1431,6 +1461,8 @@ class NewApiStrategy(ProviderStrategy):
     async def fetch_token_summaries(
         self,
         client: httpx.AsyncClient,
+        request_headers: dict[str, str] | None = None,
+        string_group_as_id: bool = False,
     ) -> tuple[dict[str, str | None], ...] | None:
         token_ids: list[str] = []
         page = 1
@@ -1439,6 +1471,7 @@ class NewApiStrategy(ProviderStrategy):
             response = await client.get(
                 "api/token/",
                 params={"p": page, "page": page, "page_size": page_size, "size": page_size},
+                headers=request_headers,
             )
             payload = self.safe_json(response)
             if response.status_code >= 400:
@@ -1466,12 +1499,15 @@ class NewApiStrategy(ProviderStrategy):
         if not token_ids:
             return ()
 
-        details = await self.fetch_token_details(client, token_ids)
+        details = await self.fetch_token_details(client, token_ids, request_headers=request_headers)
         summaries: list[dict[str, str | None]] = []
         for token_id in token_ids:
             detail = details.get(token_id, {})
             name = self.string_value(detail.get("name")) or f"密钥 {token_id}"
-            group_id, group_name = self.token_group_fields(detail)
+            group_id, group_name = self.token_group_fields(
+                detail,
+                string_group_as_id=string_group_as_id,
+            )
             summaries.append(
                 {
                     "id": token_id,
@@ -1486,10 +1522,11 @@ class NewApiStrategy(ProviderStrategy):
         self,
         client: httpx.AsyncClient,
         token_ids: list[str],
+        request_headers: dict[str, str] | None = None,
     ) -> dict[str, dict[str, Any]]:
         details: dict[str, dict[str, Any]] = {}
         for token_id in token_ids:
-            response = await client.get(f"api/token/{token_id}")
+            response = await client.get(f"api/token/{token_id}", headers=request_headers)
             payload = self.safe_json(response)
             if response.status_code >= 400:
                 raise ValueError(f"newapi token {token_id} returned HTTP {response.status_code}")
@@ -1528,7 +1565,10 @@ class NewApiStrategy(ProviderStrategy):
         return [], None, 1
 
     @staticmethod
-    def token_group_fields(token_detail: dict[str, Any]) -> tuple[str | None, str | None]:
+    def token_group_fields(
+        token_detail: dict[str, Any],
+        string_group_as_id: bool = False,
+    ) -> tuple[str | None, str | None]:
         group_id = None
         group_name = None
 
@@ -1546,6 +1586,9 @@ class NewApiStrategy(ProviderStrategy):
             text = group.strip()
             if text.isdigit():
                 group_id = text
+            elif string_group_as_id:
+                group_id = NewApiStrategy.group_id_from_display_name(text)
+                group_name = text
             else:
                 group_name = text
 
@@ -1564,6 +1607,18 @@ class NewApiStrategy(ProviderStrategy):
             group_name = group_id
 
         return group_id, group_name
+
+    @staticmethod
+    def group_id_from_display_name(group_name: str) -> str:
+        text = group_name.strip()
+        if not text:
+            return text
+        for separator in ("（", "("):
+            if separator in text:
+                candidate = text.split(separator, 1)[0].strip()
+                if candidate:
+                    return candidate
+        return text
 
     def management_client(self, platform: RelayPlatform) -> httpx.AsyncClient:
         return httpx.AsyncClient(

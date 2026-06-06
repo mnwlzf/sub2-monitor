@@ -1,7 +1,7 @@
 import logging
 import re
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from http.cookies import SimpleCookie
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
@@ -192,6 +192,18 @@ class GenericNewApiSiteStrategy(NewApiSiteStrategy):
         platform: RelayPlatform,
         account: PlatformAccountMonitor,
     ) -> AccountBalanceResult:
+        if account.username and account.password_encrypted:
+            result = await YunjinNewApiSiteStrategy().fetch_account_balance(provider, platform, account)
+            if result.error:
+                result = replace(
+                    result,
+                    error=result.error.replace("云锦", "New API").replace(
+                        "yunjin",
+                        "newapi user session",
+                    ),
+                )
+            return result
+
         status, payload, _ = await provider.get_json(
             platform,
             f"/api/account/{account.external_account_id}",
@@ -1321,7 +1333,9 @@ class NewApiStrategy(ProviderStrategy):
 
         key_summaries: tuple[dict[str, str | None], ...] = balance_result.key_summaries
         key_summary_error: str | None = None
-        if platform.site_strategy != YunjinNewApiSiteStrategy.site_strategy:
+        if platform.site_strategy != YunjinNewApiSiteStrategy.site_strategy and not (
+            account.username and account.password_encrypted
+        ):
             try:
                 fetched_key_summaries = await self.fetch_key_summaries(platform)
                 if fetched_key_summaries:

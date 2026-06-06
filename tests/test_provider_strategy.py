@@ -605,6 +605,107 @@ def test_yunjin_fetch_account_balance_uses_session_cookie_without_access_token(m
     )
 
 
+def test_newapi_generic_fetch_account_balance_uses_user_session_when_password_is_configured(
+    monkeypatch,
+) -> None:
+    class StubAsyncClient:
+        def __init__(self, *args, **kwargs) -> None:
+            self.base_url = str(kwargs.get("base_url") or "")
+            self.headers = dict(kwargs.get("headers") or {})
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def get(
+            self,
+            path: str,
+            params: dict | None = None,
+            headers: dict | None = None,
+        ):
+            if path == "login":
+                return httpx.Response(200, text="ok", request=httpx.Request("GET", f"{self.base_url}{path}"))
+            if path == "api/status":
+                return httpx.Response(
+                    200,
+                    json={"success": True, "data": {"quota_per_unit": 500000}},
+                    request=httpx.Request("GET", f"{self.base_url}{path}"),
+                )
+            if path == "api/user/self":
+                assert headers == {"Cookie": "session=session-token-123", "New-Api-User": "647"}
+                return httpx.Response(
+                    200,
+                    json={"success": True, "data": {"id": 647, "quota": 1500000, "used_quota": 500000}},
+                    request=httpx.Request("GET", f"{self.base_url}{path}"),
+                )
+            if path == "api/token/":
+                assert headers == {"Cookie": "session=session-token-123", "New-Api-User": "647"}
+                return httpx.Response(
+                    200,
+                    json={
+                        "success": True,
+                        "data": {
+                            "items": [
+                                {"id": 811, "name": "111", "group": "codex（特价分组-1）"},
+                            ],
+                            "total": 1,
+                            "page_size": 10,
+                        },
+                    },
+                    request=httpx.Request("GET", f"{self.base_url}{path}"),
+                )
+            if path == "api/token/811":
+                assert headers == {"Cookie": "session=session-token-123", "New-Api-User": "647"}
+                return httpx.Response(
+                    200,
+                    json={
+                        "success": True,
+                        "data": {"id": 811, "name": "111", "group": "codex（特价分组-1）"},
+                    },
+                    request=httpx.Request("GET", f"{self.base_url}{path}"),
+                )
+            raise AssertionError(path)
+
+        async def post(self, path: str, json: dict):
+            if path == "api/user/login?turnstile=":
+                return httpx.Response(
+                    200,
+                    json={
+                        "success": True,
+                        "message": "",
+                        "data": {"id": 647, "username": "user@example.com"},
+                    },
+                    headers={"Set-Cookie": "session=session-token-123; Path=/; HttpOnly; SameSite=Strict"},
+                    request=httpx.Request("POST", f"{self.base_url}{path}"),
+                )
+            raise AssertionError(path)
+
+    monkeypatch.setattr(provider_module.httpx, "AsyncClient", StubAsyncClient)
+
+    result = asyncio.run(
+        NewApiStrategy().fetch_account_balance(
+            SimpleNamespace(
+                base_url="https://newapi.example.com",
+                site_strategy="generic",
+                api_key_encrypted=None,
+                auth_header_name="X-Auth-Token",
+                auth_header_prefix="Bearer",
+                account_monitors=[],
+            ),
+            SimpleNamespace(username="user@example.com", password_encrypted=encrypt_secret("pw")),
+        )
+    )
+
+    assert result.error is None
+    assert result.balance == 3.0
+    assert result.quota_used == 1.0
+    assert result.key_summaries == (
+        {"id": "811", "name": "111", "group_id": "codex", "group_name": "codex（特价分组-1）"},
+    )
+
+
 def test_yunjin_fetch_group_rate_sends_management_headers(monkeypatch) -> None:
     class StubAsyncClient:
         def __init__(self, *args, **kwargs) -> None:

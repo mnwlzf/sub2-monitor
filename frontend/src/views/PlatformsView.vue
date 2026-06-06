@@ -1,198 +1,6 @@
 <template>
   <div class="platforms-page">
-    <section v-if="!isEmbedded" class="page-hero">
-      <div>
-        <div class="eyebrow">平台监控</div>
-        <h2>平台列表</h2>
-        <p>按 sub2api / newapi 策略采集账号余额和指定分组倍率。</p>
-      </div>
-      <div class="hero-meta">
-        <div class="hero-chip">
-          <span>总平台</span>
-          <strong>{{ stats?.total_platforms ?? '-' }}</strong>
-        </div>
-        <div class="hero-chip">
-          <span>异常</span>
-          <strong class="bad">{{ (stats?.degraded_platforms ?? 0) + (stats?.down_platforms ?? 0) }}</strong>
-        </div>
-        <el-button :icon="Plus" type="primary" @click="openCreate">新增平台</el-button>
-      </div>
-    </section>
-
-    <section v-if="!isEmbedded" class="stats-grid">
-      <div class="stat-card">
-        <span>平台总数</span>
-        <strong>{{ stats?.total_platforms ?? '-' }}</strong>
-      </div>
-      <div class="stat-card">
-        <span>启用平台</span>
-        <strong>{{ stats?.enabled_platforms ?? '-' }}</strong>
-      </div>
-      <div class="stat-card">
-        <span>健康</span>
-        <strong class="ok">{{ stats?.healthy_platforms ?? '-' }}</strong>
-      </div>
-      <div class="stat-card">
-        <span>异常</span>
-        <strong class="bad">{{ (stats?.degraded_platforms ?? 0) + (stats?.down_platforms ?? 0) }}</strong>
-      </div>
-      <div class="stat-card">
-        <span>账号监控</span>
-        <strong>{{ stats?.account_monitor_count ?? '-' }}</strong>
-      </div>
-      <div class="stat-card">
-        <span>分组监控</span>
-        <strong>{{ stats?.group_monitor_count ?? '-' }}</strong>
-      </div>
-    </section>
-
-    <section v-if="!isEmbedded" class="table-card">
-      <el-table v-loading="loading" :data="platforms" class="platform-table compare-table" row-key="id">
-        <el-table-column label="平台" min-width="240">
-          <template #default="{ row }">
-            <div class="platform-cell">
-              <div class="platform-name">{{ row.name }}</div>
-              <div class="platform-badges">
-                <el-tag size="small" effect="plain">{{ providerLabel(row.provider_type) }}</el-tag>
-                <el-tag size="small" effect="light" type="info">{{ siteStrategyLabel(row) }}</el-tag>
-              </div>
-              <div class="muted">{{ row.base_url }}</div>
-            </div>
-          </template>
-        </el-table-column>
-        <el-table-column v-if="!isEmbedded" label="状态" width="120">
-          <template #default="{ row }">
-            <div class="status-cell">
-              <el-tag :type="statusType(row.status)" effect="light">{{ statusText(row.status) }}</el-tag>
-              <span class="status-subtext">{{ row.enabled ? '启用中' : '已停用' }}</span>
-            </div>
-          </template>
-        </el-table-column>
-        <el-table-column v-if="!isEmbedded" label="地址" min-width="230" show-overflow-tooltip>
-          <template #default="{ row }">
-            <span class="mono-url">{{ row.base_url }}</span>
-          </template>
-        </el-table-column>
-        <el-table-column v-if="!isEmbedded" label="凭据" width="110">
-          <template #default="{ row }">
-            <div class="credential-cell">
-              <el-tag :type="row.has_api_key ? 'success' : 'info'" effect="plain">
-                {{ row.has_api_key ? '已配置' : '未配置' }}
-              </el-tag>
-              <span class="status-subtext">{{ row.has_api_key ? 'API Key' : '待补充' }}</span>
-            </div>
-          </template>
-        </el-table-column>
-        <el-table-column label="账号概览" min-width="320">
-          <template #default="{ row }">
-            <div class="account-compare-list">
-              <div
-                v-for="account in row.account_monitors.slice(0, 3)"
-                :key="account.id"
-                class="account-compare-item"
-              >
-                <div class="account-compare-main">
-                  <div class="account-compare-name">
-                    <span>{{ account.name }}</span>
-                    <el-tag
-                      :type="account.last_error ? 'danger' : account.checked_at ? 'success' : 'info'"
-                      effect="light"
-                      size="small"
-                    >
-                      {{ account.last_error ? '异常' : account.checked_at ? '正常' : '未采集' }}
-                    </el-tag>
-                  </div>
-                  <div class="account-compare-meta">
-                    <span><em>账号</em>{{ account.external_account_id }}</span>
-                    <span v-if="accountLoginLabel(account)">
-                      <em>登录</em>{{ accountLoginLabel(account) }}
-                    </span>
-                  </div>
-                  <div v-if="account.last_error" class="account-compare-error">
-                    {{ account.last_error }}
-                  </div>
-                </div>
-                <div class="account-compare-metrics">
-                  <span><em>余额</em> {{ formatMoney(account.balance) }}</span>
-                  <span><em>消耗</em> {{ formatMoney(account.quota_used) }}</span>
-                </div>
-                <div v-if="visibleAccountKeys(account).length > 0" class="account-key-summary-list account-key-summary-row">
-                  <span
-                    v-for="key in visibleAccountKeys(account)"
-                    :key="accountKeySummaryId(key)"
-                    class="account-key-summary"
-                  >
-                    <strong>{{ key.name }}</strong>
-                    <em>{{ keyGroupLabel(key) }}</em>
-                  </span>
-                  <span v-if="hiddenAccountKeyCount(account) > 0" class="account-key-summary more">
-                    +{{ hiddenAccountKeyCount(account) }}
-                  </span>
-                </div>
-                <div v-else class="account-key-empty">暂无密钥</div>
-              </div>
-              <div v-if="row.account_monitors.length === 0" class="muted">未配置账号</div>
-              <div v-else-if="row.account_monitors.length > 3" class="muted">
-                还有 {{ row.account_monitors.length - 3 }} 个账号，进入监控项查看
-              </div>
-            </div>
-          </template>
-        </el-table-column>
-        <el-table-column label="指标" width="150">
-          <template #default="{ row }">
-            <div class="metric-stack">
-              <div>
-                <span class="metric-label">账号数</span>
-                <strong>{{ row.account_monitors.length }}</strong>
-              </div>
-              <div>
-                <span class="metric-label">总余额</span>
-                <strong>{{ formatMoney(row.balance) }}</strong>
-              </div>
-              <div>
-                <span class="metric-label">总消耗</span>
-                <strong>{{ formatMoney(row.quota_used) }}</strong>
-              </div>
-            </div>
-          </template>
-        </el-table-column>
-        <el-table-column label="最后采集" width="170">
-          <template #default="{ row }">
-            <div class="time-cell">
-              <span>{{ formatTime(row.checked_at) }}</span>
-              <span class="status-subtext">采集时间</span>
-            </div>
-          </template>
-        </el-table-column>
-        <el-table-column label="充值/到账" width="150">
-          <template #default="{ row }">
-            <div class="rate-conversion-cell">
-              <strong>{{ formatRateConversion(row) }}</strong>
-              <span>系数 {{ formatMultiplier(row.effective_rate_factor) }}</span>
-            </div>
-          </template>
-        </el-table-column>
-        <el-table-column label="启用" width="90">
-          <template #default="{ row }">
-            <div class="switch-cell">
-              <el-switch :model-value="row.enabled" @change="toggleEnabled(row)" />
-            </div>
-          </template>
-        </el-table-column>
-        <el-table-column label="操作" width="132" fixed="right">
-          <template #default="{ row }">
-            <div class="table-actions">
-              <el-button :icon="Setting" circle title="监控项" @click="openDetail(row)" />
-              <el-button :icon="Refresh" circle title="采集" @click="runMonitor(row)" />
-              <el-button :icon="Edit" circle title="编辑" @click="openEdit(row)" />
-              <el-button :icon="Delete" circle plain title="删除" type="danger" @click="remove(row)" />
-            </div>
-          </template>
-        </el-table-column>
-      </el-table>
-    </section>
-
-    <section v-else v-loading="loading" class="embedded-workspace">
+    <section v-loading="loading" class="embedded-workspace">
       <aside class="embedded-menu">
         <div class="embedded-menu-brand">
           <strong>Sub2 Monitor</strong>
@@ -881,15 +689,11 @@ const siteStrategies = ref<SiteStrategyOption[]>([])
 const platforms = ref<PlatformDetail[]>([])
 const stats = ref<DashboardStats | null>(null)
 const detail = ref<PlatformDetail | null>(null)
-const balanceHistory = ref<AccountBalanceHistorySeries[]>([])
-const rateHistory = ref<GroupRateHistorySeries[]>([])
 const platformBalanceHistory = ref<Record<number, AccountBalanceHistorySeries[]>>({})
 const platformRateHistory = ref<Record<number, GroupRateHistorySeries[]>>({})
 const loading = ref(false)
-const historyLoading = ref(false)
 const saving = ref(false)
 const monitoring = ref(false)
-const isEmbedded = ref(detectEmbedded())
 const dialogVisible = ref(false)
 const detailVisible = ref(false)
 const accountDialogVisible = ref(false)
@@ -972,14 +776,6 @@ const rules: FormRules = {
   rate_cron: [{ required: true, message: '请输入倍率 Cron', trigger: 'blur' }],
   recharge_amount: [{ required: true, message: '请输入充值金额', trigger: 'blur' }],
   received_amount: [{ required: true, message: '请输入到账金额', trigger: 'blur' }],
-}
-
-function detectEmbedded() {
-  try {
-    return window.self !== window.top || new URLSearchParams(window.location.search).has('embedded')
-  } catch {
-    return true
-  }
 }
 
 function resetForm() {
@@ -1094,9 +890,7 @@ async function load() {
     siteStrategies.value = siteStrategyRows
     stats.value = dashboard
     platforms.value = details
-    if (isEmbedded.value) {
-      await loadEmbeddedHistories(details.map((row) => row.id))
-    }
+    await loadEmbeddedHistories(details.map((row) => row.id))
   } finally {
     loading.value = false
   }
@@ -1130,12 +924,7 @@ async function loadPlatformRateHistories(platformIds: number[]) {
 }
 
 async function loadEmbeddedHistories(platformIds: number[]) {
-  historyLoading.value = true
-  try {
-    await Promise.all([loadPlatformBalanceHistories(platformIds), loadPlatformRateHistories(platformIds)])
-  } finally {
-    historyLoading.value = false
-  }
+  await Promise.all([loadPlatformBalanceHistories(platformIds), loadPlatformRateHistories(platformIds)])
 }
 
 async function save() {
@@ -1181,21 +970,6 @@ async function runMonitor(row: RelayPlatform) {
   try {
     await runPlatformMonitor(row.id)
     ElMessage.success('采集完成')
-    await load()
-  } finally {
-    monitoring.value = false
-  }
-}
-
-async function runDetailMonitor() {
-  if (!detail.value) {
-    return
-  }
-  monitoring.value = true
-  try {
-    await runPlatformMonitor(detail.value.id)
-    ElMessage.success('采集完成')
-    await reloadDetail()
     await load()
   } finally {
     monitoring.value = false

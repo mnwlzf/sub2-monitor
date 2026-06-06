@@ -281,9 +281,11 @@ class YunjinNewApiSiteStrategy(NewApiSiteStrategy):
             if user_id is None:
                 return AccountBalanceResult(error="yunjin login response missing data.id")
 
+            auth_headers = provider.management_headers(platform)
+            auth_headers["New-Api-User"] = str(user_id)
             self_response = await client.get(
                 "api/user/self",
-                headers={"New-Api-User": str(user_id)},
+                headers=auth_headers,
             )
             if self_response.status_code >= 400:
                 return AccountBalanceResult(
@@ -306,8 +308,14 @@ class YunjinNewApiSiteStrategy(NewApiSiteStrategy):
         platform: RelayPlatform,
         group: PlatformGroupMonitor,
     ) -> GroupRateResult:
+        headers = provider.management_headers(platform)
+        if "New-Api-User" not in headers:
+            return GroupRateResult(
+                error="yunjin group rate monitoring requires a numeric root user id in account monitor"
+            )
         async with httpx.AsyncClient(
             base_url=self.site_url(platform),
+            headers=headers,
             timeout=provider.timeout_seconds,
         ) as client:
             response, pricing_endpoint = await self.get_first_available(
@@ -395,9 +403,11 @@ class YunjinNewApiSiteStrategy(NewApiSiteStrategy):
             if user_id is None:
                 raise ValueError("yunjin group catalog login response missing data.id")
 
+            auth_headers = provider.management_headers(platform)
+            auth_headers["New-Api-User"] = str(user_id)
             response = await client.get(
                 self.GROUPS_ENDPOINT,
-                headers={"New-Api-User": str(user_id)},
+                headers=auth_headers,
             )
             if response.status_code >= 400:
                 raise ValueError(
@@ -1127,7 +1137,7 @@ class NewApiStrategy(ProviderStrategy):
         headers: dict[str, str] = {}
         access_token = self.access_token_value(platform)
         if access_token:
-            headers[platform.auth_header_name] = access_token
+            headers["Authorization"] = access_token
         user_id = self.management_user_id(platform)
         if user_id:
             headers["New-Api-User"] = user_id
@@ -1190,17 +1200,7 @@ class NewApiStrategy(ProviderStrategy):
         self,
         platform: RelayPlatform,
     ) -> tuple[dict[str, str | None], ...]:
-        headers = self.management_headers(platform)
-        if self.access_token_value(platform) is None:
-            raise ValueError("newapi key monitoring requires an access token")
-        if "New-Api-User" not in headers:
-            raise ValueError("newapi key monitoring requires an enabled account monitor with New-Api-User")
-
-        async with httpx.AsyncClient(
-            base_url=self.site_url(platform),
-            headers=headers,
-            timeout=self.timeout_seconds,
-        ) as client:
+        async with self.management_client(platform) as client:
             return await self.fetch_token_summaries(client)
 
     async def fetch_token_summaries(
@@ -1339,6 +1339,13 @@ class NewApiStrategy(ProviderStrategy):
             group_name = group_id
 
         return group_id, group_name
+
+    def management_client(self, platform: RelayPlatform) -> httpx.AsyncClient:
+        return httpx.AsyncClient(
+            base_url=self.site_url(platform),
+            headers=self.management_headers(platform),
+            timeout=self.timeout_seconds,
+        )
 
     @classmethod
     def unwrap_payload(cls, payload: Any) -> Any:

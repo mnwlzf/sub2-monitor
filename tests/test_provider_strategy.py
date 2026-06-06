@@ -229,7 +229,7 @@ def test_newapi_fetch_account_balance_reads_key_summaries(monkeypatch) -> None:
             target = path
             if target.startswith("https://"):
                 target = target.split("https://newapi.example.com/", 1)[-1]
-            if path == "api/token/":
+            if target == "api/token/":
                 assert self.headers.get("Authorization") == "token-123"
                 assert self.headers.get("New-Api-User") == "123"
                 return httpx.Response(
@@ -266,6 +266,7 @@ def test_newapi_fetch_account_balance_reads_key_summaries(monkeypatch) -> None:
                     request=httpx.Request("GET", f"{self.base_url}{path}"),
                 )
             if target.endswith("/api/account/123") or target == "api/account/123":
+                assert headers == {"Authorization": "token-123", "New-Api-User": "123"}
                 return httpx.Response(
                     200,
                     json={"balance": 12.5, "used_quota": 3.5, "quota": 20},
@@ -304,6 +305,208 @@ def test_newapi_fetch_account_balance_reads_key_summaries(monkeypatch) -> None:
         {"id": "11", "name": "prod-key", "group_id": "7", "group_name": "codex"},
         {"id": "12", "name": "ops-key", "group_id": "9", "group_name": "ops"},
     )
+
+
+def test_newapi_management_headers_normalize_authorization_and_user_id() -> None:
+    headers = NewApiStrategy().management_headers(
+        SimpleNamespace(
+            api_key_encrypted=encrypt_secret("Bearer sk-test-123"),
+            auth_header_name="X-Auth-Token",
+            auth_header_prefix="Bearer",
+            account_monitors=[
+                SimpleNamespace(enabled=True, external_account_id="Bearer 456", username=None)
+            ],
+        )
+    )
+
+    assert headers["Authorization"] == "sk-test-123"
+    assert headers["New-Api-User"] == "456"
+
+
+def test_yunjin_fetch_account_balance_sends_authorization_header(monkeypatch) -> None:
+    class StubAsyncClient:
+        def __init__(self, *args, **kwargs) -> None:
+            self.base_url = str(kwargs.get("base_url") or "")
+            self.headers = dict(kwargs.get("headers") or {})
+            self.requests = []
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def get(self, path: str, headers: dict | None = None):
+            self.requests.append(("GET", path, headers))
+            if path == "login":
+                return httpx.Response(200, text="ok", request=httpx.Request("GET", f"{self.base_url}{path}"))
+            if path == "api/status":
+                return httpx.Response(
+                    200,
+                    json={"success": True, "data": {"quota_per_unit": 500000}},
+                    request=httpx.Request("GET", f"{self.base_url}{path}"),
+                )
+            if path == "api/user/self":
+                assert headers == {"Authorization": "sk-test-123", "New-Api-User": "789"}
+                return httpx.Response(
+                    200,
+                    json={"success": True, "data": {"id": 789, "quota": 1000000, "used_quota": 250000}},
+                    request=httpx.Request("GET", f"{self.base_url}{path}"),
+                )
+            raise AssertionError(path)
+
+        async def post(self, path: str, json: dict):
+            self.requests.append(("POST", path, json))
+            if path in {"api/user/login?turnstile=", "api/user/login"}:
+                return httpx.Response(
+                    200,
+                    json={"success": True, "data": {"id": 789}},
+                    request=httpx.Request("POST", f"{self.base_url}{path}"),
+                )
+            raise AssertionError(path)
+
+    monkeypatch.setattr(provider_module.httpx, "AsyncClient", StubAsyncClient)
+
+    result = asyncio.run(
+        YunjinNewApiSiteStrategy().fetch_account_balance(
+            NewApiStrategy(),
+            SimpleNamespace(
+                base_url="https://newapi.example.com",
+                api_key_encrypted=encrypt_secret("Bearer sk-test-123"),
+                auth_header_name="X-Auth-Token",
+                auth_header_prefix="Bearer",
+                account_monitors=[],
+                site_strategy="yunjin",
+            ),
+            SimpleNamespace(username="user@example.com", password_encrypted=encrypt_secret("pw")),
+        )
+    )
+
+    assert result.error is None
+    assert result.balance == 2.0
+    assert result.quota_used == 0.5
+
+
+def test_yunjin_fetch_group_rate_sends_management_headers(monkeypatch) -> None:
+    class StubAsyncClient:
+        def __init__(self, *args, **kwargs) -> None:
+            self.base_url = str(kwargs.get("base_url") or "")
+            self.headers = dict(kwargs.get("headers") or {})
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def get(self, path: str, headers: dict | None = None):
+            if path == "api/pricing":
+                assert self.headers.get("Authorization") == "token-123"
+                assert self.headers.get("New-Api-User") == "789"
+                assert headers is None
+                return httpx.Response(
+                    200,
+                    json={"group_ratio": {"codex": 0.08}},
+                    request=httpx.Request("GET", f"{self.base_url}{path}"),
+                )
+            raise AssertionError(path)
+
+    monkeypatch.setattr(provider_module.httpx, "AsyncClient", StubAsyncClient)
+
+    result = asyncio.run(
+        YunjinNewApiSiteStrategy().fetch_group_rate(
+            NewApiStrategy(),
+            SimpleNamespace(
+                base_url="https://newapi.example.com",
+                api_key_encrypted=encrypt_secret("Bearer token-123"),
+                auth_header_name="X-Auth-Token",
+                auth_header_prefix="Bearer",
+                account_monitors=[SimpleNamespace(enabled=True, external_account_id="789", username=None)],
+                site_strategy="yunjin",
+            ),
+            SimpleNamespace(external_group_id="codex", name="codex", enabled=True),
+        )
+    )
+
+    assert result.error is None
+    assert result.rate_multiplier == 0.08
+
+
+def test_newapi_generic_account_balance_uses_management_headers(monkeypatch) -> None:
+    class StubAsyncClient:
+        def __init__(self, *args, **kwargs) -> None:
+            self.base_url = str(kwargs.get("base_url") or "")
+            self.headers = dict(kwargs.get("headers") or {})
+            self.requests = []
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def get(self, path: str, params: dict | None = None, headers: dict | None = None):
+            self.requests.append(("GET", path, params))
+            target = path
+            if target.startswith("https://"):
+                target = target.split("https://newapi.example.com/", 1)[-1]
+            if path == "api/token/":
+                return httpx.Response(
+                    200,
+                    json={
+                        "success": True,
+                        "data": {
+                            "items": [
+                                {"id": 11, "name": "prod-key"},
+                            ],
+                            "total": 1,
+                            "page_size": 100,
+                        },
+                    },
+                    request=httpx.Request("GET", f"{self.base_url}{path}"),
+                )
+            if target == "api/token/11":
+                return httpx.Response(
+                    200,
+                    json={
+                        "success": True,
+                        "data": {"id": 11, "name": "prod-key", "group": {"id": 7, "name": "codex"}},
+                    },
+                    request=httpx.Request("GET", f"{self.base_url}{path}"),
+                )
+            if target == "api/account/123":
+                assert headers == {"Authorization": "token-123", "New-Api-User": "123"}
+                return httpx.Response(
+                    200,
+                    json={"balance": 12.5, "used_quota": 3.5, "quota": 20},
+                    request=httpx.Request("GET", f"{self.base_url}{path}"),
+                )
+            raise AssertionError(path)
+
+    monkeypatch.setattr(provider_module.httpx, "AsyncClient", StubAsyncClient)
+
+    result = asyncio.run(
+        NewApiStrategy().fetch_account_balance(
+            SimpleNamespace(
+                base_url="https://newapi.example.com",
+                site_strategy="generic",
+                api_key_encrypted=encrypt_secret("Bearer token-123"),
+                auth_header_name="X-Auth-Token",
+                auth_header_prefix="Bearer",
+                account_monitors=[SimpleNamespace(enabled=True, external_account_id="123", username=None)],
+            ),
+            SimpleNamespace(
+                external_account_id="123",
+                username=None,
+                password_encrypted=None,
+                enabled=True,
+            ),
+        )
+    )
+
+    assert result.error is None
+    assert result.balance == 12.5
+    assert result.quota_used == 3.5
 
 
 def test_sub2api_fetch_account_balance_logs_in_and_reads_user_usage(monkeypatch) -> None:

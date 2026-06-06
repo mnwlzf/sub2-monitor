@@ -55,273 +55,377 @@
             </div>
           </section>
 
-          <article v-for="row in platforms" :key="row.id" class="embedded-platform-card">
-            <header class="embedded-platform-header">
-              <div class="embedded-platform-title">
-                <div>
-                  <strong>{{ row.name }}</strong>
-                  <span>{{ row.base_url }}</span>
-                </div>
-                <div class="platform-badges">
-                  <el-tag size="small" effect="plain">{{ providerLabel(row.provider_type) }}</el-tag>
-                  <el-tag size="small" effect="light" type="info">{{ siteStrategyLabel(row) }}</el-tag>
-                  <el-tag :type="statusType(row.status)" effect="light" size="small">
-                    {{ statusText(row.status) }}
-                  </el-tag>
-                </div>
-              </div>
-              <div class="embedded-platform-controls">
-                <el-switch :model-value="row.enabled" @change="toggleEnabled(row)" />
-                <div class="table-actions">
-                  <el-button :icon="Setting" circle title="监控项" @click="openDetail(row)" />
-                  <el-button :icon="Refresh" circle title="采集" @click="runMonitor(row)" />
-                  <el-button :icon="Edit" circle title="编辑" @click="openEdit(row)" />
-                  <el-button :icon="Delete" circle plain title="删除" type="danger" @click="remove(row)" />
-                </div>
-              </div>
-            </header>
-
-            <div class="embedded-platform-body">
-              <div class="embedded-account-panel">
-                <div class="embedded-section-label">账号概览</div>
-                <div v-if="row.account_monitors.length > 0" class="embedded-account-list">
-                  <div
-                    v-for="account in row.account_monitors"
-                    :key="account.id"
-                    class="embedded-account-row"
-                  >
-                    <div class="embedded-account-main">
-                      <div class="embedded-account-name">
-                        <strong>{{ account.name }}</strong>
-                        <el-tag
-                          :type="account.last_error ? 'danger' : account.checked_at ? 'success' : 'info'"
-                          effect="light"
-                          size="small"
-                        >
-                          {{ account.last_error ? '异常' : account.checked_at ? '正常' : '未采集' }}
-                        </el-tag>
-                      </div>
-                      <div class="embedded-account-meta">
-                        <span><em>账号</em>{{ accountDisplayLabel(account) }}</span>
-                        <span v-if="accountLoginLabel(account)">
-                          <em>登录</em>{{ accountLoginLabel(account) }}
-                        </span>
-                      </div>
-                      <div v-if="account.last_error" class="embedded-account-error">
-                        {{ account.last_error }}
-                      </div>
-                    </div>
-                    <div class="embedded-account-values">
-                      <div>
-                        <span>余额</span>
-                        <strong>{{ formatMoney(account.balance) }}</strong>
-                      </div>
-                      <div>
-                        <span>消耗</span>
-                        <strong>{{ formatMoney(account.quota_used) }}</strong>
-                      </div>
-                    </div>
-                    <div class="embedded-account-key-panel">
-                      <span class="embedded-account-key-title">密钥 / 分组</span>
-                      <div
-                        v-if="visibleAccountKeys(account).length > 0"
-                        class="account-key-summary-list embedded-account-keys"
-                      >
-                        <span
-                          v-for="key in visibleAccountKeys(account)"
-                          :key="accountKeySummaryId(key)"
-                          class="account-key-summary"
-                        >
-                          <strong>{{ key.name }}</strong>
-                          <em>{{ keyGroupLabel(key) }}</em>
-                        </span>
-                        <span v-if="hiddenAccountKeyCount(account) > 0" class="account-key-summary more">
-                          +{{ hiddenAccountKeyCount(account) }}
-                        </span>
-                      </div>
-                      <span v-else class="account-key-empty">暂无密钥</span>
-                    </div>
+          <section v-for="group in previewPlatformGroups" :key="group.key" class="embedded-provider-group">
+            <div class="embedded-section-label">{{ group.label }}</div>
+            <article v-for="row in group.items" :key="row.id" class="embedded-platform-card">
+              <header class="embedded-platform-header">
+                <div class="embedded-platform-title">
+                  <div>
+                    <strong>{{ row.name }}</strong>
+                    <span>{{ row.base_url }}</span>
+                  </div>
+                  <div class="platform-badges">
+                    <el-tag size="small" effect="plain">{{ providerLabel(row.provider_type) }}</el-tag>
+                    <el-tag size="small" effect="light" type="info">{{ siteStrategyLabel(row) }}</el-tag>
+                    <el-tag :type="statusType(row.status)" effect="light" size="small">
+                      {{ statusText(row.status) }}
+                    </el-tag>
                   </div>
                 </div>
-                <div v-else class="embedded-empty">未配置账号</div>
-              </div>
-
-              <div class="embedded-metrics">
-                <div>
-                  <span>账号数</span>
-                  <strong>{{ row.account_monitors.length }}</strong>
-                </div>
-                <div>
-                  <span>总余额</span>
-                  <strong>{{ formatMoney(row.balance) }}</strong>
-                </div>
-                <div>
-                  <span>总消耗</span>
-                  <strong>{{ formatMoney(row.quota_used) }}</strong>
-                </div>
-                <div>
-                  <span>最后采集</span>
-                  <strong>{{ formatTime(row.checked_at) }}</strong>
-                </div>
-                <div>
-                  <span>充值/到账</span>
-                  <strong>{{ formatRateConversion(row) }}</strong>
-                </div>
-                <div>
-                  <span>充值倍率系数</span>
-                  <strong>{{ formatMultiplier(row.effective_rate_factor) }}</strong>
-                </div>
-              </div>
-
-              <div class="embedded-group-rate-panel">
-                <div class="embedded-section-label">接口分组速览</div>
-                <div
-                  v-if="overviewDiscoveredGroupRates(row.discovered_group_rates).length > 0"
-                  class="embedded-group-rate-list"
-                >
-                  <div
-                    v-for="group in overviewDiscoveredGroupRates(row.discovered_group_rates)"
-                    :key="group.external_group_id"
-                    class="embedded-group-rate-row"
-                    :class="{ highlighted: group.is_configured }"
-                  >
-                    <div class="embedded-group-rate-main">
-                      <div class="embedded-group-rate-title">
-                        <strong>{{ group.name }}</strong>
-                        <div class="embedded-group-rate-tags">
-                          <el-tag v-if="group.is_highest" size="small" type="success" effect="light">最高</el-tag>
-                          <el-tag v-if="group.is_lowest" size="small" type="info" effect="light">最低</el-tag>
-                          <el-tag v-if="group.is_configured" size="small" type="warning" effect="light">监控</el-tag>
-                        </div>
-                      </div>
-                      <span>{{ group.external_group_id }}</span>
-                      <span v-if="group.description" class="embedded-group-rate-desc">{{ group.description }}</span>
-                    </div>
-                    <div class="embedded-group-rate-values">
-                      <div>
-                        <span>原始倍率</span>
-                        <strong>{{ formatMultiplier(group.rate_multiplier) }}</strong>
-                      </div>
-                      <div>
-                        <span>实际倍率</span>
-                        <strong>{{ formatMultiplier(group.effective_rate_multiplier) }}</strong>
-                      </div>
-                    </div>
+                <div class="embedded-platform-controls">
+                  <el-switch :model-value="row.enabled" @change="toggleEnabled(row)" />
+                  <div class="table-actions">
+                    <el-button :icon="Setting" circle title="监控项" @click="openDetail(row)" />
+                    <el-button :icon="Refresh" circle title="采集" @click="runMonitor(row)" />
+                    <el-button :icon="Edit" circle title="编辑" @click="openEdit(row)" />
+                    <el-button :icon="Delete" circle plain title="删除" type="danger" @click="remove(row)" />
                   </div>
                 </div>
-                <div v-else class="embedded-empty">暂无接口分组</div>
-              </div>
+              </header>
 
-              <div v-if="row.provider_type === 'newapi'" class="embedded-group-rate-panel">
-                <div class="embedded-section-label">渠道倍率速览</div>
-                <div
-                  v-if="overviewDiscoveredChannelRates(row.discovered_channel_rates).length > 0"
-                  class="embedded-group-rate-list"
-                >
-                  <div
-                    v-for="channel in overviewDiscoveredChannelRates(row.discovered_channel_rates)"
-                    :key="channel.external_channel_id"
-                    class="embedded-group-rate-row"
-                  >
-                    <div class="embedded-group-rate-main">
-                      <div class="embedded-group-rate-title">
-                        <strong>{{ channel.name }}</strong>
-                        <div class="embedded-group-rate-tags">
-                          <el-tag v-if="channel.is_highest" size="small" type="success" effect="light">最高</el-tag>
-                          <el-tag v-if="channel.is_lowest" size="small" type="info" effect="light">最低</el-tag>
-                          <el-tag v-if="channel.status" size="small" type="info" effect="light">
-                            {{ channel.status }}
+              <div class="embedded-platform-body">
+                <div class="embedded-account-panel">
+                  <div class="embedded-section-label">账号概览</div>
+                  <div v-if="row.account_monitors.length > 0" class="embedded-account-list">
+                    <div
+                      v-for="account in row.account_monitors"
+                      :key="account.id"
+                      class="embedded-account-row"
+                    >
+                      <div class="embedded-account-main">
+                        <div class="embedded-account-name">
+                          <strong>{{ account.name }}</strong>
+                          <el-tag
+                            :type="account.last_error ? 'danger' : account.checked_at ? 'success' : 'info'"
+                            effect="light"
+                            size="small"
+                          >
+                            {{ account.last_error ? '异常' : account.checked_at ? '正常' : '未采集' }}
                           </el-tag>
                         </div>
+                        <div class="embedded-account-meta">
+                          <span><em>账号</em>{{ accountDisplayLabel(account) }}</span>
+                          <span v-if="accountLoginLabel(account)">
+                            <em>登录</em>{{ accountLoginLabel(account) }}
+                          </span>
+                        </div>
+                        <div v-if="account.last_error" class="embedded-account-error">
+                          {{ account.last_error }}
+                        </div>
                       </div>
-                      <span>渠道 {{ channel.external_channel_id }}</span>
-                      <span v-if="channel.base_url" class="embedded-group-rate-desc">{{ channel.base_url }}</span>
-                      <span v-if="channel.description" class="embedded-group-rate-desc">
-                        {{ channel.description }}
-                      </span>
-                    </div>
-                    <div class="embedded-group-rate-values">
-                      <div>
-                        <span>平均倍率</span>
-                        <strong>{{ formatMultiplier(channel.rate_multiplier) }}</strong>
+                      <div class="embedded-account-values">
+                        <div>
+                          <span>余额</span>
+                          <strong>{{ formatMoney(account.balance) }}</strong>
+                        </div>
+                        <div>
+                          <span>消耗</span>
+                          <strong>{{ formatMoney(account.quota_used) }}</strong>
+                        </div>
                       </div>
-                      <div>
-                        <span>模型数</span>
-                        <strong>{{ channelModelRateCount(channel) }}</strong>
+                      <div class="embedded-account-key-panel">
+                        <span class="embedded-account-key-title">密钥 / 分组</span>
+                        <div
+                          v-if="visibleAccountKeys(account).length > 0"
+                          class="account-key-summary-list embedded-account-keys"
+                        >
+                          <span
+                            v-for="key in visibleAccountKeys(account)"
+                            :key="accountKeySummaryId(key)"
+                            class="account-key-summary"
+                          >
+                            <strong>{{ key.name }}</strong>
+                            <em>{{ keyGroupLabel(key) }}</em>
+                          </span>
+                          <span v-if="hiddenAccountKeyCount(account) > 0" class="account-key-summary more">
+                            +{{ hiddenAccountKeyCount(account) }}
+                          </span>
+                        </div>
+                        <span v-else class="account-key-empty">暂无密钥</span>
                       </div>
                     </div>
                   </div>
+                  <div v-else class="embedded-empty">未配置账号</div>
                 </div>
-                <div v-else class="embedded-empty">暂无渠道倍率</div>
+
+                <div class="embedded-metrics">
+                  <div>
+                    <span>账号数</span>
+                    <strong>{{ row.account_monitors.length }}</strong>
+                  </div>
+                  <div>
+                    <span>总余额</span>
+                    <strong>{{ formatMoney(row.balance) }}</strong>
+                  </div>
+                  <div>
+                    <span>总消耗</span>
+                    <strong>{{ formatMoney(row.quota_used) }}</strong>
+                  </div>
+                  <div>
+                    <span>最后采集</span>
+                    <strong>{{ formatTime(row.checked_at) }}</strong>
+                  </div>
+                  <div>
+                    <span>充值/到账</span>
+                    <strong>{{ formatRateConversion(row) }}</strong>
+                  </div>
+                  <div>
+                    <span>充值倍率系数</span>
+                    <strong>{{ formatMultiplier(row.effective_rate_factor) }}</strong>
+                  </div>
+                </div>
+
+                <div class="embedded-group-rate-panel">
+                  <div class="embedded-section-label">接口分组速览</div>
+                  <div
+                    v-if="overviewDiscoveredGroupRates(row.discovered_group_rates).length > 0"
+                    class="embedded-group-rate-list"
+                  >
+                    <div
+                      v-for="groupRate in overviewDiscoveredGroupRates(row.discovered_group_rates)"
+                      :key="groupRate.external_group_id"
+                      class="embedded-group-rate-row"
+                      :class="{ highlighted: groupRate.is_configured }"
+                    >
+                      <div class="embedded-group-rate-main">
+                        <div class="embedded-group-rate-title">
+                          <strong>{{ groupRate.name }}</strong>
+                          <div class="embedded-group-rate-tags">
+                            <el-tag v-if="groupRate.is_highest" size="small" type="success" effect="light">
+                              最高
+                            </el-tag>
+                            <el-tag v-if="groupRate.is_lowest" size="small" type="info" effect="light">
+                              最低
+                            </el-tag>
+                            <el-tag v-if="groupRate.is_configured" size="small" type="warning" effect="light">
+                              监控
+                            </el-tag>
+                          </div>
+                        </div>
+                        <span>{{ groupRate.external_group_id }}</span>
+                        <span v-if="groupRate.description" class="embedded-group-rate-desc">
+                          {{ groupRate.description }}
+                        </span>
+                      </div>
+                      <div class="embedded-group-rate-values">
+                        <div>
+                          <span>原始倍率</span>
+                          <strong>{{ formatMultiplier(groupRate.rate_multiplier) }}</strong>
+                        </div>
+                        <div>
+                          <span>实际倍率</span>
+                          <strong>{{ formatMultiplier(groupRate.effective_rate_multiplier) }}</strong>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                  <div v-else class="embedded-empty">暂无接口分组</div>
+                </div>
+
+                <div v-if="row.provider_type === 'newapi'" class="embedded-group-rate-panel">
+                  <div class="embedded-section-label">渠道倍率速览</div>
+                  <div
+                    v-if="overviewDiscoveredChannelRates(row.discovered_channel_rates).length > 0"
+                    class="embedded-group-rate-list"
+                  >
+                    <div
+                      v-for="channel in overviewDiscoveredChannelRates(row.discovered_channel_rates)"
+                      :key="channel.external_channel_id"
+                      class="embedded-group-rate-row"
+                    >
+                      <div class="embedded-group-rate-main">
+                        <div class="embedded-group-rate-title">
+                          <strong>{{ channel.name }}</strong>
+                          <div class="embedded-group-rate-tags">
+                            <el-tag v-if="channel.is_highest" size="small" type="success" effect="light">
+                              最高
+                            </el-tag>
+                            <el-tag v-if="channel.is_lowest" size="small" type="info" effect="light">
+                              最低
+                            </el-tag>
+                            <el-tag v-if="channel.status" size="small" type="info" effect="light">
+                              {{ channel.status }}
+                            </el-tag>
+                          </div>
+                        </div>
+                        <span>渠道 {{ channel.external_channel_id }}</span>
+                        <span v-if="channel.base_url" class="embedded-group-rate-desc">
+                          {{ channel.base_url }}
+                        </span>
+                        <span v-if="channel.description" class="embedded-group-rate-desc">
+                          {{ channel.description }}
+                        </span>
+                      </div>
+                      <div class="embedded-group-rate-values">
+                        <div>
+                          <span>平均倍率</span>
+                          <strong>{{ formatMultiplier(channel.rate_multiplier) }}</strong>
+                        </div>
+                        <div>
+                          <span>模型数</span>
+                          <strong>{{ channelModelRateCount(channel) }}</strong>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                  <div v-else class="embedded-empty">暂无渠道倍率</div>
+                </div>
               </div>
-            </div>
-          </article>
+            </article>
+          </section>
           <el-empty v-if="!loading && platforms.length === 0" description="暂无平台" />
         </div>
 
         <div v-else-if="activeEmbeddedView === 'balances'" class="embedded-panel-list">
-          <article v-for="row in platforms" :key="row.id" class="embedded-trends-section">
-            <div class="embedded-platform-title compact">
-              <strong>{{ row.name }}</strong>
-              <span>最近 24 小时，按平台和账号展示真实采样点：{{ row.balance_cron }}</span>
-            </div>
-            <div class="embedded-trend-grid balance-trend-grid">
-              <div
-                v-for="series in platformBalanceHistory[row.id] ?? []"
-                :key="series.account_id"
-                class="embedded-trend-card balance-trend-card"
-              >
-                <div class="embedded-trend-head">
-                  <span>{{ series.account_name }}</span>
-                  <strong>{{ latestBalance(series) }}</strong>
-                </div>
-                <BalanceLineChart :series="series" />
-                <div v-if="!hasChartData(balanceChartValues(series))" class="embedded-trend-empty">
-                  暂无历史
+          <section v-for="group in previewPlatformGroups" :key="`balances-${group.key}`" class="embedded-provider-group">
+            <div class="embedded-section-label">{{ group.label }}</div>
+            <article v-for="row in group.items" :key="row.id" class="embedded-trends-section">
+              <div class="embedded-platform-title compact">
+                <strong>{{ row.name }}</strong>
+                <span>最近 24 小时，按平台和账号展示真实采样点：{{ row.balance_cron }}</span>
+              </div>
+              <div class="embedded-trend-grid balance-trend-grid">
+                <div
+                  v-for="series in platformBalanceHistory[row.id] ?? []"
+                  :key="series.account_id"
+                  class="embedded-trend-card balance-trend-card"
+                >
+                  <div class="embedded-trend-head">
+                    <span>{{ series.account_name }}</span>
+                    <strong>{{ latestBalance(series) }}</strong>
+                  </div>
+                  <BalanceLineChart :series="series" />
+                  <div v-if="!hasChartData(balanceChartValues(series))" class="embedded-trend-empty">
+                    暂无历史
+                  </div>
                 </div>
               </div>
-            </div>
-          </article>
+            </article>
+          </section>
         </div>
 
         <div v-else-if="activeEmbeddedView === 'rates'" class="embedded-panel-list">
-          <article v-for="row in platforms" :key="row.id" class="embedded-trends-section embedded-rate-section">
-            <div class="embedded-platform-title compact embedded-rate-header">
-              <div>
-                <strong>{{ row.name }}</strong>
-                <span>{{ row.base_url }}</span>
+          <section v-for="group in previewPlatformGroups" :key="`rates-${group.key}`" class="embedded-provider-group">
+            <div class="embedded-section-label">{{ group.label }}</div>
+            <article v-for="row in group.items" :key="row.id" class="embedded-trends-section embedded-rate-section">
+              <div class="embedded-platform-title compact embedded-rate-header">
+                <div>
+                  <strong>{{ row.name }}</strong>
+                  <span>{{ row.base_url }}</span>
+                </div>
+                <span>分组倍率趋势</span>
               </div>
-              <span>分组倍率趋势</span>
-            </div>
-            <div v-if="rateHistoryVisibleSeries(row.id).length > 0" class="embedded-rate-platform-card">
-              <RateLineChart :series="rateHistoryVisibleSeries(row.id)" />
-              <div class="history-axis rate-history-axis">
-                <span>{{ platformRateFirstDate(row.id) }}</span>
-                <span>分组趋势</span>
-                <span>{{ platformRateLastDate(row.id) }}</span>
+              <div v-if="rateHistoryVisibleSeries(row.id).length > 0" class="embedded-rate-platform-card">
+                <RateLineChart :series="rateHistoryVisibleSeries(row.id)" />
+                <div class="history-axis rate-history-axis">
+                  <span>{{ platformRateFirstDate(row.id) }}</span>
+                  <span>分组趋势</span>
+                  <span>{{ platformRateLastDate(row.id) }}</span>
+                </div>
               </div>
-            </div>
-            <div v-else class="embedded-empty">暂无分组趋势</div>
-          </article>
+              <div v-else class="embedded-empty">暂无分组趋势</div>
+            </article>
+          </section>
+        </div>
+
+        <div v-else-if="activeEmbeddedView === 'groupRates'" class="embedded-panel-list">
+          <section v-for="group in previewPlatformGroups" :key="`group-rates-${group.key}`" class="embedded-provider-group">
+            <div class="embedded-section-label">{{ group.label }}</div>
+            <article v-for="row in group.items" :key="row.id" class="embedded-platform-card">
+              <header class="embedded-platform-header">
+                <div class="embedded-platform-title">
+                  <div>
+                    <strong>{{ row.name }}</strong>
+                    <span>{{ row.base_url }}</span>
+                  </div>
+                  <div class="platform-badges">
+                    <el-tag size="small" effect="plain">{{ providerLabel(row.provider_type) }}</el-tag>
+                    <el-tag size="small" effect="light" type="info">{{ siteStrategyLabel(row) }}</el-tag>
+                  </div>
+                </div>
+                <div class="embedded-platform-controls">
+                  <el-button :icon="Refresh" :loading="monitoring" @click="runDetailRateMonitorFor(row)">
+                    采集倍率
+                  </el-button>
+                </div>
+              </header>
+              <div class="embedded-group-rate-page">
+                <div
+                  v-if="uniqueDiscoveredGroupRates(row.discovered_group_rates).length > 0"
+                  class="embedded-group-rate-list"
+                >
+                  <div
+                    v-for="groupRate in uniqueDiscoveredGroupRates(row.discovered_group_rates)"
+                    :key="groupRate.external_group_id"
+                    class="embedded-group-rate-row"
+                    :class="{ highlighted: groupRate.is_configured }"
+                  >
+                    <div class="embedded-group-rate-main">
+                      <div class="embedded-group-rate-title">
+                        <strong>{{ groupRate.name }}</strong>
+                        <div class="embedded-group-rate-tags">
+                          <el-tag v-if="groupRate.is_configured" size="small" type="warning" effect="light">
+                            监控
+                          </el-tag>
+                          <el-tag v-if="groupRate.last_error" size="small" type="danger" effect="light">
+                            异常
+                          </el-tag>
+                        </div>
+                      </div>
+                      <span>{{ groupRate.external_group_id }}</span>
+                      <span v-if="groupRate.description" class="embedded-group-rate-desc">
+                        {{ groupRate.description }}
+                      </span>
+                    </div>
+                    <div class="embedded-group-rate-values">
+                      <div>
+                        <span>原始倍率</span>
+                        <strong>{{ formatMultiplier(groupRate.rate_multiplier) }}</strong>
+                      </div>
+                      <div>
+                        <span>实际倍率</span>
+                        <strong>{{ formatMultiplier(groupRate.effective_rate_multiplier) }}</strong>
+                      </div>
+                      <div>
+                        <span>RPM</span>
+                        <strong>{{ groupRate.rpm_limit ?? '-' }}</strong>
+                      </div>
+                      <div>
+                        <span>最后采集</span>
+                        <strong>{{ formatTime(groupRate.checked_at) }}</strong>
+                      </div>
+                    </div>
+                    <div v-if="groupRate.last_error" class="embedded-account-error">
+                      {{ groupRate.last_error }}
+                    </div>
+                  </div>
+                </div>
+                <div v-else class="embedded-empty">暂无分组倍率</div>
+              </div>
+            </article>
+          </section>
         </div>
 
         <div v-else class="embedded-panel-list">
-          <article v-for="row in platforms" :key="row.id" class="embedded-platform-card">
-            <header class="embedded-platform-header">
-              <div class="embedded-platform-title">
-                <div>
-                  <strong>{{ row.name }}</strong>
-                  <span>{{ row.account_monitors.length }} 个账号 / {{ row.group_monitors.length }} 个分组</span>
+          <section v-for="group in previewPlatformGroups" :key="`settings-${group.key}`" class="embedded-provider-group">
+            <div class="embedded-section-label">{{ group.label }}</div>
+            <article v-for="row in group.items" :key="row.id" class="embedded-platform-card">
+              <header class="embedded-platform-header">
+                <div class="embedded-platform-title">
+                  <div>
+                    <strong>{{ row.name }}</strong>
+                    <span>{{ row.account_monitors.length }} 个账号 / {{ row.group_monitors.length }} 个分组</span>
+                  </div>
                 </div>
-              </div>
-              <div class="embedded-platform-controls">
-                <el-button :icon="Setting" @click="openDetail(row)">配置监控项</el-button>
-                <el-button :icon="Refresh" :loading="monitoring" type="primary" @click="runMonitor(row)">
-                  立即采集
-                </el-button>
-              </div>
-            </header>
-          </article>
+                <div class="embedded-platform-controls">
+                  <el-button :icon="Setting" @click="openDetail(row)">配置监控项</el-button>
+                  <el-button :icon="Refresh" :loading="monitoring" type="primary" @click="runMonitor(row)">
+                    立即采集
+                  </el-button>
+                </div>
+              </header>
+            </article>
+          </section>
         </div>
       </main>
     </section>
@@ -703,7 +807,7 @@ const groupDialogVisible = ref(false)
 const editing = ref<RelayPlatform | null>(null)
 const accountEditing = ref<AccountMonitor | null>(null)
 const formRef = ref<FormInstance>()
-const activeEmbeddedView = ref<'overview' | 'balances' | 'rates' | 'settings'>('overview')
+const activeEmbeddedView = ref<'overview' | 'balances' | 'rates' | 'groupRates' | 'settings'>('overview')
 const maxAccountKeysShown = 3
 
 const embeddedMenuItems = [
@@ -723,6 +827,11 @@ const embeddedMenuItems = [
     description: '按平台展示分组趋势',
   },
   {
+    key: 'groupRates',
+    label: '分组倍率',
+    description: '按平台查看全部分组倍率',
+  },
+  {
     key: 'settings',
     label: '监控配置',
     description: '账号、分组和采集任务入口',
@@ -734,6 +843,16 @@ const embeddedView = computed(
 )
 const embeddedViewTitle = computed(() => embeddedView.value.label)
 const embeddedViewDescription = computed(() => embeddedView.value.description)
+const previewPlatformGroups = computed(() => {
+  const newapi = platforms.value.filter((row) => row.provider_type === 'newapi')
+  const sub2api = platforms.value.filter((row) => row.provider_type === 'sub2api')
+  const others = platforms.value.filter((row) => row.provider_type !== 'newapi' && row.provider_type !== 'sub2api')
+  return [
+    { key: 'newapi', label: 'newapi', items: newapi },
+    { key: 'sub2api', label: 'sub2api', items: sub2api },
+    { key: 'other', label: '其他', items: others },
+  ].filter((group) => group.items.length > 0)
+})
 
 const form = reactive<PlatformPayload>({
   name: '',
@@ -1002,6 +1121,17 @@ async function runDetailRateMonitor() {
     await runPlatformRateMonitor(detail.value.id)
     ElMessage.success('倍率采集完成')
     await reloadDetail()
+    await load()
+  } finally {
+    monitoring.value = false
+  }
+}
+
+async function runDetailRateMonitorFor(row: RelayPlatform) {
+  monitoring.value = true
+  try {
+    await runPlatformRateMonitor(row.id)
+    ElMessage.success('倍率采集完成')
     await load()
   } finally {
     monitoring.value = false

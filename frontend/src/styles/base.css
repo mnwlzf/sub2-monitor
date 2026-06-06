@@ -460,16 +460,19 @@ body {
 }
 
 .embedded-workspace {
-  display: grid;
-  grid-template-columns: 220px minmax(0, 1fr);
+  display: block;
   gap: 12px;
   min-height: calc(100vh - 20px);
+  padding-left: 232px;
 }
 
 .embedded-menu {
-  position: sticky;
+  position: fixed;
   top: 10px;
+  left: 12px;
+  z-index: 20;
   display: flex;
+  width: 220px;
   height: calc(100vh - 20px);
   flex-direction: column;
   gap: 8px;
@@ -857,6 +860,27 @@ body {
   gap: 8px;
 }
 
+.embedded-group-rate-page {
+  padding: 12px;
+}
+
+.embedded-group-rate-page .embedded-group-rate-list {
+  grid-template-columns: 1fr;
+}
+
+.embedded-group-rate-page .embedded-group-rate-row {
+  grid-template-columns: minmax(240px, 0.9fr) minmax(440px, 1.4fr);
+}
+
+.embedded-group-rate-page .embedded-group-rate-values {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.embedded-group-rate-page .embedded-account-error {
+  grid-column: 1 / -1;
+  margin-top: 0;
+}
+
 .embedded-group-rate-values div {
   min-width: 0;
   border-radius: 6px;
@@ -1111,7 +1135,11 @@ body {
 
 @media (max-width: 1200px) {
   .embedded-workspace {
-    grid-template-columns: 184px minmax(0, 1fr);
+    padding-left: 196px;
+  }
+
+  .embedded-menu {
+    width: 184px;
   }
 
   .embedded-platform-header {
@@ -1131,13 +1159,14 @@ body {
   }
 
   .embedded-workspace {
-    grid-template-columns: 1fr;
     min-height: 0;
+    padding-left: 0;
   }
 
   .embedded-menu {
     position: static;
     display: grid;
+    width: auto;
     height: auto;
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -1177,6 +1206,14 @@ body {
 
   .embedded-account-row {
     grid-template-columns: 1fr;
+  }
+
+  .embedded-group-rate-page .embedded-group-rate-row {
+    grid-template-columns: 1fr;
+  }
+
+  .embedded-group-rate-page .embedded-group-rate-values {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .embedded-platform-controls .table-actions {

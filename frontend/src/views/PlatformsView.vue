@@ -558,7 +558,7 @@
         <el-form-item :label="form.provider_type === 'newapi' ? 'Access Token' : '管理 API Key'">
           <el-input
             v-model="form.api_key"
-            :placeholder="form.provider_type === 'newapi' ? '原始 access token，不带 Bearer' : '留空则不修改已有凭据'"
+            :placeholder="form.provider_type === 'newapi' ? 'Access Token，可带或不带 Bearer' : '留空则不修改已有凭据'"
             show-password
             type="password"
           />
@@ -1006,7 +1006,7 @@ function resetForm() {
 function onProviderTypeChange(value: string | number | boolean | undefined) {
   if (value === 'newapi') {
     form.auth_header_name = 'Authorization'
-    form.auth_header_prefix = ''
+    form.auth_header_prefix = 'Bearer'
     return
   }
   if (!form.auth_header_prefix) {
@@ -1145,8 +1145,8 @@ async function save() {
     const payload = { ...form }
     if (payload.provider_type !== 'newapi') {
       payload.site_strategy = 'generic'
-    } else {
-      payload.auth_header_prefix = ''
+    } else if (!payload.auth_header_prefix) {
+      payload.auth_header_prefix = 'Bearer'
     }
     if (!payload.api_key) {
       delete payload.api_key

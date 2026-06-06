@@ -230,7 +230,7 @@ def test_newapi_fetch_account_balance_reads_key_summaries(monkeypatch) -> None:
             if target.startswith("https://"):
                 target = target.split("https://newapi.example.com/", 1)[-1]
             if target == "api/token/":
-                assert self.headers.get("Authorization") == "token-123"
+                assert self.headers.get("Authorization") == "Bearer token-123"
                 assert self.headers.get("New-Api-User") == "123"
                 return httpx.Response(
                     200,
@@ -266,7 +266,7 @@ def test_newapi_fetch_account_balance_reads_key_summaries(monkeypatch) -> None:
                     request=httpx.Request("GET", f"{self.base_url}{path}"),
                 )
             if target.endswith("/api/account/123") or target == "api/account/123":
-                assert headers == {"Authorization": "token-123", "New-Api-User": "123"}
+                assert headers == {"Authorization": "Bearer token-123", "New-Api-User": "123"}
                 return httpx.Response(
                     200,
                     json={"balance": 12.5, "used_quota": 3.5, "quota": 20},
@@ -319,7 +319,8 @@ def test_newapi_management_headers_normalize_authorization_and_user_id() -> None
         )
     )
 
-    assert headers["Authorization"] == "sk-test-123"
+    assert headers["Authorization"] == "Bearer sk-test-123"
+    assert "X-Auth-Token" not in headers
     assert headers["New-Api-User"] == "456"
 
 
@@ -347,7 +348,7 @@ def test_yunjin_fetch_account_balance_sends_authorization_header(monkeypatch) ->
                     request=httpx.Request("GET", f"{self.base_url}{path}"),
                 )
             if path == "api/user/self":
-                assert headers == {"Authorization": "sk-test-123", "New-Api-User": "789"}
+                assert headers == {"Authorization": "Bearer sk-test-123", "New-Api-User": "789"}
                 return httpx.Response(
                     200,
                     json={"success": True, "data": {"id": 789, "quota": 1000000, "used_quota": 250000}},
@@ -401,7 +402,7 @@ def test_yunjin_fetch_group_rate_sends_management_headers(monkeypatch) -> None:
 
         async def get(self, path: str, headers: dict | None = None):
             if path == "api/pricing":
-                assert self.headers.get("Authorization") == "token-123"
+                assert self.headers.get("Authorization") == "Bearer token-123"
                 assert self.headers.get("New-Api-User") == "789"
                 assert headers is None
                 return httpx.Response(
@@ -475,7 +476,7 @@ def test_newapi_generic_account_balance_uses_management_headers(monkeypatch) -> 
                     request=httpx.Request("GET", f"{self.base_url}{path}"),
                 )
             if target == "api/account/123":
-                assert headers == {"Authorization": "token-123", "New-Api-User": "123"}
+                assert headers == {"Authorization": "Bearer token-123", "New-Api-User": "123"}
                 return httpx.Response(
                     200,
                     json={"balance": 12.5, "used_quota": 3.5, "quota": 20},

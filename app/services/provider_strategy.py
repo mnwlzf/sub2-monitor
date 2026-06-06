@@ -1149,9 +1149,13 @@ class NewApiStrategy(ProviderStrategy):
         if not token:
             return None
         token = token.strip()
-        if token.lower().startswith("bearer "):
-            token = token[7:].strip()
-        return token or None
+        if not token:
+            return None
+        prefix = (getattr(platform, "auth_header_prefix", None) or "").strip() or "Bearer"
+        parts = token.split(None, 1)
+        if len(parts) == 2 and parts[0].lower() == prefix.lower():
+            token = parts[1].strip()
+        return f"{prefix} {token}" if token else None
 
     @staticmethod
     def management_user_id(platform: RelayPlatform) -> str | None:

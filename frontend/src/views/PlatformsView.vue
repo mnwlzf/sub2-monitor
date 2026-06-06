@@ -102,7 +102,7 @@
                         </el-tag>
                       </div>
                       <div class="embedded-account-meta">
-                        <span><em>账号</em>{{ account.external_account_id }}</span>
+                        <span><em>账号</em>{{ accountDisplayLabel(account) }}</span>
                         <span v-if="accountLoginLabel(account)">
                           <em>登录</em>{{ accountLoginLabel(account) }}
                         </span>
@@ -417,7 +417,9 @@
           </div>
           <el-table :data="detail.account_monitors" size="small">
             <el-table-column prop="name" label="名称" min-width="150" />
-            <el-table-column prop="external_account_id" label="平台账号 ID" min-width="160" />
+            <el-table-column label="账号标识" min-width="160">
+              <template #default="{ row }">{{ accountDisplayLabel(row) }}</template>
+            </el-table-column>
             <el-table-column label="密钥 / 分组" min-width="220">
               <template #default="{ row }">
                 <div v-if="visibleAccountKeys(row).length > 0" class="account-key-summary-list detail">
@@ -596,7 +598,7 @@
           <el-input v-model="accountForm.name" />
         </el-form-item>
         <el-form-item label="平台账号 ID">
-          <el-input v-model="accountForm.external_account_id" />
+          <el-input v-model="accountForm.external_account_id" placeholder="可留空，New API 登录后自动获取用户 ID" />
         </el-form-item>
         <el-form-item label="登录账号">
           <el-input v-model="accountForm.username" autocomplete="username" />
@@ -1011,7 +1013,12 @@ async function saveAccount() {
     ElMessage.error('请填写账号名称')
     return
   }
-  if (!accountForm.external_account_id && !accountForm.username) {
+  const isNewApiAccount = detail.value.provider_type === 'newapi'
+  if (isNewApiAccount && !accountForm.username) {
+    ElMessage.error('请填写登录账号')
+    return
+  }
+  if (!isNewApiAccount && !accountForm.external_account_id && !accountForm.username) {
     ElMessage.error('请填写平台账号 ID 或登录账号')
     return
   }
@@ -1110,6 +1117,10 @@ function accountLoginLabel(account: AccountMonitor) {
     return ''
   }
   return account.username
+}
+
+function accountDisplayLabel(account: AccountMonitor) {
+  return account.username || account.external_account_id || '-'
 }
 
 function accountKeySummaryId(key: AccountKeySummary) {

@@ -488,10 +488,10 @@ class YunjinNewApiSiteStrategy(NewApiSiteStrategy):
             group_name,
             external_group_id,
         )
-        headers = provider.management_headers(platform)
+        headers = await provider.resolve_management_headers(platform)
         if "New-Api-User" not in headers:
             return GroupRateResult(
-                error="yunjin group rate monitoring requires a numeric root user id in account monitor"
+                error="yunjin group rate monitoring requires an enabled login account"
             )
         async with httpx.AsyncClient(
             base_url=self.site_url(platform),
@@ -1260,11 +1260,11 @@ class NewApiStrategy(ProviderStrategy):
         self,
         platform: RelayPlatform,
     ) -> list[DiscoveredChannelRateResult] | None:
-        headers = self.management_headers(platform)
+        headers = await self.resolve_management_headers(platform)
         if self.access_token_value(platform) is None:
             raise ValueError("newapi channel rate monitoring requires an access token")
         if "New-Api-User" not in headers:
-            raise ValueError("newapi channel rate monitoring requires a numeric root user id in account monitor")
+            raise ValueError("newapi channel rate monitoring requires an enabled login account")
         async with httpx.AsyncClient(
             base_url=self.site_url(platform),
             headers=headers,
@@ -1373,8 +1373,9 @@ class NewApiStrategy(ProviderStrategy):
         platform_id = getattr(platform, "id", None)
         base_url = platform.base_url.rstrip("/")
         url = f"{base_url}/{path.lstrip('/')}"
+        headers = await self.resolve_management_headers(platform)
         async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
-            response = await client.get(url, headers=self.management_headers(platform))
+            response = await client.get(url, headers=headers)
         try:
             latency_ms = int(response.elapsed.total_seconds() * 1000)
         except Exception:  # noqa: BLE001
@@ -1407,6 +1408,80 @@ class NewApiStrategy(ProviderStrategy):
         if user_id:
             headers["New-Api-User"] = user_id
         return headers
+
+    async def resolve_management_headers(self, platform: RelayPlatform) -> dict[str, str]:
+        headers = self.management_headers(platform)
+        if "New-Api-User" in headers:
+            return headers
+
+        login_headers = await self.login_management_headers(platform)
+        if login_headers is not None:
+            for key, value in login_headers.items():
+                if key == "Authorization" and key in headers:
+                    continue
+                headers[key] = value
+        return headers
+
+    async def login_management_headers(self, platform: RelayPlatform) -> dict[str, str] | None:
+        account = self.first_login_account(platform)
+        if account is None or not account.username or not account.password_encrypted:
+            return None
+
+        password = decrypt_secret(account.password_encrypted)
+        if not password:
+            return None
+
+        site_url = self.site_url(platform)
+        request_headers = {
+            "Accept": "application/json, text/plain, */*",
+            "Cache-Control": "no-store",
+            "Origin": YunjinNewApiSiteStrategy.site_origin(platform),
+            "Referer": f"{site_url}login",
+        }
+        async with httpx.AsyncClient(
+            base_url=site_url,
+            follow_redirects=True,
+            headers=request_headers,
+            timeout=self.timeout_seconds,
+        ) as client:
+            await client.get("login")
+            login_response, _ = await YunjinNewApiSiteStrategy.post_first_available(
+                client,
+                YunjinNewApiSiteStrategy.LOGIN_ENDPOINTS,
+                retry_statuses={404, 429},
+                json={
+                    "username": account.username,
+                    "password": password,
+                },
+            )
+            if login_response.status_code >= 400:
+                return None
+            login_payload = self.safe_json(login_response)
+            if self.response_failed(login_payload):
+                return None
+            user_id = YunjinNewApiSiteStrategy.extract_user_id(login_payload)
+            if user_id is None:
+                return None
+
+            headers: dict[str, str] = {"New-Api-User": str(user_id)}
+            access_token = YunjinNewApiSiteStrategy.extract_access_token(login_payload)
+            if access_token:
+                headers["Authorization"] = f"Bearer {access_token}"
+            cookie_header = YunjinNewApiSiteStrategy.session_cookie_header(login_response, client)
+            if cookie_header:
+                headers["Cookie"] = cookie_header
+            return headers
+
+    @staticmethod
+    def first_login_account(platform: RelayPlatform) -> PlatformAccountMonitor | None:
+        return next(
+            (
+                account
+                for account in platform.account_monitors
+                if account.enabled and account.username and account.password_encrypted
+            ),
+            None,
+        )
 
     @staticmethod
     def access_token_value(platform: RelayPlatform) -> str | None:
@@ -1469,7 +1544,12 @@ class NewApiStrategy(ProviderStrategy):
         self,
         platform: RelayPlatform,
     ) -> tuple[dict[str, str | None], ...]:
-        async with self.management_client(platform) as client:
+        headers = await self.resolve_management_headers(platform)
+        async with httpx.AsyncClient(
+            base_url=self.site_url(platform),
+            headers=headers,
+            timeout=self.timeout_seconds,
+        ) as client:
             return await self.fetch_token_summaries(client)
 
     async def fetch_token_summaries(

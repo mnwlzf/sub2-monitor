@@ -59,6 +59,10 @@
               <strong>{{ stats?.account_monitor_count ?? '-' }}</strong>
             </div>
             <div class="stat-card">
+              <span>今日总消耗</span>
+              <strong>{{ formatMoney(stats?.today_quota_used ?? null) }}</strong>
+            </div>
+            <div class="stat-card">
               <span>分组监控</span>
               <strong>{{ stats?.group_monitor_count ?? '-' }}</strong>
             </div>
@@ -93,6 +97,24 @@
               </header>
 
               <div class="embedded-platform-body">
+                <div class="embedded-platform-metrics">
+                  <div>
+                    <span>平台余额</span>
+                    <strong>{{ formatMoney(row.balance) }}</strong>
+                  </div>
+                  <div>
+                    <span>今日消耗</span>
+                    <strong>{{ formatMoney(row.today_quota_used) }}</strong>
+                  </div>
+                  <div>
+                    <span>累计消耗</span>
+                    <strong>{{ formatMoney(row.quota_used) }}</strong>
+                  </div>
+                  <div>
+                    <span>额度上限</span>
+                    <strong>{{ formatMoney(row.quota_limit) }}</strong>
+                  </div>
+                </div>
                 <div class="embedded-account-panel">
                   <div class="embedded-section-label">账号概览</div>
                   <div v-if="row.account_monitors.length > 0" class="embedded-account-list">
@@ -126,6 +148,10 @@
                         <div>
                           <span>余额</span>
                           <strong>{{ formatMoney(account.balance) }}</strong>
+                        </div>
+                        <div>
+                          <span>今日</span>
+                          <strong>{{ formatMoney(account.today_quota_used) }}</strong>
                         </div>
                         <div>
                           <span>消耗</span>

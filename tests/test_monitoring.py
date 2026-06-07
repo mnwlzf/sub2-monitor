@@ -7,12 +7,12 @@ from sqlalchemy.orm import sessionmaker
 
 import app.models.all  # noqa: F401
 import app.services.notification as notification_service
-from app.api.platforms import build_account_balance_points
+from app.api.platforms import attach_today_quota_usage, build_account_balance_points, dashboard
 from app.core.database import Base
 from app.models.monitor import PlatformAccountMonitor, PlatformGroupMonitor
 from app.models.notification import NotificationRecipient, NotificationSetting
 from app.models.platform import PlatformStatus, RelayPlatform
-from app.models.snapshot import DiscoveredChannelRateSnapshot, GroupRateSnapshot
+from app.models.snapshot import AccountBalanceSnapshot, DiscoveredChannelRateSnapshot, GroupRateSnapshot
 from app.services.monitoring import run_platform_balance_monitor, run_platform_rate_monitor
 from app.services.notification import send_mail
 from app.services.provider_strategy import (
@@ -138,6 +138,75 @@ def make_session():
     engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False})
     Base.metadata.create_all(bind=engine)
     return sessionmaker(bind=engine, autoflush=False, autocommit=False)()
+
+
+def test_today_quota_usage_is_attached_to_dashboard_platform_and_accounts() -> None:
+    db = make_session()
+    try:
+        platform = RelayPlatform(
+            name="Usage Today",
+            base_url="https://example.com",
+            provider_type="fake",
+            rate_cron="*/5 * * * *",
+            balance_cron="*/10 * * * *",
+            status=PlatformStatus.unknown,
+        )
+        db.add(platform)
+        db.flush()
+        account_a = PlatformAccountMonitor(
+            platform_id=platform.id,
+            name="A",
+            external_account_id="a",
+            enabled=True,
+        )
+        account_b = PlatformAccountMonitor(
+            platform_id=platform.id,
+            name="B",
+            external_account_id="b",
+            enabled=True,
+        )
+        db.add_all([account_a, account_b])
+        db.flush()
+        today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+        db.add_all(
+            [
+                AccountBalanceSnapshot(
+                    platform_id=platform.id,
+                    account_monitor_id=account_a.id,
+                    quota_used=10,
+                    created_at=today.replace(hour=9),
+                ),
+                AccountBalanceSnapshot(
+                    platform_id=platform.id,
+                    account_monitor_id=account_a.id,
+                    quota_used=13.5,
+                    created_at=today.replace(hour=10),
+                ),
+                AccountBalanceSnapshot(
+                    platform_id=platform.id,
+                    account_monitor_id=account_b.id,
+                    quota_used=5,
+                    created_at=today.replace(hour=9),
+                ),
+                AccountBalanceSnapshot(
+                    platform_id=platform.id,
+                    account_monitor_id=account_b.id,
+                    quota_used=8,
+                    created_at=today.replace(hour=10),
+                ),
+            ]
+        )
+        db.commit()
+        db.refresh(platform)
+
+        attach_today_quota_usage(db, [platform])
+
+        assert platform.today_quota_used == 6.5
+        assert account_a.today_quota_used == 3.5
+        assert account_b.today_quota_used == 3
+        assert dashboard(db).today_quota_used == 6.5
+    finally:
+        db.close()
 
 
 def test_rate_monitor_persists_configured_group_snapshot_without_catalog(monkeypatch) -> None:

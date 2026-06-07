@@ -115,6 +115,7 @@ class PlatformResponse(BaseModel):
     balance: float | None
     quota_used: float | None
     quota_limit: float | None
+    today_quota_used: float | None = None
     low_balance_threshold: float | None
     low_balance_notify_count: int
     latency_ms: int | None
@@ -173,6 +174,7 @@ class AccountMonitorResponse(BaseModel):
     balance: float | None
     quota_used: float | None
     quota_limit: float | None
+    today_quota_used: float | None = None
     key_summaries: list[AccountKeySummary] = Field(default_factory=list)
     last_error: str | None
     checked_at: datetime | None
@@ -324,3 +326,4 @@ class DashboardStats(BaseModel):
     account_monitor_count: int
     group_monitor_count: int
     average_latency_ms: int | None
+    today_quota_used: float | None = None

@@ -49,6 +49,7 @@ export interface RelayPlatform {
   balance: number | null
   quota_used: number | null
   quota_limit: number | null
+  today_quota_used: number | null
   low_balance_threshold: number | null
   low_balance_notify_count: number
   latency_ms: number | null
@@ -88,6 +89,7 @@ export interface DashboardStats {
   account_monitor_count: number
   group_monitor_count: number
   average_latency_ms: number | null
+  today_quota_used: number | null
 }
 
 export interface AccountKeySummary {
@@ -108,6 +110,7 @@ export interface AccountMonitor {
   balance: number | null
   quota_used: number | null
   quota_limit: number | null
+  today_quota_used: number | null
   key_summaries: AccountKeySummary[]
   last_error: string | null
   checked_at: string | null

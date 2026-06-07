@@ -83,7 +83,58 @@ def detail_or_404(db: Session, platform_id: int) -> RelayPlatform:
     platform = get_platform_detail(db, platform_id)
     if platform is None:
         raise HTTPException(status_code=404, detail="Platform not found")
+    attach_today_quota_usage(db, [platform])
     return platform
+
+
+def today_start() -> datetime:
+    now = utcnow()
+    return now.replace(hour=0, minute=0, second=0, microsecond=0)
+
+
+def quota_delta(snapshots: list[AccountBalanceSnapshot]) -> float | None:
+    values = [snapshot.quota_used for snapshot in snapshots if snapshot.quota_used is not None]
+    if len(values) < 2:
+        return 0.0 if values else None
+    return max(values[-1] - values[0], 0.0)
+
+
+def today_quota_usage_by_account(
+    db: Session,
+    platform_ids: list[int] | None = None,
+) -> dict[int, float]:
+    conditions = [AccountBalanceSnapshot.created_at >= today_start()]
+    if platform_ids is not None:
+        if not platform_ids:
+            return {}
+        conditions.append(AccountBalanceSnapshot.platform_id.in_(platform_ids))
+    snapshots = db.scalars(
+        select(AccountBalanceSnapshot)
+        .where(*conditions)
+        .order_by(AccountBalanceSnapshot.account_monitor_id.asc(), AccountBalanceSnapshot.created_at.asc())
+    ).all()
+    by_account: dict[int, list[AccountBalanceSnapshot]] = {}
+    for snapshot in snapshots:
+        by_account.setdefault(snapshot.account_monitor_id, []).append(snapshot)
+    return {
+        account_id: delta
+        for account_id, rows in by_account.items()
+        if (delta := quota_delta(rows)) is not None
+    }
+
+
+def attach_today_quota_usage(db: Session, platforms: list[RelayPlatform]) -> None:
+    usage_by_account = today_quota_usage_by_account(db, [platform.id for platform in platforms])
+    for platform in platforms:
+        platform_total = 0.0
+        has_value = False
+        for account in platform.account_monitors:
+            usage = usage_by_account.get(account.id)
+            setattr(account, "today_quota_used", usage)
+            if usage is not None:
+                platform_total += usage
+                has_value = True
+        setattr(platform, "today_quota_used", platform_total if has_value else None)
 
 
 @router.get("/dashboard", response_model=DashboardStats)
@@ -92,6 +143,7 @@ def dashboard(db: Session = Depends(get_db)) -> DashboardStats:
     account_monitor_count = len(db.scalars(select(PlatformAccountMonitor.id)).all())
     group_monitor_count = len(db.scalars(select(PlatformGroupMonitor.id)).all())
     latencies = [item.latency_ms for item in platforms if item.latency_ms is not None]
+    today_usages = today_quota_usage_by_account(db)
     return DashboardStats(
         total_platforms=len(platforms),
         enabled_platforms=sum(1 for item in platforms if item.enabled),
@@ -102,6 +154,7 @@ def dashboard(db: Session = Depends(get_db)) -> DashboardStats:
         account_monitor_count=account_monitor_count,
         group_monitor_count=group_monitor_count,
         average_latency_ms=round(sum(latencies) / len(latencies)) if latencies else None,
+        today_quota_used=sum(today_usages.values()) if today_usages else None,
     )
 
 
@@ -117,7 +170,15 @@ def site_strategy_options() -> list[dict[str, str]]:
 
 @router.get("/platforms", response_model=list[PlatformResponse])
 def list_platforms(db: Session = Depends(get_db)) -> list[RelayPlatform]:
-    return list(db.scalars(select(RelayPlatform).order_by(RelayPlatform.created_at.desc())).all())
+    platforms = list(
+        db.scalars(
+            select(RelayPlatform)
+            .options(selectinload(RelayPlatform.account_monitors))
+            .order_by(RelayPlatform.created_at.desc())
+        ).all()
+    )
+    attach_today_quota_usage(db, platforms)
+    return platforms
 
 
 @router.get("/platforms/{platform_id}", response_model=PlatformDetailResponse)

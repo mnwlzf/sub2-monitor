@@ -235,7 +235,6 @@ export interface NotificationSetting {
   smtp_use_ssl: boolean
   smtp_use_tls: boolean
   from_email: string | null
-  recipient_email: string | null
   last_error: string | null
   last_tested_at: string | null
   updated_at: string
@@ -250,7 +249,23 @@ export interface NotificationSettingPayload {
   smtp_use_ssl: boolean
   smtp_use_tls: boolean
   from_email: string | null
-  recipient_email: string | null
+}
+
+export interface NotificationRecipient {
+  id: number
+  name: string
+  email: string
+  enabled: boolean
+  last_error: string | null
+  last_tested_at: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface NotificationRecipientPayload {
+  name: string
+  email: string
+  enabled: boolean
 }
 
 export const http = axios.create({
@@ -368,8 +383,27 @@ export async function updateNotificationSetting(payload: NotificationSettingPayl
   return data
 }
 
-export async function testNotificationSetting() {
-  await http.post('/notification-settings/test')
+export async function fetchNotificationRecipients() {
+  const { data } = await http.get<NotificationRecipient[]>('/notification-recipients')
+  return data
+}
+
+export async function createNotificationRecipient(payload: NotificationRecipientPayload) {
+  const { data } = await http.post<NotificationRecipient>('/notification-recipients', payload)
+  return data
+}
+
+export async function updateNotificationRecipient(id: number, payload: Partial<NotificationRecipientPayload>) {
+  const { data } = await http.patch<NotificationRecipient>(`/notification-recipients/${id}`, payload)
+  return data
+}
+
+export async function deleteNotificationRecipient(id: number) {
+  await http.delete(`/notification-recipients/${id}`)
+}
+
+export async function testNotificationRecipient(id: number) {
+  await http.post(`/notification-recipients/${id}/test`)
 }
 
 export async function createAccountMonitor(platformId: number, payload: AccountMonitorPayload) {

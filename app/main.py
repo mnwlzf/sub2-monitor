@@ -13,6 +13,7 @@ from app.core.config import get_settings
 from app.core.database import SessionLocal, ensure_schema
 from app.models.all import (  # noqa: F401
     AuthSession,
+    NotificationRecipient,
     NotificationSetting,
     PlatformSnapshot,
     RelayPlatform,

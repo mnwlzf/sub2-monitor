@@ -300,6 +300,15 @@ body {
   font-size: 12px;
 }
 
+.notification-recipient-editor {
+  display: grid;
+  grid-template-columns: minmax(140px, 180px) minmax(220px, 1fr) auto auto;
+  align-items: center;
+  gap: 10px;
+  margin: 16px 0;
+  max-width: 760px;
+}
+
 .monitor-section-title {
   display: flex;
   align-items: center;

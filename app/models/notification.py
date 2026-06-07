@@ -19,7 +19,6 @@ class NotificationSetting(Base):
     smtp_use_ssl: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     smtp_use_tls: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     from_email: Mapped[str | None] = mapped_column(String(255))
-    recipient_email: Mapped[str | None] = mapped_column(String(255))
     last_error: Mapped[str | None] = mapped_column(Text)
     last_tested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
@@ -28,3 +27,16 @@ class NotificationSetting(Base):
     @property
     def has_smtp_password(self) -> bool:
         return bool(self.smtp_password_encrypted)
+
+
+class NotificationRecipient(Base):
+    __tablename__ = "notification_recipients"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
+    email: Mapped[str] = mapped_column(String(255), nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    last_error: Mapped[str | None] = mapped_column(Text)
+    last_tested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)

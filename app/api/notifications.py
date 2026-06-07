@@ -1,9 +1,17 @@
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.core.security import encrypt_secret
-from app.schemas.notification import NotificationSettingResponse, NotificationSettingUpdate
+from app.models.notification import NotificationRecipient
+from app.schemas.notification import (
+    NotificationRecipientCreate,
+    NotificationRecipientResponse,
+    NotificationRecipientUpdate,
+    NotificationSettingResponse,
+    NotificationSettingUpdate,
+)
 from app.services.notification import get_notification_setting, send_test_email
 
 router = APIRouter(tags=["notifications"])
@@ -29,10 +37,54 @@ def update_settings(payload: NotificationSettingUpdate, db: Session = Depends(ge
     return setting
 
 
-@router.post("/notification-settings/test")
-def test_settings(db: Session = Depends(get_db)) -> dict[str, bool]:
+@router.get("/notification-recipients", response_model=list[NotificationRecipientResponse])
+def list_recipients(db: Session = Depends(get_db)):
+    return list(db.scalars(select(NotificationRecipient).order_by(NotificationRecipient.created_at.asc())).all())
+
+
+@router.post("/notification-recipients", response_model=NotificationRecipientResponse, status_code=201)
+def create_recipient(payload: NotificationRecipientCreate, db: Session = Depends(get_db)):
+    recipient = NotificationRecipient(**payload.model_dump())
+    db.add(recipient)
+    db.commit()
+    db.refresh(recipient)
+    return recipient
+
+
+@router.patch("/notification-recipients/{recipient_id}", response_model=NotificationRecipientResponse)
+def update_recipient(
+    recipient_id: int,
+    payload: NotificationRecipientUpdate,
+    db: Session = Depends(get_db),
+):
+    recipient = db.get(NotificationRecipient, recipient_id)
+    if recipient is None:
+        raise HTTPException(status_code=404, detail="Recipient not found")
+    for field, value in payload.model_dump(exclude_unset=True).items():
+        setattr(recipient, field, value)
+    db.add(recipient)
+    db.commit()
+    db.refresh(recipient)
+    return recipient
+
+
+@router.delete("/notification-recipients/{recipient_id}")
+def delete_recipient(recipient_id: int, db: Session = Depends(get_db)) -> dict[str, bool]:
+    recipient = db.get(NotificationRecipient, recipient_id)
+    if recipient is None:
+        raise HTTPException(status_code=404, detail="Recipient not found")
+    db.delete(recipient)
+    db.commit()
+    return {"ok": True}
+
+
+@router.post("/notification-recipients/{recipient_id}/test")
+def test_recipient(recipient_id: int, db: Session = Depends(get_db)) -> dict[str, bool]:
+    recipient = db.get(NotificationRecipient, recipient_id)
+    if recipient is None:
+        raise HTTPException(status_code=404, detail="Recipient not found")
     try:
-        send_test_email(db)
+        send_test_email(db, recipient)
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     return {"ok": True}

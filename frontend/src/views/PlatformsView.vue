@@ -430,12 +430,11 @@
               <header class="embedded-platform-header">
                 <div class="embedded-platform-title">
                   <div>
-                    <strong>SMTP 通知配置</strong>
-                    <span>分组倍率发生变化时发送邮件给指定收件人</span>
+                    <strong>SMTP 发信配置</strong>
+                    <span>只配置发信服务器和发件人，收件人在下方单独管理</span>
                   </div>
                 </div>
                 <div class="embedded-platform-controls">
-                  <el-button :loading="testingNotification" @click="testNotification">发送测试邮件</el-button>
                   <el-button :loading="savingNotification" type="primary" @click="saveNotification">保存配置</el-button>
                 </div>
               </header>
@@ -470,9 +469,6 @@
                 <el-form-item label="发件人">
                   <el-input v-model="notificationForm.from_email" placeholder="bot@example.com" />
                 </el-form-item>
-                <el-form-item label="收件人">
-                  <el-input v-model="notificationForm.recipient_email" placeholder="ops@example.com" />
-                </el-form-item>
               </el-form>
 
               <div class="notification-status">
@@ -484,6 +480,44 @@
               <div v-if="notificationSetting?.last_error" class="embedded-account-error">
                 {{ notificationSetting.last_error }}
               </div>
+            </article>
+
+            <article class="embedded-platform-card notification-card">
+              <header class="embedded-platform-header">
+                <div class="embedded-platform-title">
+                  <div>
+                    <strong>收件人</strong>
+                    <span>倍率变化通知会发送给所有启用的收件人</span>
+                  </div>
+                </div>
+              </header>
+
+              <div class="notification-recipient-editor">
+                <el-input v-model="recipientForm.name" placeholder="名称，例如 运维" />
+                <el-input v-model="recipientForm.email" placeholder="邮箱，例如 ops@example.com" />
+                <el-switch v-model="recipientForm.enabled" />
+                <el-button :icon="Plus" type="primary" @click="saveRecipient">添加</el-button>
+              </div>
+
+              <el-table :data="notificationRecipients" size="small">
+                <el-table-column prop="name" label="名称" min-width="140" />
+                <el-table-column prop="email" label="邮箱" min-width="220" />
+                <el-table-column label="启用" width="90">
+                  <template #default="{ row }">
+                    <el-switch :model-value="row.enabled" @change="toggleRecipient(row)" />
+                  </template>
+                </el-table-column>
+                <el-table-column label="最近测试" width="170">
+                  <template #default="{ row }">{{ formatTime(row.last_tested_at) }}</template>
+                </el-table-column>
+                <el-table-column prop="last_error" label="错误" min-width="180" show-overflow-tooltip />
+                <el-table-column label="操作" width="150">
+                  <template #default="{ row }">
+                    <el-button :loading="testingNotification" link @click="testRecipient(row)">测试</el-button>
+                    <el-button link type="danger" @click="removeRecipient(row)">删除</el-button>
+                  </template>
+                </el-table-column>
+              </el-table>
             </article>
           </section>
         </div>
@@ -862,13 +896,16 @@ import RateLineChart from '@/components/RateLineChart.vue'
 import {
   createAccountMonitor,
   createGroupMonitor,
+  createNotificationRecipient,
   createPlatform,
   deleteAccountMonitor,
   deleteGroupMonitor,
+  deleteNotificationRecipient,
   deletePlatform,
   fetchBalanceHistory,
   fetchDashboard,
   fetchNotificationSetting,
+  fetchNotificationRecipients,
   fetchPlatform,
   fetchPlatforms,
   fetchProviders,
@@ -877,8 +914,9 @@ import {
   runPlatformBalanceMonitor,
   runPlatformMonitor,
   runPlatformRateMonitor,
-  testNotificationSetting,
+  testNotificationRecipient,
   updateAccountMonitor,
+  updateNotificationRecipient,
   updateNotificationSetting,
   updatePlatform,
   type AccountKeySummary,
@@ -890,6 +928,8 @@ import {
   type DiscoveredGroupRate,
   type GroupRateHistorySeries,
   type GroupMonitorPayload,
+  type NotificationRecipient,
+  type NotificationRecipientPayload,
   type NotificationSetting,
   type NotificationSettingPayload,
   type PlatformDetail,
@@ -908,6 +948,7 @@ const detail = ref<PlatformDetail | null>(null)
 const platformBalanceHistory = ref<Record<number, AccountBalanceHistorySeries[]>>({})
 const platformRateHistory = ref<Record<number, GroupRateHistorySeries[]>>({})
 const notificationSetting = ref<NotificationSetting | null>(null)
+const notificationRecipients = ref<NotificationRecipient[]>([])
 const loading = ref(false)
 const saving = ref(false)
 const monitoring = ref(false)
@@ -1019,7 +1060,12 @@ const notificationForm = reactive<NotificationSettingPayload>({
   smtp_use_ssl: false,
   smtp_use_tls: true,
   from_email: null,
-  recipient_email: null,
+})
+
+const recipientForm = reactive<NotificationRecipientPayload>({
+  name: '',
+  email: '',
+  enabled: true,
 })
 
 const rules: FormRules = {
@@ -1135,12 +1181,13 @@ async function openDetail(row: RelayPlatform) {
 async function load() {
   loading.value = true
   try {
-    const [providerRows, siteStrategyRows, dashboard, rows, notification] = await Promise.all([
+    const [providerRows, siteStrategyRows, dashboard, rows, notification, recipients] = await Promise.all([
       fetchProviders(),
       fetchSiteStrategies(),
       fetchDashboard(),
       fetchPlatforms(),
       fetchNotificationSetting(),
+      fetchNotificationRecipients(),
     ])
     const details = await Promise.all(rows.map((row) => fetchPlatform(row.id)))
     providers.value = providerRows
@@ -1148,6 +1195,7 @@ async function load() {
     stats.value = dashboard
     platforms.value = details
     notificationSetting.value = notification
+    notificationRecipients.value = recipients
     syncNotificationForm(notification)
     await loadEmbeddedHistories(details.map((row) => row.id))
   } finally {
@@ -1165,7 +1213,6 @@ function syncNotificationForm(setting: NotificationSetting) {
     smtp_use_ssl: setting.smtp_use_ssl,
     smtp_use_tls: setting.smtp_use_tls,
     from_email: setting.from_email,
-    recipient_email: setting.recipient_email,
   })
 }
 
@@ -1185,15 +1232,46 @@ async function saveNotification() {
   }
 }
 
-async function testNotification() {
+function resetRecipientForm() {
+  Object.assign(recipientForm, { name: '', email: '', enabled: true })
+}
+
+async function saveRecipient() {
+  if (!recipientForm.name || !recipientForm.email) {
+    ElMessage.error('请填写收件人名称和邮箱')
+    return
+  }
+  await createNotificationRecipient(recipientForm)
+  resetRecipientForm()
+  notificationRecipients.value = await fetchNotificationRecipients()
+  ElMessage.success('收件人已添加')
+}
+
+async function toggleRecipient(row: NotificationRecipient) {
+  await updateNotificationRecipient(row.id, { enabled: !row.enabled })
+  notificationRecipients.value = await fetchNotificationRecipients()
+}
+
+async function removeRecipient(row: NotificationRecipient) {
+  await ElMessageBox.confirm(`确认删除收件人「${row.name}」？`, '删除确认', { type: 'warning' })
+  await deleteNotificationRecipient(row.id)
+  notificationRecipients.value = await fetchNotificationRecipients()
+  ElMessage.success('已删除收件人')
+}
+
+async function testRecipient(row: NotificationRecipient) {
   await saveNotification()
   testingNotification.value = true
   try {
-    await testNotificationSetting()
-    ElMessage.success('测试邮件已发送')
-    const latest = await fetchNotificationSetting()
-    notificationSetting.value = latest
-    syncNotificationForm(latest)
+    await testNotificationRecipient(row.id)
+    ElMessage.success(`测试邮件已发送给 ${row.email}`)
+    const [latestSetting, latestRecipients] = await Promise.all([
+      fetchNotificationSetting(),
+      fetchNotificationRecipients(),
+    ])
+    notificationSetting.value = latestSetting
+    notificationRecipients.value = latestRecipients
+    syncNotificationForm(latestSetting)
   } finally {
     testingNotification.value = false
   }

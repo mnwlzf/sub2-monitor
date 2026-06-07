@@ -10,7 +10,7 @@ import app.services.notification as notification_service
 from app.api.platforms import build_account_balance_points
 from app.core.database import Base
 from app.models.monitor import PlatformAccountMonitor, PlatformGroupMonitor
-from app.models.notification import NotificationSetting
+from app.models.notification import NotificationRecipient, NotificationSetting
 from app.models.platform import PlatformStatus, RelayPlatform
 from app.models.snapshot import DiscoveredChannelRateSnapshot, GroupRateSnapshot
 from app.services.monitoring import run_platform_balance_monitor, run_platform_rate_monitor
@@ -169,10 +169,10 @@ def test_rate_monitor_persists_configured_group_snapshot_without_catalog(monkeyp
 
 def test_rate_monitor_sends_email_when_configured_group_rate_changes(monkeypatch) -> None:
     monkeypatch.setitem(provider_registry._strategies, "fake", FakeProvider())
-    sent_messages: list[tuple[str, str]] = []
+    sent_messages: list[tuple[list[str], str, str]] = []
 
-    def fake_send_mail(setting, subject: str, body: str) -> None:
-        sent_messages.append((subject, body))
+    def fake_send_mail(setting, recipients, subject: str, body: str) -> None:
+        sent_messages.append(([recipient.email for recipient in recipients], subject, body))
 
     monkeypatch.setattr(notification_service, "send_mail", fake_send_mail)
     db = make_session()
@@ -195,7 +195,13 @@ def test_rate_monitor_sends_email_when_configured_group_rate_changes(monkeypatch
                 smtp_port=587,
                 smtp_username="bot@example.com",
                 from_email="bot@example.com",
-                recipient_email="ops@example.com",
+            )
+        )
+        db.add(
+            NotificationRecipient(
+                name="Ops",
+                email="ops@example.com",
+                enabled=True,
             )
         )
         group = PlatformGroupMonitor(
@@ -211,7 +217,8 @@ def test_rate_monitor_sends_email_when_configured_group_rate_changes(monkeypatch
         asyncio.run(run_platform_rate_monitor(db, platform.id))
 
         assert len(sent_messages) == 1
-        subject, body = sent_messages[0]
+        recipients, subject, body = sent_messages[0]
+        assert recipients == ["ops@example.com"]
         assert "Fake" in subject
         assert "codex" in body
         assert "0.1 -> 0.25" in body

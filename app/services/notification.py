@@ -2,10 +2,11 @@ from dataclasses import dataclass
 from email.message import EmailMessage
 import smtplib
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.security import decrypt_secret, utcnow
-from app.models.notification import NotificationSetting
+from app.models.notification import NotificationRecipient, NotificationSetting
 from app.models.platform import RelayPlatform
 
 
@@ -34,18 +35,25 @@ def notification_ready(setting: NotificationSetting) -> bool:
         and setting.smtp_host
         and setting.smtp_port
         and setting.from_email
-        and setting.recipient_email
     )
 
 
-def send_mail(setting: NotificationSetting, subject: str, body: str) -> None:
+def send_mail(
+    setting: NotificationSetting,
+    recipients: list[NotificationRecipient],
+    subject: str,
+    body: str,
+) -> None:
     if not notification_ready(setting):
         raise ValueError("邮件通知未启用或 SMTP 配置不完整")
+    recipient_emails = [recipient.email for recipient in recipients if recipient.enabled]
+    if not recipient_emails:
+        raise ValueError("没有启用的邮件收件人")
 
     message = EmailMessage()
     message["Subject"] = subject
     message["From"] = setting.from_email or ""
-    message["To"] = setting.recipient_email or ""
+    message["To"] = ", ".join(recipient_emails)
     message.set_content(body)
 
     password = decrypt_secret(setting.smtp_password_encrypted)
@@ -58,21 +66,37 @@ def send_mail(setting: NotificationSetting, subject: str, body: str) -> None:
         smtp.send_message(message)
 
 
-def send_test_email(db: Session) -> None:
+def enabled_recipients(db: Session) -> list[NotificationRecipient]:
+    return list(
+        db.scalars(
+            select(NotificationRecipient)
+            .where(NotificationRecipient.enabled.is_(True))
+            .order_by(NotificationRecipient.created_at.asc())
+        ).all()
+    )
+
+
+def send_test_email(db: Session, recipient: NotificationRecipient) -> None:
     setting = get_notification_setting(db)
     try:
         send_mail(
             setting,
+            [recipient],
             "Sub2 Monitor 测试邮件",
             "这是一封 Sub2 Monitor 邮件通知测试。收到此邮件说明 SMTP 配置可用。",
         )
         setting.last_error = None
+        recipient.last_error = None
     except Exception as exc:  # noqa: BLE001
         setting.last_error = str(exc)
+        recipient.last_error = str(exc)
         raise
     finally:
-        setting.last_tested_at = utcnow()
+        tested_at = utcnow()
+        setting.last_tested_at = tested_at
+        recipient.last_tested_at = tested_at
         db.add(setting)
+        db.add(recipient)
         db.commit()
 
 
@@ -85,6 +109,9 @@ def notify_group_rate_changes(
         return
     setting = get_notification_setting(db)
     if not notification_ready(setting):
+        return
+    recipients = enabled_recipients(db)
+    if not recipients:
         return
 
     lines = [
@@ -103,14 +130,21 @@ def notify_group_rate_changes(
     try:
         send_mail(
             setting,
+            recipients,
             f"Sub2 Monitor 分组倍率变化 - {platform.name}",
             "\n".join(lines),
         )
         setting.last_error = None
+        for recipient in recipients:
+            recipient.last_error = None
     except Exception as exc:  # noqa: BLE001
         setting.last_error = str(exc)
+        for recipient in recipients:
+            recipient.last_error = str(exc)
     finally:
         db.add(setting)
+        for recipient in recipients:
+            db.add(recipient)
 
 
 def format_rate(value: float) -> str:

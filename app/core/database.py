@@ -113,3 +113,22 @@ def ensure_schema() -> None:
             for column, statement in notification_column_sql.items():
                 if column not in notification_columns:
                     conn.execute(text(statement))
+
+        if "notification_recipients" in table_names and "recipient_email" in notification_columns:
+            with engine.begin() as conn:
+                conn.execute(
+                    text(
+                        """
+                        INSERT INTO notification_recipients (name, email, enabled, created_at, updated_at)
+                        SELECT '默认收件人', recipient_email, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+                        FROM notification_settings
+                        WHERE recipient_email IS NOT NULL
+                          AND recipient_email != ''
+                          AND NOT EXISTS (
+                              SELECT 1
+                              FROM notification_recipients
+                              WHERE notification_recipients.email = notification_settings.recipient_email
+                          )
+                        """
+                    )
+                )

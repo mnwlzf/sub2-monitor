@@ -470,7 +470,7 @@
                 <div class="notification-switch-item">
                   <div>
                     <strong>启用通知</strong>
-                    <span>倍率变化时向启用的收件人发送邮件</span>
+                    <span>邮件通知总开关，关闭后所有功能项都不会发送邮件</span>
                   </div>
                   <el-switch v-model="notificationForm.enabled" />
                 </div>
@@ -487,6 +487,27 @@
                     <span>587 端口通常使用 STARTTLS，不能和 SSL 同时启用</span>
                   </div>
                   <el-switch v-model="notificationForm.smtp_use_tls" :disabled="notificationForm.smtp_use_ssl" />
+                </div>
+              </div>
+
+              <div class="notification-feature-list">
+                <div class="notification-feature-heading">
+                  <strong>通知功能项</strong>
+                  <span>单独控制哪些业务事件可以发送邮件</span>
+                </div>
+                <div class="notification-feature-item">
+                  <div>
+                    <strong>倍率变化通知</strong>
+                    <span>平台分组倍率发生变化时发送邮件</span>
+                  </div>
+                  <el-switch v-model="notificationForm.notify_group_rate_changes" :disabled="!notificationForm.enabled" />
+                </div>
+                <div class="notification-feature-item">
+                  <div>
+                    <strong>额度不足提醒</strong>
+                    <span>预留功能项，后续接入余额阈值后生效</span>
+                  </div>
+                  <el-switch v-model="notificationForm.notify_low_balance" :disabled="!notificationForm.enabled" />
                 </div>
               </div>
 
@@ -630,6 +651,17 @@
             :step="1"
             class="full-width"
           />
+        </el-form-item>
+        <el-form-item label="额度提醒阈值">
+          <el-input-number
+            v-model="form.low_balance_threshold"
+            :min="0"
+            :precision="6"
+            :step="1"
+            class="full-width"
+            placeholder="留空则不提醒"
+          />
+          <div class="form-help">平台汇总余额低于该值时触发邮件提醒，最多连续发送 3 次。</div>
         </el-form-item>
         <el-form-item label="启用">
           <el-switch v-model="form.enabled" />
@@ -1051,6 +1083,7 @@ const form = reactive<PlatformPayload>({
   balance: null,
   quota_used: null,
   quota_limit: null,
+  low_balance_threshold: null,
 })
 
 const accountForm = reactive<AccountMonitorPayload>({
@@ -1077,6 +1110,8 @@ const notificationForm = reactive<NotificationSettingPayload>({
   smtp_use_tls: true,
   from_email: null,
   from_name: null,
+  notify_group_rate_changes: true,
+  notify_low_balance: false,
 })
 
 const recipientForm = reactive<NotificationRecipientPayload>({
@@ -1115,6 +1150,7 @@ function resetForm() {
     balance: null,
     quota_used: null,
     quota_limit: null,
+    low_balance_threshold: null,
   })
 }
 
@@ -1186,6 +1222,7 @@ function openEdit(row: RelayPlatform) {
     balance: row.balance,
     quota_used: row.quota_used,
     quota_limit: row.quota_limit,
+    low_balance_threshold: row.low_balance_threshold,
   })
   dialogVisible.value = true
 }
@@ -1231,6 +1268,8 @@ function syncNotificationForm(setting: NotificationSetting) {
     smtp_use_tls: setting.smtp_use_tls,
     from_email: setting.from_email,
     from_name: setting.from_name,
+    notify_group_rate_changes: setting.notify_group_rate_changes,
+    notify_low_balance: setting.notify_low_balance,
   })
 }
 

@@ -20,6 +20,9 @@ class GroupRateChange:
     rpm_limit: int | None
 
 
+LOW_BALANCE_MAX_CONSECUTIVE_NOTIFICATIONS = 3
+
+
 def get_notification_setting(db: Session) -> NotificationSetting:
     setting = db.get(NotificationSetting, 1)
     if setting is not None:
@@ -120,6 +123,8 @@ def notify_group_rate_changes(
     if not changes:
         return
     setting = get_notification_setting(db)
+    if not setting.notify_group_rate_changes:
+        return
     config_errors = notification_config_errors(setting)
     if config_errors:
         setting.last_error = "邮件通知配置不完整：" + "；".join(config_errors)
@@ -160,6 +165,70 @@ def notify_group_rate_changes(
             recipient.last_error = str(exc)
     finally:
         db.add(setting)
+        for recipient in recipients:
+            db.add(recipient)
+
+
+def notify_low_balance(
+    db: Session,
+    platform: RelayPlatform,
+) -> None:
+    if platform.balance is None or platform.low_balance_threshold is None:
+        return
+
+    if platform.balance >= platform.low_balance_threshold:
+        if platform.low_balance_notify_count:
+            platform.low_balance_notify_count = 0
+            db.add(platform)
+        return
+
+    if platform.low_balance_notify_count >= LOW_BALANCE_MAX_CONSECUTIVE_NOTIFICATIONS:
+        return
+
+    setting = get_notification_setting(db)
+    if not setting.notify_low_balance:
+        return
+
+    config_errors = notification_config_errors(setting)
+    if config_errors:
+        setting.last_error = "邮件通知配置不完整：" + "；".join(config_errors)
+        db.add(setting)
+        return
+
+    recipients = enabled_recipients(db)
+    if not recipients:
+        setting.last_error = "邮件通知配置不完整：没有启用的邮件收件人"
+        db.add(setting)
+        return
+
+    body = "\n".join(
+        [
+            f"平台：{platform.name}",
+            f"地址：{platform.base_url}",
+            f"当前余额：{format_rate(platform.balance)}",
+            f"提醒阈值：{format_rate(platform.low_balance_threshold)}",
+            f"连续提醒次数：{platform.low_balance_notify_count + 1}/{LOW_BALANCE_MAX_CONSECUTIVE_NOTIFICATIONS}",
+        ]
+    )
+
+    try:
+        send_mail(
+            setting,
+            recipients,
+            f"Sub2 Monitor 额度不足提醒 - {platform.name}",
+            body,
+        )
+        setting.last_error = None
+        platform.low_balance_notify_count += 1
+        for recipient in recipients:
+            recipient.last_error = None
+    except Exception as exc:  # noqa: BLE001
+        setting.last_error = str(exc)
+        for recipient in recipients:
+            recipient.last_error = str(exc)
+    finally:
+        db.add(setting)
+        db.add(platform)
         for recipient in recipients:
             db.add(recipient)
 

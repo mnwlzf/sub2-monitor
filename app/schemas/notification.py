@@ -15,6 +15,8 @@ class NotificationSettingResponse(BaseModel):
     smtp_use_tls: bool
     from_email: str | None
     from_name: str | None
+    notify_group_rate_changes: bool
+    notify_low_balance: bool
     last_error: str | None
     last_tested_at: datetime | None
     updated_at: datetime
@@ -30,6 +32,8 @@ class NotificationSettingUpdate(BaseModel):
     smtp_use_tls: bool = True
     from_email: str | None = Field(default=None, max_length=255)
     from_name: str | None = Field(default=None, max_length=255)
+    notify_group_rate_changes: bool = True
+    notify_low_balance: bool = False
 
     @field_validator("from_email")
     @classmethod

@@ -49,6 +49,8 @@ export interface RelayPlatform {
   balance: number | null
   quota_used: number | null
   quota_limit: number | null
+  low_balance_threshold: number | null
+  low_balance_notify_count: number
   latency_ms: number | null
   last_error: string | null
   checked_at: string | null
@@ -73,6 +75,7 @@ export interface PlatformPayload {
   balance: number | null
   quota_used: number | null
   quota_limit: number | null
+  low_balance_threshold: number | null
 }
 
 export interface DashboardStats {
@@ -236,6 +239,8 @@ export interface NotificationSetting {
   smtp_use_tls: boolean
   from_email: string | null
   from_name: string | null
+  notify_group_rate_changes: boolean
+  notify_low_balance: boolean
   last_error: string | null
   last_tested_at: string | null
   updated_at: string
@@ -251,6 +256,8 @@ export interface NotificationSettingPayload {
   smtp_use_tls: boolean
   from_email: string | null
   from_name: string | null
+  notify_group_rate_changes: boolean
+  notify_low_balance: boolean
 }
 
 export interface NotificationRecipient {

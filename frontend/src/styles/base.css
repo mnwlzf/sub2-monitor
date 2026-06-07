@@ -288,6 +288,7 @@ body {
 
 .notification-card > .notification-form,
 .notification-card > .notification-switches,
+.notification-card > .notification-feature-list,
 .notification-card > .notification-status,
 .notification-card > .notification-recipient-editor {
   margin-right: 24px;
@@ -346,6 +347,53 @@ body {
   margin-top: 3px;
   color: #64748b;
   font-size: 12px;
+}
+
+.notification-feature-list {
+  display: grid;
+  gap: 12px;
+  margin-top: 22px;
+  padding: 16px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background: #f8fafc;
+}
+
+.notification-feature-heading strong,
+.notification-feature-heading span,
+.notification-feature-item strong,
+.notification-feature-item span {
+  display: block;
+}
+
+.notification-feature-heading strong {
+  color: #0f172a;
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.notification-feature-heading span,
+.notification-feature-item span {
+  margin-top: 3px;
+  color: #64748b;
+  font-size: 12px;
+}
+
+.notification-feature-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 14px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.notification-feature-item strong {
+  color: #111827;
+  font-size: 14px;
+  font-weight: 600;
 }
 
 .notification-status {

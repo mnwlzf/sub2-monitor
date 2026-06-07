@@ -21,7 +21,7 @@ from app.models.snapshot import (
     DiscoveredGroupRateSnapshot,
     GroupRateSnapshot,
 )
-from app.services.notification import GroupRateChange, notify_group_rate_changes
+from app.services.notification import GroupRateChange, notify_group_rate_changes, notify_low_balance
 from app.services.provider_strategy import (
     DiscoveredChannelRateResult,
     DiscoveredGroupRateResult,
@@ -148,6 +148,7 @@ async def run_platform_balance_monitor(db: Session, platform_id: int) -> RelayPl
     platform.balance_last_run_at = now
     platform.balance_next_run_at = croniter(platform.balance_cron, now).get_next(type(now))
     update_platform_status(platform, errors)
+    notify_low_balance(db, platform)
     db.add(platform)
     db.commit()
     db.refresh(platform)

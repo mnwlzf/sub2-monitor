@@ -37,6 +37,7 @@ class PlatformBase(BaseModel):
     balance: float | None = None
     quota_used: float | None = Field(default=None, ge=0)
     quota_limit: float | None = Field(default=None, ge=0)
+    low_balance_threshold: float | None = Field(default=None, ge=0)
 
     @field_validator("balance_cron", "rate_cron")
     @classmethod
@@ -70,6 +71,7 @@ class PlatformUpdate(BaseModel):
     balance: float | None = None
     quota_used: float | None = Field(default=None, ge=0)
     quota_limit: float | None = Field(default=None, ge=0)
+    low_balance_threshold: float | None = Field(default=None, ge=0)
     status: PlatformStatus | None = None
     latency_ms: int | None = Field(default=None, ge=0)
     last_error: str | None = None
@@ -113,6 +115,8 @@ class PlatformResponse(BaseModel):
     balance: float | None
     quota_used: float | None
     quota_limit: float | None
+    low_balance_threshold: float | None
+    low_balance_notify_count: int
     latency_ms: int | None
     last_error: str | None
     checked_at: datetime | None

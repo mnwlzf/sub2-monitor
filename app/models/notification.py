@@ -20,6 +20,8 @@ class NotificationSetting(Base):
     smtp_use_tls: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     from_email: Mapped[str | None] = mapped_column(String(255))
     from_name: Mapped[str | None] = mapped_column(String(255))
+    notify_group_rate_changes: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    notify_low_balance: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     last_error: Mapped[str | None] = mapped_column(Text)
     last_tested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)

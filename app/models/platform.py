@@ -44,6 +44,8 @@ class RelayPlatform(Base):
     balance: Mapped[float | None] = mapped_column(Float)
     quota_used: Mapped[float | None] = mapped_column(Float)
     quota_limit: Mapped[float | None] = mapped_column(Float)
+    low_balance_threshold: Mapped[float | None] = mapped_column(Float)
+    low_balance_notify_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     latency_ms: Mapped[int | None] = mapped_column(Integer)
     last_error: Mapped[str | None] = mapped_column(Text)
     checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

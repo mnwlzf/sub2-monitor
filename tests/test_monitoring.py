@@ -64,6 +64,18 @@ class FakeBalanceProvider:
         return GroupRateResult()
 
 
+class MutableBalanceProvider(FakeBalanceProvider):
+    def __init__(self, balance: float) -> None:
+        self.balance = balance
+
+    async def fetch_account_balance(
+        self,
+        platform: RelayPlatform,
+        account: PlatformAccountMonitor,
+    ) -> AccountBalanceResult:
+        return AccountBalanceResult(balance=self.balance)
+
+
 class FakeCatalogProvider:
     async def fetch_account_balance(
         self,
@@ -227,6 +239,58 @@ def test_rate_monitor_sends_email_when_configured_group_rate_changes(monkeypatch
         db.close()
 
 
+def test_rate_monitor_skips_email_when_group_rate_notification_disabled(monkeypatch) -> None:
+    monkeypatch.setitem(provider_registry._strategies, "fake", FakeProvider())
+    sent_messages: list[tuple[list[str], str, str]] = []
+
+    def fake_send_mail(setting, recipients, subject: str, body: str) -> None:
+        sent_messages.append(([recipient.email for recipient in recipients], subject, body))
+
+    monkeypatch.setattr(notification_service, "send_mail", fake_send_mail)
+    db = make_session()
+    try:
+        platform = RelayPlatform(
+            name="Fake",
+            base_url="https://example.com",
+            provider_type="fake",
+            rate_cron="*/5 * * * *",
+            balance_cron="*/10 * * * *",
+            status=PlatformStatus.unknown,
+        )
+        db.add(platform)
+        db.flush()
+        db.add(
+            NotificationSetting(
+                id=1,
+                enabled=True,
+                smtp_host="smtp.example.com",
+                smtp_port=587,
+                smtp_username="bot@example.com",
+                from_email="bot@example.com",
+                notify_group_rate_changes=False,
+            )
+        )
+        db.add(NotificationRecipient(name="Ops", email="ops@example.com", enabled=True))
+        group = PlatformGroupMonitor(
+            platform_id=platform.id,
+            name="codex",
+            external_group_id="codex",
+            enabled=True,
+            rate_multiplier=0.1,
+        )
+        db.add(group)
+        db.commit()
+
+        asyncio.run(run_platform_rate_monitor(db, platform.id))
+
+        assert sent_messages == []
+        setting = db.get(NotificationSetting, 1)
+        assert setting is not None
+        assert setting.last_error is None
+    finally:
+        db.close()
+
+
 def test_notification_error_lists_missing_smtp_fields() -> None:
     setting = NotificationSetting(enabled=False, smtp_port=587)
     recipient = NotificationRecipient(name="Ops", email="ops@example.com", enabled=True)
@@ -241,6 +305,122 @@ def test_notification_error_lists_missing_smtp_fields() -> None:
     assert "未启用邮件通知" in message
     assert "未配置 SMTP 主机" in message
     assert "未配置发件人邮箱" in message
+
+
+def test_balance_monitor_sends_low_balance_email_at_most_three_times(monkeypatch) -> None:
+    provider = MutableBalanceProvider(balance=4.5)
+    monkeypatch.setitem(provider_registry._strategies, "mutable-balance", provider)
+    sent_messages: list[tuple[list[str], str, str]] = []
+
+    def fake_send_mail(setting, recipients, subject: str, body: str) -> None:
+        sent_messages.append(([recipient.email for recipient in recipients], subject, body))
+
+    monkeypatch.setattr(notification_service, "send_mail", fake_send_mail)
+    db = make_session()
+    try:
+        platform = RelayPlatform(
+            name="Balance Alert",
+            base_url="https://example.com",
+            provider_type="mutable-balance",
+            rate_cron="*/5 * * * *",
+            balance_cron="*/10 * * * *",
+            status=PlatformStatus.unknown,
+            low_balance_threshold=5.0,
+        )
+        db.add(platform)
+        db.flush()
+        db.add(
+            NotificationSetting(
+                id=1,
+                enabled=True,
+                smtp_host="smtp.example.com",
+                smtp_port=587,
+                smtp_username="bot@example.com",
+                from_email="bot@example.com",
+                notify_low_balance=True,
+            )
+        )
+        db.add(NotificationRecipient(name="Ops", email="ops@example.com", enabled=True))
+        db.add(
+            PlatformAccountMonitor(
+                platform_id=platform.id,
+                name="main",
+                external_account_id="me",
+                enabled=True,
+            )
+        )
+        db.commit()
+
+        for _ in range(4):
+            asyncio.run(run_platform_balance_monitor(db, platform.id))
+
+        assert len(sent_messages) == 3
+        assert all(recipients == ["ops@example.com"] for recipients, _, _ in sent_messages)
+        assert all("额度不足提醒" in subject for _, subject, _ in sent_messages)
+        assert "当前余额：4.5" in sent_messages[0][2]
+        refreshed = db.get(RelayPlatform, platform.id)
+        assert refreshed is not None
+        assert refreshed.low_balance_notify_count == 3
+    finally:
+        db.close()
+
+
+def test_balance_monitor_resets_low_balance_notification_count_after_recovery(monkeypatch) -> None:
+    provider = MutableBalanceProvider(balance=4.5)
+    monkeypatch.setitem(provider_registry._strategies, "mutable-balance", provider)
+    sent_messages: list[tuple[list[str], str, str]] = []
+
+    def fake_send_mail(setting, recipients, subject: str, body: str) -> None:
+        sent_messages.append(([recipient.email for recipient in recipients], subject, body))
+
+    monkeypatch.setattr(notification_service, "send_mail", fake_send_mail)
+    db = make_session()
+    try:
+        platform = RelayPlatform(
+            name="Balance Recovery",
+            base_url="https://example.com",
+            provider_type="mutable-balance",
+            rate_cron="*/5 * * * *",
+            balance_cron="*/10 * * * *",
+            status=PlatformStatus.unknown,
+            low_balance_threshold=5.0,
+        )
+        db.add(platform)
+        db.flush()
+        db.add(
+            NotificationSetting(
+                id=1,
+                enabled=True,
+                smtp_host="smtp.example.com",
+                smtp_port=587,
+                smtp_username="bot@example.com",
+                from_email="bot@example.com",
+                notify_low_balance=True,
+            )
+        )
+        db.add(NotificationRecipient(name="Ops", email="ops@example.com", enabled=True))
+        db.add(
+            PlatformAccountMonitor(
+                platform_id=platform.id,
+                name="main",
+                external_account_id="me",
+                enabled=True,
+            )
+        )
+        db.commit()
+
+        asyncio.run(run_platform_balance_monitor(db, platform.id))
+        provider.balance = 5.0
+        asyncio.run(run_platform_balance_monitor(db, platform.id))
+        provider.balance = 4.0
+        asyncio.run(run_platform_balance_monitor(db, platform.id))
+
+        assert len(sent_messages) == 2
+        refreshed = db.get(RelayPlatform, platform.id)
+        assert refreshed is not None
+        assert refreshed.low_balance_notify_count == 1
+    finally:
+        db.close()
 
 
 def test_balance_monitor_adds_key_group_as_group_monitor(monkeypatch) -> None:

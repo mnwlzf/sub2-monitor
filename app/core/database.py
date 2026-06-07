@@ -58,6 +58,8 @@ def ensure_schema() -> None:
         "balance_next_run_at": "ALTER TABLE relay_platforms ADD COLUMN balance_next_run_at DATETIME",
         "rate_last_run_at": "ALTER TABLE relay_platforms ADD COLUMN rate_last_run_at DATETIME",
         "rate_next_run_at": "ALTER TABLE relay_platforms ADD COLUMN rate_next_run_at DATETIME",
+        "low_balance_threshold": "ALTER TABLE relay_platforms ADD COLUMN low_balance_threshold FLOAT",
+        "low_balance_notify_count": "ALTER TABLE relay_platforms ADD COLUMN low_balance_notify_count INTEGER NOT NULL DEFAULT 0",
     }
     with engine.begin() as conn:
         for column, statement in column_sql.items():
@@ -109,6 +111,8 @@ def ensure_schema() -> None:
         notification_column_sql = {
             "smtp_use_ssl": "ALTER TABLE notification_settings ADD COLUMN smtp_use_ssl BOOLEAN NOT NULL DEFAULT 0",
             "from_name": "ALTER TABLE notification_settings ADD COLUMN from_name VARCHAR(255)",
+            "notify_group_rate_changes": "ALTER TABLE notification_settings ADD COLUMN notify_group_rate_changes BOOLEAN NOT NULL DEFAULT 1",
+            "notify_low_balance": "ALTER TABLE notification_settings ADD COLUMN notify_low_balance BOOLEAN NOT NULL DEFAULT 0",
         }
         with engine.begin() as conn:
             for column, statement in notification_column_sql.items():

@@ -1241,18 +1241,42 @@ class NewApiStrategy(ProviderStrategy):
         self,
         platform: RelayPlatform,
     ) -> list[DiscoveredChannelRateResult] | None:
-        header_candidates = await self.login_management_header_candidates(platform)
         management_headers = self.management_headers(platform)
-        if management_headers and all(
-            candidate.get("New-Api-User") != management_headers.get("New-Api-User")
-            for candidate in header_candidates
-        ):
-            header_candidates.append(management_headers)
-        if not header_candidates:
-            header_candidates = [management_headers]
 
         errors: list[str] = []
-        for headers in header_candidates:
+        attempted_user_ids: set[str] = set()
+        if management_headers and "New-Api-User" in management_headers:
+            attempted_user_id = management_headers.get("New-Api-User")
+            if attempted_user_id:
+                attempted_user_ids.add(attempted_user_id)
+            try:
+                return await self.fetch_channel_catalog_with_headers(platform, management_headers)
+            except ValueError as exc:
+                message = str(exc)
+                errors.append(message)
+                if not self.is_retryable_auth_error_message(message):
+                    raise
+
+        previous_login_site_url: str | None = None
+        for account in platform.account_monitors:
+            attempted_user_id = self.management_user_id_from_account(account)
+            if attempted_user_id and attempted_user_id in attempted_user_ids:
+                continue
+            login_site_url = self.account_login_site_url(platform, account)
+            if (
+                previous_login_site_url is not None
+                and login_site_url is not None
+                and login_site_url == previous_login_site_url
+            ):
+                await asyncio.sleep(self.ACCOUNT_LOGIN_SPACING_SECONDS)
+            headers = await self.login_management_headers_for_account(platform, account)
+            if login_site_url is not None:
+                previous_login_site_url = login_site_url
+            if headers is None:
+                continue
+            attempted_user_id = headers.get("New-Api-User")
+            if attempted_user_id:
+                attempted_user_ids.add(attempted_user_id)
             try:
                 return await self.fetch_channel_catalog_with_headers(platform, headers)
             except ValueError as exc:
@@ -1260,6 +1284,7 @@ class NewApiStrategy(ProviderStrategy):
                 errors.append(message)
                 if not self.is_retryable_auth_error_message(message):
                     raise
+
         if errors and all(self.is_insufficient_privileges_message(error) for error in errors):
             return None
         if errors:
@@ -1561,16 +1586,23 @@ class NewApiStrategy(ProviderStrategy):
     @staticmethod
     def management_user_id(platform: RelayPlatform) -> str | None:
         for account in platform.account_monitors:
-            if not account.enabled:
+            user_id = NewApiStrategy.management_user_id_from_account(account)
+            if user_id:
+                return user_id
+        return None
+
+    @staticmethod
+    def management_user_id_from_account(account: PlatformAccountMonitor) -> str | None:
+        if not account.enabled:
+            return None
+        for candidate in (account.external_account_id, account.username):
+            candidate = (candidate or "").strip()
+            if not candidate:
                 continue
-            for candidate in (account.external_account_id, account.username):
-                candidate = (candidate or "").strip()
-                if not candidate:
-                    continue
-                if candidate.lower().startswith("bearer "):
-                    candidate = candidate[7:].strip()
-                if candidate.isdigit():
-                    return candidate
+            if candidate.lower().startswith("bearer "):
+                candidate = candidate[7:].strip()
+            if candidate.isdigit():
+                return candidate
         return None
 
     @staticmethod

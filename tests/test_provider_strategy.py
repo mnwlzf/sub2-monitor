@@ -541,6 +541,118 @@ def test_newapi_management_login_retries_after_rate_limit(monkeypatch) -> None:
     assert sleep_calls == [0.25]
 
 
+def test_newapi_channel_catalog_stops_logging_in_after_first_success(monkeypatch) -> None:
+    login_accounts: list[str] = []
+    catalog_headers: list[dict[str, str]] = []
+
+    async def fake_login_for_account(self, platform, account):
+        login_accounts.append(account.username)
+        return {"New-Api-User": account.external_account_id}
+
+    async def fake_fetch_with_headers(self, platform, headers):
+        catalog_headers.append(dict(headers))
+        return [
+            provider_module.DiscoveredChannelRateResult(
+                external_channel_id="11",
+                name="prod-channel",
+            )
+        ]
+
+    monkeypatch.setattr(
+        provider_module.NewApiStrategy,
+        "login_management_headers_for_account",
+        fake_login_for_account,
+    )
+    monkeypatch.setattr(
+        provider_module.NewApiStrategy,
+        "fetch_channel_catalog_with_headers",
+        fake_fetch_with_headers,
+    )
+
+    accounts = [
+        SimpleNamespace(
+            enabled=True,
+            external_account_id=f"account-{100 + index}",
+            username=f"user{index}@example.com",
+            password_encrypted=encrypt_secret("pw"),
+        )
+        for index in range(5)
+    ]
+
+    result = asyncio.run(
+        NewApiStrategy().fetch_channel_catalog(
+            SimpleNamespace(
+                base_url="https://newapi.example.com",
+                api_key_encrypted=None,
+                auth_header_prefix="Bearer",
+                account_monitors=accounts,
+            )
+        )
+    )
+
+    assert result is not None
+    assert result[0].external_channel_id == "11"
+    assert login_accounts == ["user0@example.com"]
+    assert catalog_headers == [{"New-Api-User": "account-100"}]
+
+
+def test_newapi_channel_catalog_logs_in_next_account_after_retryable_failure(monkeypatch) -> None:
+    login_accounts: list[str] = []
+    catalog_headers: list[dict[str, str]] = []
+
+    async def fake_login_for_account(self, platform, account):
+        login_accounts.append(account.username)
+        return {"New-Api-User": account.external_account_id}
+
+    async def fake_fetch_with_headers(self, platform, headers):
+        catalog_headers.append(dict(headers))
+        if headers["New-Api-User"] == "account-100":
+            raise ValueError("insufficient privileges")
+        return [
+            provider_module.DiscoveredChannelRateResult(
+                external_channel_id="11",
+                name="prod-channel",
+            )
+        ]
+
+    monkeypatch.setattr(
+        provider_module.NewApiStrategy,
+        "login_management_headers_for_account",
+        fake_login_for_account,
+    )
+    monkeypatch.setattr(
+        provider_module.NewApiStrategy,
+        "fetch_channel_catalog_with_headers",
+        fake_fetch_with_headers,
+    )
+
+    accounts = [
+        SimpleNamespace(
+            enabled=True,
+            external_account_id=f"account-{100 + index}",
+            username=f"user{index}@example.com",
+            password_encrypted=encrypt_secret("pw"),
+        )
+        for index in range(5)
+    ]
+
+    result = asyncio.run(
+        NewApiStrategy().fetch_channel_catalog(
+            SimpleNamespace(
+                base_url="https://newapi.example.com",
+                api_key_encrypted=None,
+                auth_header_prefix="Bearer",
+                account_monitors=accounts,
+            )
+        )
+    )
+
+    assert result is not None
+    assert result[0].external_channel_id == "11"
+    assert login_accounts == ["user0@example.com", "user1@example.com"]
+    assert catalog_headers == [{"New-Api-User": "account-100"}, {"New-Api-User": "account-101"}]
+
+
 def test_yunjin_fetch_account_balance_prefers_login_access_token(monkeypatch) -> None:
     class StubAsyncClient:
         def __init__(self, *args, **kwargs) -> None:

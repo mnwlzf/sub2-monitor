@@ -76,6 +76,63 @@ def test_newapi_generic_group_catalog_parser_reads_desc_and_ratio() -> None:
     assert groups[1].rate_multiplier == 1.8
 
 
+def test_newapi_group_catalog_fetches_self_groups_with_platform_token(monkeypatch) -> None:
+    class StubAsyncClient:
+        def __init__(self, *args, **kwargs) -> None:
+            self.base_url = str(kwargs.get("base_url") or "")
+            self.headers = dict(kwargs.get("headers") or {})
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def get(self, path: str):
+            if path == "api/user/self/groups":
+                assert self.headers["Authorization"] == "Bearer token-123"
+                return httpx.Response(
+                    200,
+                    json={
+                        "data": {
+                            "A-CCMAX(特价渠道)": {
+                                "desc": "Claude MAX（满血，测试100%，特价不稳定）",
+                                "ratio": 0.8,
+                            },
+                            "codex": {
+                                "desc": "codex分组，（自营稳定）",
+                                "ratio": 0.05,
+                            },
+                        },
+                        "message": "",
+                        "success": True,
+                    },
+                    request=httpx.Request("GET", f"{self.base_url}{path}"),
+                )
+            raise AssertionError(path)
+
+    monkeypatch.setattr(provider_module.httpx, "AsyncClient", StubAsyncClient)
+
+    result = asyncio.run(
+        NewApiStrategy().fetch_group_catalog(
+            SimpleNamespace(
+                base_url="https://relayai.tech/",
+                site_strategy="generic",
+                api_key_encrypted=encrypt_secret("Bearer token-123"),
+                auth_header_name="Authorization",
+                auth_header_prefix="Bearer",
+                account_monitors=[],
+            )
+        )
+    )
+
+    assert result is not None
+    assert [item.name for item in result] == ["A-CCMAX(特价渠道)", "codex"]
+    assert result[0].external_group_id == "A-CCMAX(特价渠道)"
+    assert result[0].rate_multiplier == 0.8
+    assert result[0].description == "Claude MAX（满血，测试100%，特价不稳定）"
+
+
 def test_sub2api_api_base_url_uses_configured_platform_base_url() -> None:
     assert (
         Sub2ApiStrategy.api_base_url(platform("https://example.com"))
@@ -1525,10 +1582,9 @@ def test_generic_newapi_group_catalog_uses_login_session(monkeypatch) -> None:
             if path == "login":
                 return httpx.Response(200, text="ok", request=httpx.Request("GET", f"{self.base_url}{path}"))
             if path == "api/user/self/groups":
-                assert headers == {
-                    "Cookie": "session=session-token-123",
-                    "New-Api-User": "647",
-                }
+                assert headers is None
+                assert self.headers["Cookie"] == "session=session-token-123"
+                assert self.headers["New-Api-User"] == "647"
                 return httpx.Response(
                     200,
                     json={

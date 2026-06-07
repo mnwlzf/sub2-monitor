@@ -442,49 +442,22 @@ class GenericNewApiSiteStrategy(NewApiSiteStrategy):
         provider: "NewApiStrategy",
         platform: RelayPlatform,
     ) -> list[DiscoveredGroupRateResult] | None:
-        account = next(
-            (
-                item
-                for item in platform.account_monitors
-                if item.enabled and item.username and item.password_encrypted
-            ),
-            None,
-        )
-        if account is None:
-            raise ValueError("newapi group catalog fetch requires an enabled account with password")
-
-        password = decrypt_secret(account.password_encrypted)
-        if not password:
-            raise ValueError("newapi group catalog password decrypt failed or empty")
-
         site_url = self.site_url(platform)
-        request_headers = {
-            "Accept": "application/json, text/plain, */*",
-            "Cache-Control": "no-store",
-            "Origin": self.site_origin(platform),
-            "Referer": f"{site_url}login",
-            "User-Agent": (
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/148.0.0.0 Safari/537.36"
-            ),
-        }
+        auth_headers = await provider.resolve_management_headers(platform)
         async with httpx.AsyncClient(
             base_url=site_url,
             follow_redirects=True,
-            headers=request_headers,
+            headers={
+                "Accept": "application/json, text/plain, */*",
+                "Cache-Control": "no-store",
+                "Origin": self.site_origin(platform),
+                "Referer": f"{site_url}login",
+                **auth_headers,
+            },
             timeout=provider.timeout_seconds,
         ) as client:
-            auth_headers = await self.login_headers_for_account(provider, platform, account, client)
-            if auth_headers is None:
-                raise ValueError("newapi group catalog login failed")
-            response = await client.get(
-                self.GROUPS_ENDPOINT,
-                headers=auth_headers,
-            )
+            response = await client.get(self.GROUPS_ENDPOINT)
             if response.status_code >= 400:
-                if response.status_code in {401, 403}:
-                    provider.drop_cached_login_headers(site_url, account)
                 raise ValueError(
                     f"newapi group catalog endpoint returned HTTP {response.status_code}"
                 )
@@ -1583,7 +1556,7 @@ class NewApiStrategy(ProviderStrategy):
     def management_user_id_from_account(account: PlatformAccountMonitor) -> str | None:
         if not account.enabled:
             return None
-        for candidate in (account.external_account_id, account.username):
+        for candidate in (getattr(account, "external_account_id", None), account.username):
             candidate = (candidate or "").strip()
             if not candidate:
                 continue

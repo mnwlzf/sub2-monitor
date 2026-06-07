@@ -249,6 +249,19 @@ def account_error_message(account: PlatformAccountMonitor, error: str | None) ->
     return f"account {target}: {error}" if target else f"account #{account.id}: {error}"
 
 
+def is_optional_newapi_channel_privilege_error(
+    strategy,
+    platform: RelayPlatform,
+    message: str,
+) -> bool:
+    if platform.provider_type != "newapi":
+        return False
+    checker = getattr(strategy, "is_insufficient_privileges_message", None)
+    if callable(checker):
+        return bool(checker(message))
+    return "insufficient privileges" in message.lower()
+
+
 async def run_platform_rate_monitor(db: Session, platform_id: int) -> RelayPlatform:
     platform = load_monitor_platform(db, platform_id)
 
@@ -289,12 +302,20 @@ async def run_platform_rate_monitor(db: Session, platform_id: int) -> RelayPlatf
             discovered_channel_catalog = await channel_catalog_fetcher(platform)
         except Exception as exc:  # noqa: BLE001
             discovered_channel_catalog = None
-            errors.append(f"channel catalog fetch failed: {exc}")
-            logger.exception(
-                "rate monitor channel catalog failed platform_id=%s name=%s",
-                platform.id,
-                platform.name,
-            )
+            if is_optional_newapi_channel_privilege_error(strategy, platform, str(exc)):
+                logger.info(
+                    "rate monitor channel catalog skipped for insufficient privileges platform_id=%s name=%s error=%s",
+                    platform.id,
+                    platform.name,
+                    exc,
+                )
+            else:
+                errors.append(f"channel catalog fetch failed: {exc}")
+                logger.exception(
+                    "rate monitor channel catalog failed platform_id=%s name=%s",
+                    platform.id,
+                    platform.name,
+                )
     else:
         discovered_channel_catalog = None
 

@@ -139,8 +139,13 @@ class FakeChannelCatalogProvider:
 
 
 class FakeNewApiUnifiedProvider:
-    def __init__(self, account_error: str | None = None) -> None:
+    def __init__(
+        self,
+        account_error: str | None = None,
+        channel_error: str | None = None,
+    ) -> None:
         self.account_error = account_error
+        self.channel_error = channel_error
         self.balance_accounts: list[str] = []
         self.group_catalog_calls = 0
         self.channel_catalog_calls = 0
@@ -162,6 +167,8 @@ class FakeNewApiUnifiedProvider:
 
     async def fetch_channel_catalog(self, platform: RelayPlatform):
         self.channel_catalog_calls += 1
+        if self.channel_error:
+            raise ValueError(self.channel_error)
         return [
             DiscoveredChannelRateResult(
                 external_channel_id="1",
@@ -186,6 +193,10 @@ class FakeNewApiUnifiedProvider:
         group: PlatformGroupMonitor,
     ) -> GroupRateResult:
         return GroupRateResult(rate_multiplier=0.12)
+
+    @staticmethod
+    def is_insufficient_privileges_message(message: str) -> bool:
+        return "insufficient privileges" in message.lower()
 
 
 def make_session():
@@ -766,6 +777,39 @@ def test_newapi_unified_monitor_without_accounts_collects_rates_only(monkeypatch
         assert refreshed.balance is None
         assert refreshed.balance_last_run_at is None
         assert refreshed.rate_last_run_at is not None
+    finally:
+        db.close()
+
+
+def test_newapi_channel_catalog_insufficient_privileges_does_not_degrade_platform(monkeypatch) -> None:
+    provider = FakeNewApiUnifiedProvider(
+        channel_error="Unauthorized, insufficient privileges",
+    )
+    monkeypatch.setitem(provider_registry._strategies, "newapi", provider)
+    db = make_session()
+    try:
+        platform = RelayPlatform(
+            name="NewApi Channel Permission",
+            base_url="https://relayai.tech/",
+            provider_type="newapi",
+            site_strategy="generic",
+            rate_cron="*/10 * * * *",
+            balance_cron="*/10 * * * *",
+            status=PlatformStatus.unknown,
+        )
+        db.add(platform)
+        db.commit()
+
+        asyncio.run(run_platform_monitor(db, platform.id))
+
+        assert provider.channel_catalog_calls == 1
+        assert provider.group_catalog_calls == 1
+        refreshed = db.get(RelayPlatform, platform.id)
+        assert refreshed is not None
+        assert refreshed.status == PlatformStatus.healthy
+        assert refreshed.last_error is None
+        assert len(refreshed.discovered_group_rates) == 1
+        assert len(refreshed.discovered_channel_rates) == 0
     finally:
         db.close()
 

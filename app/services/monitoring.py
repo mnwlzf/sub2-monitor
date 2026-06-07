@@ -1,5 +1,6 @@
-import logging
+import asyncio
 import json
+import logging
 from datetime import datetime
 from time import monotonic
 
@@ -63,9 +64,19 @@ async def run_platform_balance_monitor(db: Session, platform_id: int) -> RelayPl
         len(platform.group_monitors),
     )
 
+    previous_yunjin_login_site_url: str | None = None
     for account in platform.account_monitors:
         if not account.enabled:
             continue
+        yunjin_login_site_url = yunjin_account_login_site_url(strategy, platform, account)
+        if (
+            previous_yunjin_login_site_url is not None
+            and yunjin_login_site_url is not None
+            and yunjin_login_site_url == previous_yunjin_login_site_url
+        ):
+            await asyncio.sleep(2.0)
+        if yunjin_login_site_url is not None:
+            previous_yunjin_login_site_url = yunjin_login_site_url
         logger.debug(
             "balance monitor account start platform_id=%s account_id=%s account_name=%s external_account_id=%s",
             platform.id,
@@ -161,6 +172,21 @@ async def run_platform_balance_monitor(db: Session, platform_id: int) -> RelayPl
         int((monotonic() - started_at) * 1000),
     )
     return platform
+
+
+def yunjin_account_login_site_url(
+    strategy,
+    platform: RelayPlatform,
+    account: PlatformAccountMonitor,
+) -> str | None:
+    if platform.provider_type != "newapi" or platform.site_strategy != "yunjin":
+        return None
+    if not account.username or not account.password_encrypted:
+        return None
+    site_url = getattr(strategy, "site_url", None)
+    if not callable(site_url):
+        return platform.base_url.rstrip("/") + "/"
+    return site_url(platform)
 
 
 async def run_platform_rate_monitor(db: Session, platform_id: int) -> RelayPlatform:

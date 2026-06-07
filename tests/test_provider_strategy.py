@@ -406,6 +406,48 @@ def test_yunjin_fetch_account_balance_sends_authorization_header(monkeypatch) ->
     assert result.quota_used == 0.5
 
 
+def test_yunjin_login_retries_after_rate_limit(monkeypatch) -> None:
+    sleep_calls: list[float] = []
+
+    async def fake_sleep(delay: float) -> None:
+        sleep_calls.append(delay)
+
+    class StubAsyncClient:
+        def __init__(self) -> None:
+            self.post_calls = 0
+
+        async def post(self, path: str, **kwargs):
+            self.post_calls += 1
+            if self.post_calls == 1:
+                return httpx.Response(
+                    429,
+                    headers={"Retry-After": "0.25"},
+                    request=httpx.Request("POST", f"https://newapi.example.com/{path}"),
+                )
+            return httpx.Response(
+                200,
+                json={"success": True, "data": {"id": 789}},
+                request=httpx.Request("POST", f"https://newapi.example.com/{path}"),
+            )
+
+    monkeypatch.setattr(provider_module.asyncio, "sleep", fake_sleep)
+    strategy = YunjinNewApiSiteStrategy()
+    client = StubAsyncClient()
+
+    response, endpoint = asyncio.run(
+        strategy.post_login_with_rate_limit_retry(
+            client,
+            strategy.LOGIN_ENDPOINTS,
+            json={"username": "user@example.com", "password": "pw"},
+        )
+    )
+
+    assert response.status_code == 200
+    assert endpoint == "api/user/login?turnstile="
+    assert client.post_calls == 2
+    assert sleep_calls == [0.25]
+
+
 def test_yunjin_fetch_account_balance_prefers_login_access_token(monkeypatch) -> None:
     class StubAsyncClient:
         def __init__(self, *args, **kwargs) -> None:

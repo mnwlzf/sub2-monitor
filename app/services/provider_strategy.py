@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import re
 from abc import ABC, abstractmethod
@@ -240,6 +241,8 @@ class GenericNewApiSiteStrategy(NewApiSiteStrategy):
 
 class YunjinNewApiSiteStrategy(NewApiSiteStrategy):
     DEFAULT_QUOTA_PER_UNIT = 500_000
+    LOGIN_RATE_LIMIT_RETRY_DELAYS = (2.0, 5.0)
+    ACCOUNT_LOGIN_SPACING_SECONDS = 2.0
     LOGIN_ENDPOINTS = ("api/user/login?turnstile=", "api/user/login")
     PRICING_ENDPOINTS = ("api/pricing", "pricing")
     GROUPS_ENDPOINT = "api/user/self/groups"
@@ -294,10 +297,9 @@ class YunjinNewApiSiteStrategy(NewApiSiteStrategy):
         ) as client:
             quota_per_unit = await self.fetch_quota_per_unit(provider, client)
             await client.get("login")
-            login_response, login_endpoint = await self.post_first_available(
+            login_response, login_endpoint = await self.post_login_with_rate_limit_retry(
                 client,
                 self.LOGIN_ENDPOINTS,
-                retry_statuses={404, 429},
                 json={
                     "username": account.username,
                     "password": password,
@@ -583,10 +585,9 @@ class YunjinNewApiSiteStrategy(NewApiSiteStrategy):
             timeout=provider.timeout_seconds,
         ) as client:
             await client.get("login")
-            login_response, login_endpoint = await self.post_first_available(
+            login_response, login_endpoint = await self.post_login_with_rate_limit_retry(
                 client,
                 self.LOGIN_ENDPOINTS,
-                retry_statuses={404, 429},
                 json={
                     "username": account.username,
                     "password": password,
@@ -749,6 +750,44 @@ class YunjinNewApiSiteStrategy(NewApiSiteStrategy):
             retry_statuses=retry_statuses,
             **kwargs,
         )
+
+    async def post_login_with_rate_limit_retry(
+        self,
+        client: httpx.AsyncClient,
+        endpoints: tuple[str, ...],
+        **kwargs: Any,
+    ) -> tuple[httpx.Response, str]:
+        response, endpoint = await self.post_first_available(
+            client,
+            endpoints,
+            retry_statuses={404},
+            **kwargs,
+        )
+        for default_delay in self.LOGIN_RATE_LIMIT_RETRY_DELAYS:
+            if response.status_code != 429:
+                return response, endpoint
+            delay = self.retry_after_seconds(response) or default_delay
+            await asyncio.sleep(delay)
+            response, endpoint = await self.post_first_available(
+                client,
+                endpoints,
+                retry_statuses={404},
+                **kwargs,
+            )
+        return response, endpoint
+
+    @staticmethod
+    def retry_after_seconds(response: httpx.Response) -> float | None:
+        value = response.headers.get("Retry-After")
+        if not value:
+            return None
+        try:
+            seconds = float(value)
+        except ValueError:
+            return None
+        if seconds < 0:
+            return None
+        return min(seconds, 30.0)
 
 
 class NewApiSiteStrategyRegistry:

@@ -1222,6 +1222,8 @@ class NewApiStrategy(ProviderStrategy):
     label = "New API"
     description = "面向 New API 部署实例的监控策略骨架"
     LOGIN_ENDPOINTS = ("api/user/login?turnstile=", "api/user/login")
+    LOGIN_RATE_LIMIT_RETRY_DELAYS = (2.0, 5.0)
+    ACCOUNT_LOGIN_SPACING_SECONDS = 2.0
     RATIO_SYNC_CHANNELS_ENDPOINT = "api/ratio_sync/channels"
     RATIO_SYNC_FETCH_ENDPOINT = "api/ratio_sync/fetch"
     CHANNEL_LIST_ENDPOINT = "api/channel/"
@@ -1450,8 +1452,18 @@ class NewApiStrategy(ProviderStrategy):
 
     async def login_management_header_candidates(self, platform: RelayPlatform) -> list[dict[str, str]]:
         candidates: list[dict[str, str]] = []
+        previous_login_site_url: str | None = None
         for account in platform.account_monitors:
+            login_site_url = self.account_login_site_url(platform, account)
+            if (
+                previous_login_site_url is not None
+                and login_site_url is not None
+                and login_site_url == previous_login_site_url
+            ):
+                await asyncio.sleep(self.ACCOUNT_LOGIN_SPACING_SECONDS)
             headers = await self.login_management_headers_for_account(platform, account)
+            if login_site_url is not None:
+                previous_login_site_url = login_site_url
             if headers is not None:
                 candidates.append(headers)
         return candidates
@@ -1484,10 +1496,9 @@ class NewApiStrategy(ProviderStrategy):
             timeout=self.timeout_seconds,
         ) as client:
             await client.get("login")
-            login_response, _ = await self.post_first_available(
+            login_response, _ = await self.post_login_with_rate_limit_retry(
                 client,
                 self.LOGIN_ENDPOINTS,
-                retry_statuses={404, 429},
                 json={
                     "username": account.username,
                     "password": password,
@@ -1521,6 +1532,17 @@ class NewApiStrategy(ProviderStrategy):
             ),
             None,
         )
+
+    def account_login_site_url(
+        self,
+        platform: RelayPlatform,
+        account: PlatformAccountMonitor | None,
+    ) -> str | None:
+        if account is None or not account.enabled:
+            return None
+        if not account.username or not account.password_encrypted:
+            return None
+        return self.site_url(platform)
 
     @staticmethod
     def access_token_value(platform: RelayPlatform) -> str | None:
@@ -1698,6 +1720,44 @@ class NewApiStrategy(ProviderStrategy):
         if last_response is None:
             raise ValueError("no endpoints configured")
         return last_response, endpoints[-1]
+
+    async def post_login_with_rate_limit_retry(
+        self,
+        client: httpx.AsyncClient,
+        endpoints: tuple[str, ...],
+        **kwargs: Any,
+    ) -> tuple[httpx.Response, str]:
+        response, endpoint = await self.post_first_available(
+            client,
+            endpoints,
+            retry_statuses={404},
+            **kwargs,
+        )
+        for default_delay in self.LOGIN_RATE_LIMIT_RETRY_DELAYS:
+            if response.status_code != 429:
+                return response, endpoint
+            delay = self.retry_after_seconds(response) or default_delay
+            await asyncio.sleep(delay)
+            response, endpoint = await self.post_first_available(
+                client,
+                endpoints,
+                retry_statuses={404},
+                **kwargs,
+            )
+        return response, endpoint
+
+    @staticmethod
+    def retry_after_seconds(response: httpx.Response) -> float | None:
+        value = response.headers.get("Retry-After")
+        if not value:
+            return None
+        try:
+            seconds = float(value)
+        except ValueError:
+            return None
+        if seconds < 0:
+            return None
+        return min(seconds, 30.0)
 
     async def fetch_key_summaries(
         self,

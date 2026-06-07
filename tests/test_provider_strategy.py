@@ -448,6 +448,99 @@ def test_yunjin_login_retries_after_rate_limit(monkeypatch) -> None:
     assert sleep_calls == [0.25]
 
 
+def test_newapi_management_login_candidates_throttle_same_site_accounts(monkeypatch) -> None:
+    sleep_calls: list[float] = []
+
+    async def fake_sleep(delay: float) -> None:
+        sleep_calls.append(delay)
+
+    async def fake_login_for_account(self, platform, account):
+        return {"New-Api-User": account.external_account_id}
+
+    monkeypatch.setattr(provider_module.asyncio, "sleep", fake_sleep)
+    monkeypatch.setattr(
+        provider_module.NewApiStrategy,
+        "login_management_headers_for_account",
+        fake_login_for_account,
+    )
+    strategy = NewApiStrategy()
+    platform = SimpleNamespace(
+        base_url="https://newapi.example.com/yunjin/login",
+        account_monitors=[
+            SimpleNamespace(
+                enabled=True,
+                username="a@example.com",
+                password_encrypted=encrypt_secret("pw"),
+                external_account_id="101",
+            ),
+            SimpleNamespace(
+                enabled=True,
+                username="b@example.com",
+                password_encrypted=encrypt_secret("pw"),
+                external_account_id="102",
+            ),
+        ],
+    )
+
+    headers = asyncio.run(strategy.login_management_header_candidates(platform))
+
+    assert headers == [{"New-Api-User": "101"}, {"New-Api-User": "102"}]
+    assert sleep_calls == [strategy.ACCOUNT_LOGIN_SPACING_SECONDS]
+
+
+def test_newapi_management_login_retries_after_rate_limit(monkeypatch) -> None:
+    sleep_calls: list[float] = []
+
+    async def fake_sleep(delay: float) -> None:
+        sleep_calls.append(delay)
+
+    class StubAsyncClient:
+        def __init__(self, *args, **kwargs) -> None:
+            self.base_url = str(kwargs.get("base_url") or "")
+            self.headers = dict(kwargs.get("headers") or {})
+            self.post_calls = 0
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def get(self, path: str):
+            return httpx.Response(200, text="ok", request=httpx.Request("GET", f"{self.base_url}{path}"))
+
+        async def post(self, path: str, **kwargs):
+            self.post_calls += 1
+            if self.post_calls == 1:
+                return httpx.Response(
+                    429,
+                    headers={"Retry-After": "0.25"},
+                    request=httpx.Request("POST", f"{self.base_url}{path}"),
+                )
+            return httpx.Response(
+                200,
+                json={"success": True, "data": {"id": 789, "access_token": "token-789"}},
+                request=httpx.Request("POST", f"{self.base_url}{path}"),
+            )
+
+    monkeypatch.setattr(provider_module.asyncio, "sleep", fake_sleep)
+    monkeypatch.setattr(provider_module.httpx, "AsyncClient", StubAsyncClient)
+
+    headers = asyncio.run(
+        NewApiStrategy().login_management_headers_for_account(
+            SimpleNamespace(base_url="https://newapi.example.com/yunjin/login"),
+            SimpleNamespace(
+                enabled=True,
+                username="user@example.com",
+                password_encrypted=encrypt_secret("pw"),
+            ),
+        )
+    )
+
+    assert headers == {"New-Api-User": "789", "Authorization": "Bearer token-789"}
+    assert sleep_calls == [0.25]
+
+
 def test_yunjin_fetch_account_balance_prefers_login_access_token(monkeypatch) -> None:
     class StubAsyncClient:
         def __init__(self, *args, **kwargs) -> None:

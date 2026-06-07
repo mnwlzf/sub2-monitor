@@ -13,7 +13,11 @@ from app.models.monitor import PlatformAccountMonitor, PlatformGroupMonitor
 from app.models.notification import NotificationRecipient, NotificationSetting
 from app.models.platform import PlatformStatus, RelayPlatform
 from app.models.snapshot import AccountBalanceSnapshot, DiscoveredChannelRateSnapshot, GroupRateSnapshot
-from app.services.monitoring import run_platform_balance_monitor, run_platform_rate_monitor
+from app.services.monitoring import (
+    run_platform_balance_monitor,
+    run_platform_monitor,
+    run_platform_rate_monitor,
+)
 from app.services.notification import send_mail
 from app.services.provider_strategy import (
     AccountBalanceResult,
@@ -132,6 +136,56 @@ class FakeChannelCatalogProvider:
         group: PlatformGroupMonitor,
     ) -> GroupRateResult:
         return GroupRateResult()
+
+
+class FakeNewApiUnifiedProvider:
+    def __init__(self, account_error: str | None = None) -> None:
+        self.account_error = account_error
+        self.balance_accounts: list[str] = []
+        self.group_catalog_calls = 0
+        self.channel_catalog_calls = 0
+
+    async def fetch_account_balance(
+        self,
+        platform: RelayPlatform,
+        account: PlatformAccountMonitor,
+    ) -> AccountBalanceResult:
+        self.balance_accounts.append(account.name)
+        if self.account_error:
+            return AccountBalanceResult(error=self.account_error)
+        return AccountBalanceResult(
+            balance=10.0,
+            key_summaries=(
+                {"id": f"key-{account.id}", "name": account.name, "group_id": "7", "group_name": "codex"},
+            ),
+        )
+
+    async def fetch_channel_catalog(self, platform: RelayPlatform):
+        self.channel_catalog_calls += 1
+        return [
+            DiscoveredChannelRateResult(
+                external_channel_id="1",
+                name="OpenAI Official",
+                rate_multiplier=2.5,
+            )
+        ]
+
+    async def fetch_group_catalog(self, platform: RelayPlatform):
+        self.group_catalog_calls += 1
+        return [
+            DiscoveredGroupRateResult(
+                external_group_id="7",
+                name="codex",
+                rate_multiplier=0.12,
+            )
+        ]
+
+    async def fetch_group_rate(
+        self,
+        platform: RelayPlatform,
+        group: PlatformGroupMonitor,
+    ) -> GroupRateResult:
+        return GroupRateResult(rate_multiplier=0.12)
 
 
 def make_session():
@@ -632,6 +686,126 @@ def test_rate_monitor_persists_discovered_channel_rates(monkeypatch) -> None:
         assert snapshots[0].external_channel_id == "1"
         assert snapshots[0].rate_multiplier == 2.5
         assert '"gpt-4o": 2.0' in (snapshots[0].model_rates_json or "")
+    finally:
+        db.close()
+
+
+def test_newapi_unified_monitor_collects_balances_and_rates_once(monkeypatch) -> None:
+    provider = FakeNewApiUnifiedProvider()
+    monkeypatch.setitem(provider_registry._strategies, "newapi", provider)
+    db = make_session()
+    try:
+        platform = RelayPlatform(
+            name="NewApi Unified",
+            base_url="https://newapi.example.com",
+            provider_type="newapi",
+            site_strategy="generic",
+            rate_cron="*/10 * * * *",
+            balance_cron="*/10 * * * *",
+            status=PlatformStatus.unknown,
+        )
+        db.add(platform)
+        db.flush()
+        db.add_all(
+            [
+                PlatformAccountMonitor(
+                    platform_id=platform.id,
+                    name="Account A",
+                    external_account_id="a",
+                    enabled=True,
+                ),
+                PlatformAccountMonitor(
+                    platform_id=platform.id,
+                    name="Account B",
+                    external_account_id="b",
+                    enabled=True,
+                ),
+            ]
+        )
+        db.commit()
+
+        asyncio.run(run_platform_monitor(db, platform.id))
+
+        assert provider.balance_accounts == ["Account A", "Account B"]
+        assert provider.group_catalog_calls == 1
+        assert provider.channel_catalog_calls == 1
+        refreshed = db.get(RelayPlatform, platform.id)
+        assert refreshed is not None
+        assert refreshed.balance == 20.0
+        assert refreshed.balance_next_run_at == refreshed.rate_next_run_at
+        assert len(refreshed.discovered_channel_rates) == 1
+        assert len(refreshed.discovered_group_rates) == 1
+    finally:
+        db.close()
+
+
+def test_newapi_unified_monitor_without_accounts_collects_rates_only(monkeypatch) -> None:
+    provider = FakeNewApiUnifiedProvider()
+    monkeypatch.setitem(provider_registry._strategies, "newapi", provider)
+    db = make_session()
+    try:
+        platform = RelayPlatform(
+            name="NewApi Rates Only",
+            base_url="https://newapi.example.com",
+            provider_type="newapi",
+            site_strategy="generic",
+            rate_cron="*/10 * * * *",
+            balance_cron="*/10 * * * *",
+            status=PlatformStatus.unknown,
+        )
+        db.add(platform)
+        db.commit()
+
+        asyncio.run(run_platform_monitor(db, platform.id))
+
+        assert provider.balance_accounts == []
+        assert provider.group_catalog_calls == 1
+        assert provider.channel_catalog_calls == 1
+        refreshed = db.get(RelayPlatform, platform.id)
+        assert refreshed is not None
+        assert refreshed.balance is None
+        assert refreshed.balance_last_run_at is None
+        assert refreshed.rate_last_run_at is not None
+    finally:
+        db.close()
+
+
+def test_newapi_account_error_identifies_account(monkeypatch) -> None:
+    provider = FakeNewApiUnifiedProvider(account_error="login returned HTTP 429")
+    monkeypatch.setitem(provider_registry._strategies, "newapi", provider)
+    db = make_session()
+    try:
+        platform = RelayPlatform(
+            name="NewApi Account Error",
+            base_url="https://newapi.example.com",
+            provider_type="newapi",
+            site_strategy="generic",
+            rate_cron="*/10 * * * *",
+            balance_cron="*/10 * * * *",
+            status=PlatformStatus.unknown,
+        )
+        db.add(platform)
+        db.flush()
+        db.add(
+            PlatformAccountMonitor(
+                platform_id=platform.id,
+                name="Primary",
+                external_account_id="user-1",
+                username="primary@example.com",
+                enabled=True,
+            )
+        )
+        db.commit()
+
+        asyncio.run(run_platform_monitor(db, platform.id))
+
+        account = db.scalar(select(PlatformAccountMonitor))
+        assert account is not None
+        assert account.last_error == "account Primary / primary@example.com / user-1: login returned HTTP 429"
+        refreshed = db.get(RelayPlatform, platform.id)
+        assert refreshed is not None
+        assert refreshed.last_error is not None
+        assert "Primary / primary@example.com / user-1" in refreshed.last_error
     finally:
         db.close()
 

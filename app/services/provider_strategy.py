@@ -3,7 +3,7 @@ import logging
 import random
 import re
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from http.cookies import SimpleCookie
 from time import monotonic
 from typing import Any
@@ -185,63 +185,6 @@ class NewApiSiteStrategy(ABC):
 
 
 class GenericNewApiSiteStrategy(NewApiSiteStrategy):
-    site_strategy = "generic"
-    label = "通用 New API"
-    description = "通用 New API 策略：登录后读取 /api/user/self、/api/user/self/groups 和渠道倍率接口"
-
-    async def fetch_account_balance(
-        self,
-        provider: "NewApiStrategy",
-        platform: RelayPlatform,
-        account: PlatformAccountMonitor,
-    ) -> AccountBalanceResult:
-        if account.username and account.password_encrypted:
-            result = await YunjinNewApiSiteStrategy().fetch_account_balance(provider, platform, account)
-            if result.error:
-                result = replace(
-                    result,
-                    error=result.error.replace("云锦", "New API").replace(
-                        "yunjin",
-                        "newapi user session",
-                    ),
-                )
-            return result
-
-        status, payload, _ = await provider.get_json(
-            platform,
-            f"/api/account/{account.external_account_id}",
-        )
-        if status >= 400:
-            return AccountBalanceResult(error=f"newapi account endpoint returned HTTP {status}")
-        return AccountBalanceResult(
-            balance=provider.first_number(payload, ("balance", "remaining_quota", "remain_quota")),
-            quota_used=provider.first_number(payload, ("used_quota", "quota_used", "used")),
-            quota_limit=provider.first_number(payload, ("quota", "total_quota", "quota_limit")),
-        )
-
-    async def fetch_group_rate(
-        self,
-        provider: "NewApiStrategy",
-        platform: RelayPlatform,
-        group: PlatformGroupMonitor,
-    ) -> GroupRateResult:
-        result = await YunjinNewApiSiteStrategy().fetch_group_rate(provider, platform, group)
-        if result.error:
-            return replace(result, error=result.error.replace("yunjin", "newapi"))
-        return result
-
-    async def fetch_group_catalog(
-        self,
-        provider: "NewApiStrategy",
-        platform: RelayPlatform,
-    ) -> list[DiscoveredGroupRateResult] | None:
-        try:
-            return await YunjinNewApiSiteStrategy().fetch_group_catalog(provider, platform)
-        except ValueError as exc:
-            raise ValueError(str(exc).replace("yunjin", "newapi")) from exc
-
-
-class YunjinNewApiSiteStrategy(NewApiSiteStrategy):
     DEFAULT_QUOTA_PER_UNIT = 500_000
     LOGIN_RATE_LIMIT_RETRY_DELAYS = (5.0, 15.0, 30.0, 60.0)
     ACCOUNT_LOGIN_SPACING_SECONDS = 2.0
@@ -250,9 +193,9 @@ class YunjinNewApiSiteStrategy(NewApiSiteStrategy):
     PRICING_ENDPOINTS = ("api/pricing", "pricing")
     GROUPS_ENDPOINT = "api/user/self/groups"
 
-    site_strategy = "yunjin"
-    label = "云锦"
-    description = "云锦站点策略：账号登录后读取 /api/user/self，分组读取 /api/user/self/groups"
+    site_strategy = "generic"
+    label = "通用 New API"
+    description = "通用 New API 策略：登录后读取 /api/user/self、/api/user/self/groups 和渠道倍率接口"
 
     async def fetch_account_balance(
         self,
@@ -266,7 +209,7 @@ class YunjinNewApiSiteStrategy(NewApiSiteStrategy):
         account_name = getattr(account, "name", None)
         external_account_id = getattr(account, "external_account_id", None)
         logger.debug(
-            "yunjin balance start platform_id=%s platform_name=%s account_id=%s account_name=%s external_account_id=%s",
+            "newapi balance start platform_id=%s platform_name=%s account_id=%s account_name=%s external_account_id=%s",
             platform_id,
             platform_name,
             account_id,
@@ -274,11 +217,21 @@ class YunjinNewApiSiteStrategy(NewApiSiteStrategy):
             external_account_id,
         )
         if not account.username or not account.password_encrypted:
-            return AccountBalanceResult(error="云锦账号余额监控需要配置账号和密码")
+            status, payload, _ = await provider.get_json(
+                platform,
+                f"/api/account/{account.external_account_id}",
+            )
+            if status >= 400:
+                return AccountBalanceResult(error=f"newapi account endpoint returned HTTP {status}")
+            return AccountBalanceResult(
+                balance=provider.first_number(payload, ("balance", "remaining_quota", "remain_quota")),
+                quota_used=provider.first_number(payload, ("used_quota", "quota_used", "used")),
+                quota_limit=provider.first_number(payload, ("quota", "total_quota", "quota_limit")),
+            )
 
         password = decrypt_secret(account.password_encrypted)
         if not password:
-            return AccountBalanceResult(error="云锦账号余额监控密码解密失败或为空")
+            return AccountBalanceResult(error="newapi account balance password decrypt failed or empty")
 
         site_url = self.site_url(platform)
         request_headers = {
@@ -301,7 +254,7 @@ class YunjinNewApiSiteStrategy(NewApiSiteStrategy):
             quota_per_unit = await self.fetch_quota_per_unit(provider, client)
             auth_headers = await self.login_headers_for_account(provider, platform, account, client)
             if auth_headers is None:
-                return AccountBalanceResult(error="yunjin login failed")
+                return AccountBalanceResult(error="newapi login failed")
             self_response = await client.get(
                 "api/user/self",
                 headers=auth_headers,
@@ -321,7 +274,7 @@ class YunjinNewApiSiteStrategy(NewApiSiteStrategy):
                 if cookie_header:
                     retry_headers["Cookie"] = cookie_header
                 logger.warning(
-                    "yunjin self rejected bearer token, retrying raw token platform_id=%s account_id=%s status=%s",
+                    "newapi self rejected bearer token, retrying raw token platform_id=%s account_id=%s status=%s",
                     platform_id,
                     account_id,
                     self_response.status_code,
@@ -342,7 +295,7 @@ class YunjinNewApiSiteStrategy(NewApiSiteStrategy):
                 if cookie_header:
                     retry_headers["Cookie"] = cookie_header
                 logger.warning(
-                    "yunjin self rejected login token, retrying session cookie platform_id=%s account_id=%s status=%s",
+                    "newapi self rejected login token, retrying session cookie platform_id=%s account_id=%s status=%s",
                     platform_id,
                     account_id,
                     self_response.status_code,
@@ -358,13 +311,13 @@ class YunjinNewApiSiteStrategy(NewApiSiteStrategy):
                 if self_response.status_code in {401, 403}:
                     provider.drop_cached_login_headers(site_url, account)
                 logger.warning(
-                    "yunjin self failed platform_id=%s account_id=%s status=%s",
+                    "newapi self failed platform_id=%s account_id=%s status=%s",
                     platform_id,
                     account_id,
                     self_response.status_code,
                 )
                 return AccountBalanceResult(
-                    error=f"yunjin self endpoint returned HTTP {self_response.status_code}"
+                    error=f"newapi self endpoint returned HTTP {self_response.status_code}"
                 )
             payload = self.safe_json(self_response)
             key_summaries: tuple[dict[str, str | None], ...] = ()
@@ -378,7 +331,7 @@ class YunjinNewApiSiteStrategy(NewApiSiteStrategy):
                 if fetched_key_summaries:
                     key_summaries = fetched_key_summaries
                     logger.debug(
-                        "yunjin token summaries fetched platform_id=%s account_id=%s keys=%s",
+                        "newapi token summaries fetched platform_id=%s account_id=%s keys=%s",
                         platform_id,
                         account_id,
                         len(key_summaries),
@@ -386,7 +339,7 @@ class YunjinNewApiSiteStrategy(NewApiSiteStrategy):
             except Exception as exc:  # noqa: BLE001
                 key_summary_error = str(exc)
                 logger.warning(
-                    "yunjin token summaries failed platform_id=%s account_id=%s error=%s",
+                    "newapi token summaries failed platform_id=%s account_id=%s error=%s",
                     platform_id,
                     account_id,
                     key_summary_error,
@@ -395,15 +348,15 @@ class YunjinNewApiSiteStrategy(NewApiSiteStrategy):
         quota = provider.first_number(payload, ("quota",))
         if quota is None:
             logger.warning(
-                "yunjin self missing quota platform_id=%s account_id=%s payload=%s",
+                "newapi self missing quota platform_id=%s account_id=%s payload=%s",
                 platform_id,
                 account_id,
                 payload,
             )
-            return AccountBalanceResult(error="yunjin self response missing numeric data.quota")
+            return AccountBalanceResult(error="newapi self response missing numeric data.quota")
         used_quota = provider.first_number(payload, ("used_quota",))
         logger.debug(
-            "yunjin balance done platform_id=%s account_id=%s balance=%s used_quota=%s quota_per_unit=%s",
+            "newapi balance done platform_id=%s account_id=%s balance=%s used_quota=%s quota_per_unit=%s",
             platform_id,
             account_id,
             quota / quota_per_unit,
@@ -429,7 +382,7 @@ class YunjinNewApiSiteStrategy(NewApiSiteStrategy):
         group_name = getattr(group, "name", None)
         external_group_id = getattr(group, "external_group_id", None)
         logger.debug(
-            "yunjin group rate start platform_id=%s platform_name=%s group_id=%s group_name=%s external_group_id=%s",
+            "newapi group rate start platform_id=%s platform_name=%s group_id=%s group_name=%s external_group_id=%s",
             platform_id,
             platform_name,
             group_id,
@@ -439,7 +392,7 @@ class YunjinNewApiSiteStrategy(NewApiSiteStrategy):
         headers = await provider.resolve_management_headers(platform)
         if "New-Api-User" not in headers:
             return GroupRateResult(
-                error="yunjin group rate monitoring requires an enabled login account"
+                error="newapi group rate monitoring requires an enabled login account"
             )
         async with httpx.AsyncClient(
             base_url=self.site_url(platform),
@@ -452,7 +405,7 @@ class YunjinNewApiSiteStrategy(NewApiSiteStrategy):
         )
         if response.status_code >= 400:
             logger.warning(
-                "yunjin pricing failed platform_id=%s group_id=%s status=%s endpoint=%s",
+                "newapi pricing failed platform_id=%s group_id=%s status=%s endpoint=%s",
                 platform_id,
                 group_id,
                 response.status_code,
@@ -460,29 +413,29 @@ class YunjinNewApiSiteStrategy(NewApiSiteStrategy):
             )
             return GroupRateResult(
                 error=(
-                    "yunjin pricing endpoint returned "
+                    "newapi pricing endpoint returned "
                     f"HTTP {response.status_code}: {pricing_endpoint}"
                 )
             )
         payload = self.safe_json(response)
         if not isinstance(payload, dict) or not isinstance(payload.get("group_ratio"), dict):
-            return GroupRateResult(error="yunjin pricing response missing group_ratio")
+            return GroupRateResult(error="newapi pricing response missing group_ratio")
         raw_rate = payload["group_ratio"].get(group.external_group_id)
         if raw_rate is None:
             logger.warning(
-                "yunjin pricing missing group ratio platform_id=%s group_id=%s group_name=%s target=%s",
+                "newapi pricing missing group ratio platform_id=%s group_id=%s group_name=%s target=%s",
                 platform_id,
                 group_id,
                 group_name,
                 external_group_id,
             )
             return GroupRateResult(
-                error=f"yunjin group_ratio missing group {external_group_id!r}"
+                error=f"newapi group_ratio missing group {external_group_id!r}"
             )
         try:
             return GroupRateResult(rate_multiplier=float(raw_rate))
         except (TypeError, ValueError):
-            return GroupRateResult(error=f"yunjin group ratio is not numeric: {raw_rate!r}")
+            return GroupRateResult(error=f"newapi group ratio is not numeric: {raw_rate!r}")
 
     async def fetch_group_catalog(
         self,
@@ -498,11 +451,11 @@ class YunjinNewApiSiteStrategy(NewApiSiteStrategy):
             None,
         )
         if account is None:
-            raise ValueError("yunjin group catalog fetch requires an enabled account with password")
+            raise ValueError("newapi group catalog fetch requires an enabled account with password")
 
         password = decrypt_secret(account.password_encrypted)
         if not password:
-            raise ValueError("yunjin group catalog password decrypt failed or empty")
+            raise ValueError("newapi group catalog password decrypt failed or empty")
 
         site_url = self.site_url(platform)
         request_headers = {
@@ -524,7 +477,7 @@ class YunjinNewApiSiteStrategy(NewApiSiteStrategy):
         ) as client:
             auth_headers = await self.login_headers_for_account(provider, platform, account, client)
             if auth_headers is None:
-                raise ValueError("yunjin group catalog login failed")
+                raise ValueError("newapi group catalog login failed")
             response = await client.get(
                 self.GROUPS_ENDPOINT,
                 headers=auth_headers,
@@ -533,13 +486,13 @@ class YunjinNewApiSiteStrategy(NewApiSiteStrategy):
                 if response.status_code in {401, 403}:
                     provider.drop_cached_login_headers(site_url, account)
                 raise ValueError(
-                    f"yunjin group catalog endpoint returned HTTP {response.status_code}"
+                    f"newapi group catalog endpoint returned HTTP {response.status_code}"
                 )
             payload = self.safe_json(response)
 
         groups = self.parse_group_catalog_payload(payload)
         if groups is None:
-            raise ValueError("yunjin group catalog response missing data")
+            raise ValueError("newapi group catalog response missing data")
         return groups
 
     async def login_headers_for_account(
@@ -613,16 +566,16 @@ class YunjinNewApiSiteStrategy(NewApiSiteStrategy):
                     try:
                         rate_multiplier = float(raw_ratio)
                     except (TypeError, ValueError):
-                        error = f"yunjin group ratio is not numeric: {raw_ratio!r}"
+                        error = f"newapi group ratio is not numeric: {raw_ratio!r}"
                 raw_rpm = raw_group.get("rpm_limit", raw_group.get("rpm"))
                 if raw_rpm is not None:
                     try:
                         rpm_limit = int(float(raw_rpm))
                     except (TypeError, ValueError):
                         if error is None:
-                            error = f"yunjin group rpm is not numeric: {raw_rpm!r}"
+                            error = f"newapi group rpm is not numeric: {raw_rpm!r}"
             else:
-                error = f"yunjin group payload is not an object: {raw_group!r}"
+                error = f"newapi group payload is not an object: {raw_group!r}"
 
             groups.append(
                 DiscoveredGroupRateResult(
@@ -756,11 +709,13 @@ class YunjinNewApiSiteStrategy(NewApiSiteStrategy):
 class NewApiSiteStrategyRegistry:
     def __init__(self) -> None:
         self._strategies: dict[str, NewApiSiteStrategy] = {}
+        self._aliases = {"yunjin": "generic"}
 
     def register(self, strategy: NewApiSiteStrategy) -> None:
         self._strategies[strategy.site_strategy] = strategy
 
     def get(self, site_strategy: str) -> NewApiSiteStrategy:
+        site_strategy = self._aliases.get(site_strategy, site_strategy)
         if site_strategy not in self._strategies:
             supported = ", ".join(sorted(self._strategies))
             raise ValueError(
@@ -1348,9 +1303,7 @@ class NewApiStrategy(ProviderStrategy):
 
         key_summaries: tuple[dict[str, str | None], ...] = balance_result.key_summaries
         key_summary_error: str | None = None
-        if platform.site_strategy != YunjinNewApiSiteStrategy.site_strategy and not (
-            account.username and account.password_encrypted
-        ):
+        if not (account.username and account.password_encrypted):
             try:
                 fetched_key_summaries = await self.fetch_key_summaries(platform)
                 if fetched_key_summaries:
@@ -2258,6 +2211,5 @@ class ProviderRegistry:
 provider_registry = ProviderRegistry()
 newapi_site_strategy_registry = NewApiSiteStrategyRegistry()
 newapi_site_strategy_registry.register(GenericNewApiSiteStrategy())
-newapi_site_strategy_registry.register(YunjinNewApiSiteStrategy())
 provider_registry.register(Sub2ApiStrategy())
 provider_registry.register(NewApiStrategy())

@@ -53,6 +53,13 @@ def platform_payload(payload: PlatformCreate | PlatformUpdate) -> dict:
         api_key = data.pop("api_key")
         if api_key:
             data["api_key_encrypted"] = encrypt_secret(api_key)
+    provider_type = data.get("provider_type")
+    if provider_type == "newapi":
+        data["site_strategy"] = "generic"
+        cron_expr = data.get("balance_cron") or data.get("rate_cron")
+        if cron_expr:
+            data["balance_cron"] = cron_expr
+            data["rate_cron"] = cron_expr
     return data
 
 
@@ -67,6 +74,12 @@ def account_payload(payload: AccountMonitorCreate | AccountMonitorUpdate) -> dic
 
 def update_next_run_times(platform: RelayPlatform, fields: set[str]) -> None:
     now = utcnow()
+    if platform.provider_type == "newapi" and ("balance_cron" in fields or "rate_cron" in fields):
+        platform.rate_cron = platform.balance_cron
+        next_run_at = croniter(platform.balance_cron, now).get_next(type(now))
+        platform.balance_next_run_at = next_run_at
+        platform.rate_next_run_at = next_run_at
+        return
     if "balance_cron" in fields:
         platform.balance_next_run_at = croniter(platform.balance_cron, now).get_next(type(now))
     if "rate_cron" in fields:
@@ -276,7 +289,14 @@ async def run_monitor(platform_id: int, db: Session = Depends(get_db)) -> Monito
 )
 async def run_balance_monitor(platform_id: int, db: Session = Depends(get_db)) -> MonitorRunResponse:
     try:
-        platform = await run_platform_balance_monitor(db, platform_id)
+        existing = db.get(RelayPlatform, platform_id)
+        if existing is None:
+            raise LookupError
+        platform = (
+            await run_platform_monitor(db, platform_id)
+            if existing.provider_type == "newapi"
+            else await run_platform_balance_monitor(db, platform_id)
+        )
     except LookupError as exc:
         raise HTTPException(status_code=404, detail="Platform not found") from exc
     except ValueError as exc:
@@ -296,7 +316,14 @@ async def run_balance_monitor(platform_id: int, db: Session = Depends(get_db)) -
 )
 async def run_rate_monitor(platform_id: int, db: Session = Depends(get_db)) -> MonitorRunResponse:
     try:
-        platform = await run_platform_rate_monitor(db, platform_id)
+        existing = db.get(RelayPlatform, platform_id)
+        if existing is None:
+            raise LookupError
+        platform = (
+            await run_platform_monitor(db, platform_id)
+            if existing.provider_type == "newapi"
+            else await run_platform_rate_monitor(db, platform_id)
+        )
     except LookupError as exc:
         raise HTTPException(status_code=404, detail="Platform not found") from exc
     except ValueError as exc:

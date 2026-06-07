@@ -9,7 +9,11 @@ from sqlalchemy import select
 from app.core.database import SessionLocal
 from app.core.security import utcnow
 from app.models.platform import RelayPlatform
-from app.services.monitoring import run_platform_balance_monitor, run_platform_rate_monitor
+from app.services.monitoring import (
+    run_platform_balance_monitor,
+    run_platform_monitor,
+    run_platform_rate_monitor,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -46,7 +50,17 @@ class MonitorScheduler:
             )
             due_balance: list[int] = []
             due_rate: list[int] = []
+            due_unified: list[int] = []
             for platform in platforms:
+                if platform.provider_type == "newapi":
+                    if self._ensure_next_run(platform.balance_next_run_at, platform.balance_cron, now):
+                        next_run_at = croniter(platform.balance_cron, now).get_next(datetime)
+                        platform.balance_next_run_at = next_run_at
+                        platform.rate_next_run_at = next_run_at
+                        db.add(platform)
+                    if platform.balance_next_run_at and platform.balance_next_run_at <= now:
+                        due_unified.append(platform.id)
+                    continue
                 if self._ensure_next_run(platform.balance_next_run_at, platform.balance_cron, now):
                     platform.balance_next_run_at = croniter(platform.balance_cron, now).get_next(datetime)
                     db.add(platform)
@@ -65,6 +79,12 @@ class MonitorScheduler:
                     await run_platform_balance_monitor(db, platform_id)
             except Exception:  # noqa: BLE001
                 logger.exception("scheduled balance monitor failed for platform_id=%s", platform_id)
+        for platform_id in due_unified:
+            try:
+                with SessionLocal() as db:
+                    await run_platform_monitor(db, platform_id)
+            except Exception:  # noqa: BLE001
+                logger.exception("scheduled newapi monitor failed for platform_id=%s", platform_id)
         for platform_id in due_rate:
             try:
                 with SessionLocal() as db:

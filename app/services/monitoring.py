@@ -34,12 +34,39 @@ logger = logging.getLogger(__name__)
 
 
 async def run_platform_monitor(db: Session, platform_id: int) -> RelayPlatform:
-    platform = await run_platform_balance_monitor(db, platform_id)
+    platform = load_monitor_platform(db, platform_id)
+    if platform.provider_type != "newapi":
+        platform = await run_platform_balance_monitor(db, platform_id)
+        platform = await run_platform_rate_monitor(db, platform_id)
+        return platform
+
+    errors: list[str] = []
+    has_accounts = has_enabled_login_or_balance_accounts(platform)
+    if has_accounts:
+        platform = await run_platform_balance_monitor(db, platform_id)
+        if platform.last_error:
+            errors.extend(platform.last_error.splitlines())
+
     platform = await run_platform_rate_monitor(db, platform_id)
+    if platform.last_error:
+        errors.extend(platform.last_error.splitlines())
+
+    platform = load_monitor_platform(db, platform_id)
+    now = utcnow()
+    if has_accounts:
+        platform.balance_last_run_at = now
+    platform.rate_last_run_at = now
+    next_run_at = croniter(platform.balance_cron, now).get_next(type(now))
+    platform.balance_next_run_at = next_run_at
+    platform.rate_next_run_at = next_run_at
+    update_platform_status(platform, dedupe_errors(errors))
+    db.add(platform)
+    db.commit()
+    db.refresh(platform)
     return platform
 
 
-async def run_platform_balance_monitor(db: Session, platform_id: int) -> RelayPlatform:
+def load_monitor_platform(db: Session, platform_id: int) -> RelayPlatform:
     platform = db.scalar(
         select(RelayPlatform)
         .options(
@@ -50,6 +77,27 @@ async def run_platform_balance_monitor(db: Session, platform_id: int) -> RelayPl
     )
     if platform is None:
         raise LookupError("Platform not found")
+    return platform
+
+
+def has_enabled_login_or_balance_accounts(platform: RelayPlatform) -> bool:
+    return any(account.enabled for account in platform.account_monitors)
+
+
+def dedupe_errors(errors: list[str]) -> list[str]:
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for error in errors:
+        error = error.strip()
+        if not error or error in seen:
+            continue
+        seen.add(error)
+        deduped.append(error)
+    return deduped
+
+
+async def run_platform_balance_monitor(db: Session, platform_id: int) -> RelayPlatform:
+    platform = load_monitor_platform(db, platform_id)
 
     strategy = provider_registry.get(platform.provider_type)
     errors: list[str] = []
@@ -64,19 +112,19 @@ async def run_platform_balance_monitor(db: Session, platform_id: int) -> RelayPl
         len(platform.group_monitors),
     )
 
-    previous_yunjin_login_site_url: str | None = None
+    previous_newapi_login_site_url: str | None = None
     for account in platform.account_monitors:
         if not account.enabled:
             continue
-        yunjin_login_site_url = yunjin_account_login_site_url(strategy, platform, account)
+        newapi_login_site_url = newapi_account_login_site_url(strategy, platform, account)
         if (
-            previous_yunjin_login_site_url is not None
-            and yunjin_login_site_url is not None
-            and yunjin_login_site_url == previous_yunjin_login_site_url
+            previous_newapi_login_site_url is not None
+            and newapi_login_site_url is not None
+            and newapi_login_site_url == previous_newapi_login_site_url
         ):
             await asyncio.sleep(2.0)
-        if yunjin_login_site_url is not None:
-            previous_yunjin_login_site_url = yunjin_login_site_url
+        if newapi_login_site_url is not None:
+            previous_newapi_login_site_url = newapi_login_site_url
         logger.debug(
             "balance monitor account start platform_id=%s account_id=%s account_name=%s external_account_id=%s",
             platform.id,
@@ -90,9 +138,9 @@ async def run_platform_balance_monitor(db: Session, platform_id: int) -> RelayPl
             account.quota_used = result.quota_used
             account.quota_limit = result.quota_limit
             account.key_summaries = result.key_summaries
-            account.last_error = result.error
+            account.last_error = account_error_message(account, result.error)
             if result.error:
-                errors.append(f"account {account.name}: {result.error}")
+                errors.append(account.last_error or result.error)
                 logger.warning(
                     "balance monitor account failed platform_id=%s account_id=%s account_name=%s error=%s",
                     platform.id,
@@ -111,8 +159,8 @@ async def run_platform_balance_monitor(db: Session, platform_id: int) -> RelayPl
                     len(account.key_summaries),
                 )
         except Exception as exc:  # noqa: BLE001
-            account.last_error = str(exc)
-            errors.append(f"account {account.name}: {exc}")
+            account.last_error = account_error_message(account, str(exc))
+            errors.append(account.last_error)
             logger.exception(
                 "balance monitor account exception platform_id=%s account_id=%s account_name=%s",
                 platform.id,
@@ -174,12 +222,12 @@ async def run_platform_balance_monitor(db: Session, platform_id: int) -> RelayPl
     return platform
 
 
-def yunjin_account_login_site_url(
+def newapi_account_login_site_url(
     strategy,
     platform: RelayPlatform,
     account: PlatformAccountMonitor,
 ) -> str | None:
-    if platform.provider_type != "newapi" or platform.site_strategy != "yunjin":
+    if platform.provider_type != "newapi":
         return None
     if not account.username or not account.password_encrypted:
         return None
@@ -189,17 +237,20 @@ def yunjin_account_login_site_url(
     return site_url(platform)
 
 
+def account_error_message(account: PlatformAccountMonitor, error: str | None) -> str | None:
+    if not error:
+        return None
+    parts = [account.name]
+    if account.username:
+        parts.append(account.username)
+    if account.external_account_id:
+        parts.append(account.external_account_id)
+    target = " / ".join(str(part) for part in parts if part)
+    return f"account {target}: {error}" if target else f"account #{account.id}: {error}"
+
+
 async def run_platform_rate_monitor(db: Session, platform_id: int) -> RelayPlatform:
-    platform = db.scalar(
-        select(RelayPlatform)
-        .options(
-            selectinload(RelayPlatform.account_monitors),
-            selectinload(RelayPlatform.group_monitors),
-        )
-        .where(RelayPlatform.id == platform_id)
-    )
-    if platform is None:
-        raise LookupError("Platform not found")
+    platform = load_monitor_platform(db, platform_id)
 
     strategy = provider_registry.get(platform.provider_type)
     errors: list[str] = []

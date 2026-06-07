@@ -358,9 +358,9 @@
                       :icon="Refresh"
                       :loading="monitoring"
                       size="small"
-                      @click.stop="runDetailRateMonitorFor(row)"
+                      @click.stop="runGroupRatePanelMonitor(row)"
                     >
-                      采集倍率
+                      {{ row.provider_type === 'newapi' ? '立即采集' : '采集倍率' }}
                     </el-button>
                   </div>
                 </template>
@@ -627,10 +627,17 @@
             type="password"
           />
         </el-form-item>
-        <el-form-item label="余额 Cron" prop="balance_cron">
-          <el-input v-model="form.balance_cron" placeholder="*/10 * * * *" />
+        <el-form-item
+          :label="form.provider_type === 'newapi' ? '采集 Cron' : '余额 Cron'"
+          prop="balance_cron"
+        >
+          <el-input
+            v-model="form.balance_cron"
+            placeholder="*/10 * * * *"
+            @input="syncNewApiCron"
+          />
         </el-form-item>
-        <el-form-item label="倍率 Cron" prop="rate_cron">
+        <el-form-item v-if="form.provider_type !== 'newapi'" label="倍率 Cron" prop="rate_cron">
           <el-input v-model="form.rate_cron" placeholder="0 * * * *" />
         </el-form-item>
         <el-form-item label="充值金额" prop="recharge_amount">
@@ -845,7 +852,7 @@
           <div class="monitor-section-title">
             <div>
               <h3>已监控分组</h3>
-              <p>配置指定分组，云锦策略填写 codex 即读取 group_ratio.codex。</p>
+              <p>配置指定分组，New API 通用策略填写 codex 即读取 group_ratio.codex。</p>
             </div>
             <el-button :icon="Plus" @click="groupDialogVisible = true">添加分组</el-button>
           </div>
@@ -877,8 +884,19 @@
       </div>
       <template #footer>
         <el-button @click="detailVisible = false">关闭</el-button>
-        <el-button :icon="Refresh" :loading="monitoring" @click="runDetailBalanceMonitor">采集余额</el-button>
-        <el-button :icon="Refresh" :loading="monitoring" type="primary" @click="runDetailRateMonitor">采集倍率</el-button>
+        <el-button
+          v-if="detail?.provider_type === 'newapi'"
+          :icon="Refresh"
+          :loading="monitoring"
+          type="primary"
+          @click="runDetailMonitor"
+        >
+          立即采集
+        </el-button>
+        <template v-else>
+          <el-button :icon="Refresh" :loading="monitoring" @click="runDetailBalanceMonitor">采集余额</el-button>
+          <el-button :icon="Refresh" :loading="monitoring" type="primary" @click="runDetailRateMonitor">采集倍率</el-button>
+        </template>
       </template>
     </el-dialog>
 
@@ -1157,10 +1175,17 @@ function onProviderTypeChange(value: string | number | boolean | undefined) {
   if (value === 'newapi') {
     form.auth_header_name = 'Authorization'
     form.auth_header_prefix = 'Bearer'
+    form.rate_cron = form.balance_cron
     return
   }
   if (!form.auth_header_prefix) {
     form.auth_header_prefix = 'Bearer'
+  }
+}
+
+function syncNewApiCron() {
+  if (form.provider_type === 'newapi') {
+    form.rate_cron = form.balance_cron
   }
 }
 
@@ -1426,6 +1451,9 @@ async function save() {
     } else if (!payload.auth_header_prefix) {
       payload.auth_header_prefix = 'Bearer'
     }
+    if (payload.provider_type === 'newapi') {
+      payload.rate_cron = payload.balance_cron
+    }
     if (!payload.api_key) {
       delete payload.api_key
     }
@@ -1480,6 +1508,21 @@ async function runDetailBalanceMonitor() {
   }
 }
 
+async function runDetailMonitor() {
+  if (!detail.value) {
+    return
+  }
+  monitoring.value = true
+  try {
+    await runPlatformMonitor(detail.value.id)
+    ElMessage.success('采集完成')
+    await reloadDetail()
+    await load()
+  } finally {
+    monitoring.value = false
+  }
+}
+
 async function runDetailRateMonitor() {
   if (!detail.value) {
     return
@@ -1493,6 +1536,14 @@ async function runDetailRateMonitor() {
   } finally {
     monitoring.value = false
   }
+}
+
+async function runGroupRatePanelMonitor(row: RelayPlatform) {
+  if (row.provider_type === 'newapi') {
+    await runMonitor(row)
+    return
+  }
+  await runDetailRateMonitorFor(row)
 }
 
 async function runDetailRateMonitorFor(row: RelayPlatform) {
@@ -1874,3 +1925,4 @@ function latestBalance(series: AccountBalanceHistorySeries) {
 
 onMounted(load)
 </script>
+

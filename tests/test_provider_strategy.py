@@ -541,6 +541,100 @@ def test_newapi_management_login_retries_after_rate_limit(monkeypatch) -> None:
     assert sleep_calls == [0.25]
 
 
+def test_newapi_management_login_reuses_cached_headers(monkeypatch) -> None:
+    class StubAsyncClient:
+        post_calls = 0
+
+        def __init__(self, *args, **kwargs) -> None:
+            self.base_url = str(kwargs.get("base_url") or "")
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def get(self, path: str):
+            return httpx.Response(200, text="ok", request=httpx.Request("GET", f"{self.base_url}{path}"))
+
+        async def post(self, path: str, **kwargs):
+            type(self).post_calls += 1
+            return httpx.Response(
+                200,
+                json={"success": True, "data": {"id": 789, "access_token": "token-789"}},
+                request=httpx.Request("POST", f"{self.base_url}{path}"),
+            )
+
+    monkeypatch.setattr(provider_module.httpx, "AsyncClient", StubAsyncClient)
+
+    strategy = NewApiStrategy()
+    platform = SimpleNamespace(base_url="https://newapi.example.com/yunjin/login")
+    account = SimpleNamespace(
+        enabled=True,
+        username="user@example.com",
+        password_encrypted=encrypt_secret("pw"),
+    )
+
+    first_headers = asyncio.run(strategy.login_management_headers_for_account(platform, account))
+    second_headers = asyncio.run(strategy.login_management_headers_for_account(platform, account))
+
+    assert first_headers == {"New-Api-User": "789", "Authorization": "Bearer token-789"}
+    assert second_headers == first_headers
+    assert StubAsyncClient.post_calls == 1
+
+
+def test_newapi_management_login_uses_long_backoff_with_jitter(monkeypatch) -> None:
+    sleep_calls: list[float] = []
+
+    async def fake_sleep(delay: float) -> None:
+        sleep_calls.append(delay)
+
+    class StubAsyncClient:
+        def __init__(self, *args, **kwargs) -> None:
+            self.base_url = str(kwargs.get("base_url") or "")
+            self.post_calls = 0
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def get(self, path: str):
+            return httpx.Response(200, text="ok", request=httpx.Request("GET", f"{self.base_url}{path}"))
+
+        async def post(self, path: str, **kwargs):
+            self.post_calls += 1
+            if self.post_calls == 1:
+                return httpx.Response(
+                    429,
+                    request=httpx.Request("POST", f"{self.base_url}{path}"),
+                )
+            return httpx.Response(
+                200,
+                json={"success": True, "data": {"id": 789, "access_token": "token-789"}},
+                request=httpx.Request("POST", f"{self.base_url}{path}"),
+            )
+
+    monkeypatch.setattr(provider_module.asyncio, "sleep", fake_sleep)
+    monkeypatch.setattr(provider_module.random, "uniform", lambda start, end: 1.25)
+    monkeypatch.setattr(provider_module.httpx, "AsyncClient", StubAsyncClient)
+
+    headers = asyncio.run(
+        NewApiStrategy().login_management_headers_for_account(
+            SimpleNamespace(base_url="https://newapi.example.com/yunjin/login"),
+            SimpleNamespace(
+                enabled=True,
+                username="user@example.com",
+                password_encrypted=encrypt_secret("pw"),
+            ),
+        )
+    )
+
+    assert headers == {"New-Api-User": "789", "Authorization": "Bearer token-789"}
+    assert sleep_calls == [6.25]
+
+
 def test_newapi_channel_catalog_stops_logging_in_after_first_success(monkeypatch) -> None:
     login_accounts: list[str] = []
     catalog_headers: list[dict[str, str]] = []

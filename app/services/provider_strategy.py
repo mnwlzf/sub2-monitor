@@ -1,9 +1,11 @@
 import asyncio
 import logging
+import random
 import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, replace
 from http.cookies import SimpleCookie
+from time import monotonic
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
@@ -241,8 +243,9 @@ class GenericNewApiSiteStrategy(NewApiSiteStrategy):
 
 class YunjinNewApiSiteStrategy(NewApiSiteStrategy):
     DEFAULT_QUOTA_PER_UNIT = 500_000
-    LOGIN_RATE_LIMIT_RETRY_DELAYS = (2.0, 5.0)
+    LOGIN_RATE_LIMIT_RETRY_DELAYS = (5.0, 15.0, 30.0, 60.0)
     ACCOUNT_LOGIN_SPACING_SECONDS = 2.0
+    LOGIN_RETRY_JITTER_SECONDS = 2.0
     LOGIN_ENDPOINTS = ("api/user/login?turnstile=", "api/user/login")
     PRICING_ENDPOINTS = ("api/pricing", "pricing")
     GROUPS_ENDPOINT = "api/user/self/groups"
@@ -296,90 +299,21 @@ class YunjinNewApiSiteStrategy(NewApiSiteStrategy):
             timeout=provider.timeout_seconds,
         ) as client:
             quota_per_unit = await self.fetch_quota_per_unit(provider, client)
-            await client.get("login")
-            login_response, login_endpoint = await self.post_login_with_rate_limit_retry(
-                client,
-                self.LOGIN_ENDPOINTS,
-                json={
-                    "username": account.username,
-                    "password": password,
-                },
-            )
-            if login_response.status_code >= 400:
-                logger.warning(
-                    "yunjin login failed platform_id=%s account_id=%s endpoint=%s status=%s",
-                    platform_id,
-                    account_id,
-                    login_endpoint,
-                    login_response.status_code,
-                )
-                return AccountBalanceResult(
-                    error=(
-                        "yunjin login endpoint returned "
-                        f"HTTP {login_response.status_code}: {login_endpoint}"
-                    )
-                )
-            login_payload_json = self.safe_json(login_response)
-            if isinstance(login_payload_json, dict) and login_payload_json.get("success") is False:
-                message = login_payload_json.get("message") or "登录失败"
-                logger.warning(
-                    "yunjin login rejected platform_id=%s account_id=%s message=%s",
-                    platform_id,
-                    account_id,
-                    message,
-                )
-                return AccountBalanceResult(error=f"yunjin login failed: {message}")
-
-            user_id = self.extract_user_id(login_payload_json)
-            if user_id is None:
-                logger.warning(
-                    "yunjin login missing user id platform_id=%s account_id=%s payload=%s",
-                    platform_id,
-                    account_id,
-                    login_payload_json,
-                )
-                return AccountBalanceResult(error="yunjin login response missing data.id")
-
-            auth_headers = {}
-            access_token = self.extract_access_token(login_payload_json)
-            if access_token:
-                auth_headers["Authorization"] = f"Bearer {access_token}"
-                logger.debug(
-                    "yunjin login access token extracted platform_id=%s account_id=%s user_id=%s auth_mode=bearer",
-                    platform_id,
-                    account_id,
-                    user_id,
-                )
-            else:
-                logger.debug(
-                    "yunjin login access token missing, using session cookie platform_id=%s account_id=%s user_id=%s",
-                    platform_id,
-                    account_id,
-                    user_id,
-                )
-            cookie_header = self.session_cookie_header(login_response, client)
-            if cookie_header:
-                auth_headers["Cookie"] = cookie_header
-                logger.debug(
-                    "yunjin login session cookie extracted platform_id=%s account_id=%s user_id=%s",
-                    platform_id,
-                    account_id,
-                    user_id,
-                )
-            else:
-                logger.warning(
-                    "yunjin login response missing session cookie platform_id=%s account_id=%s user_id=%s",
-                    platform_id,
-                    account_id,
-                    user_id,
-                )
-            auth_headers["New-Api-User"] = str(user_id)
+            auth_headers = await self.login_headers_for_account(provider, platform, account, client)
+            if auth_headers is None:
+                return AccountBalanceResult(error="yunjin login failed")
             self_response = await client.get(
                 "api/user/self",
                 headers=auth_headers,
             )
+            authorization_header = auth_headers.get("Authorization")
+            access_token = authorization_header
+            if access_token and access_token.lower().startswith("bearer "):
+                access_token = access_token[7:].strip()
+            cookie_header = auth_headers.get("Cookie")
+            user_id = auth_headers["New-Api-User"]
             if (
-                access_token
+                authorization_header
                 and self_response.status_code in {401, 403}
                 and self.looks_like_invalid_token(self_response)
             ):
@@ -398,6 +332,7 @@ class YunjinNewApiSiteStrategy(NewApiSiteStrategy):
                 )
                 if self_response.status_code < 400:
                     auth_headers = retry_headers
+                    provider.cache_login_headers(site_url, account, auth_headers)
             if (
                 access_token
                 and self_response.status_code in {401, 403}
@@ -418,7 +353,10 @@ class YunjinNewApiSiteStrategy(NewApiSiteStrategy):
                 )
                 if self_response.status_code < 400:
                     auth_headers = retry_headers
+                    provider.cache_login_headers(site_url, account, auth_headers)
             if self_response.status_code >= 400:
+                if self_response.status_code in {401, 403}:
+                    provider.drop_cached_login_headers(site_url, account)
                 logger.warning(
                     "yunjin self failed platform_id=%s account_id=%s status=%s",
                     platform_id,
@@ -584,39 +522,16 @@ class YunjinNewApiSiteStrategy(NewApiSiteStrategy):
             headers=request_headers,
             timeout=provider.timeout_seconds,
         ) as client:
-            await client.get("login")
-            login_response, login_endpoint = await self.post_login_with_rate_limit_retry(
-                client,
-                self.LOGIN_ENDPOINTS,
-                json={
-                    "username": account.username,
-                    "password": password,
-                },
-            )
-            if login_response.status_code >= 400:
-                raise ValueError(
-                    "yunjin group catalog login endpoint returned "
-                    f"HTTP {login_response.status_code}: {login_endpoint}"
-                )
-            login_payload_json = self.safe_json(login_response)
-            if isinstance(login_payload_json, dict) and login_payload_json.get("success") is False:
-                message = login_payload_json.get("message") or "登录失败"
-                raise ValueError(f"yunjin group catalog login failed: {message}")
-
-            user_id = self.extract_user_id(login_payload_json)
-            if user_id is None:
-                raise ValueError("yunjin group catalog login response missing data.id")
-
-            auth_headers: dict[str, str] = {}
-            cookie_header = self.session_cookie_header(login_response, client)
-            if cookie_header:
-                auth_headers["Cookie"] = cookie_header
-            auth_headers["New-Api-User"] = str(user_id)
+            auth_headers = await self.login_headers_for_account(provider, platform, account, client)
+            if auth_headers is None:
+                raise ValueError("yunjin group catalog login failed")
             response = await client.get(
                 self.GROUPS_ENDPOINT,
                 headers=auth_headers,
             )
             if response.status_code >= 400:
+                if response.status_code in {401, 403}:
+                    provider.drop_cached_login_headers(site_url, account)
                 raise ValueError(
                     f"yunjin group catalog endpoint returned HTTP {response.status_code}"
                 )
@@ -626,6 +541,50 @@ class YunjinNewApiSiteStrategy(NewApiSiteStrategy):
         if groups is None:
             raise ValueError("yunjin group catalog response missing data")
         return groups
+
+    async def login_headers_for_account(
+        self,
+        provider: "NewApiStrategy",
+        platform: RelayPlatform,
+        account: PlatformAccountMonitor,
+        client: httpx.AsyncClient,
+    ) -> dict[str, str] | None:
+        cached_headers = provider.cached_login_headers(self.site_url(platform), account)
+        if cached_headers is not None:
+            return cached_headers
+
+        password = decrypt_secret(account.password_encrypted)
+        if not password:
+            return None
+
+        await client.get("login")
+        login_response, _ = await self.post_login_with_rate_limit_retry(
+            client,
+            self.LOGIN_ENDPOINTS,
+            json={
+                "username": account.username,
+                "password": password,
+            },
+        )
+        if login_response.status_code >= 400:
+            return None
+        login_payload_json = self.safe_json(login_response)
+        if isinstance(login_payload_json, dict) and login_payload_json.get("success") is False:
+            return None
+
+        user_id = self.extract_user_id(login_payload_json)
+        if user_id is None:
+            return None
+
+        auth_headers: dict[str, str] = {"New-Api-User": str(user_id)}
+        access_token = self.extract_access_token(login_payload_json)
+        if access_token:
+            auth_headers["Authorization"] = f"Bearer {access_token}"
+        cookie_header = self.session_cookie_header(login_response, client)
+        if cookie_header:
+            auth_headers["Cookie"] = cookie_header
+        provider.cache_login_headers(self.site_url(platform), account, auth_headers)
+        return auth_headers
 
     @staticmethod
     def parse_group_catalog_payload(payload: Any) -> list[DiscoveredGroupRateResult] | None:
@@ -766,7 +725,7 @@ class YunjinNewApiSiteStrategy(NewApiSiteStrategy):
         for default_delay in self.LOGIN_RATE_LIMIT_RETRY_DELAYS:
             if response.status_code != 429:
                 return response, endpoint
-            delay = self.retry_after_seconds(response) or default_delay
+            delay = self.retry_after_seconds(response) or self.retry_delay_with_jitter(default_delay)
             await asyncio.sleep(delay)
             response, endpoint = await self.post_first_available(
                 client,
@@ -788,6 +747,10 @@ class YunjinNewApiSiteStrategy(NewApiSiteStrategy):
         if seconds < 0:
             return None
         return min(seconds, 30.0)
+
+    def retry_delay_with_jitter(self, default_delay: float) -> float:
+        jitter = random.uniform(0.0, self.LOGIN_RETRY_JITTER_SECONDS)
+        return default_delay + jitter
 
 
 class NewApiSiteStrategyRegistry:
@@ -1222,8 +1185,10 @@ class NewApiStrategy(ProviderStrategy):
     label = "New API"
     description = "面向 New API 部署实例的监控策略骨架"
     LOGIN_ENDPOINTS = ("api/user/login?turnstile=", "api/user/login")
-    LOGIN_RATE_LIMIT_RETRY_DELAYS = (2.0, 5.0)
+    LOGIN_RATE_LIMIT_RETRY_DELAYS = (5.0, 15.0, 30.0, 60.0)
     ACCOUNT_LOGIN_SPACING_SECONDS = 2.0
+    LOGIN_HEADER_CACHE_SECONDS = 30 * 60
+    LOGIN_RETRY_JITTER_SECONDS = 2.0
     RATIO_SYNC_CHANNELS_ENDPOINT = "api/ratio_sync/channels"
     RATIO_SYNC_FETCH_ENDPOINT = "api/ratio_sync/fetch"
     CHANNEL_LIST_ENDPOINT = "api/channel/"
@@ -1236,6 +1201,7 @@ class NewApiStrategy(ProviderStrategy):
     ) -> None:
         super().__init__(timeout_seconds)
         self.site_strategies = site_strategies or newapi_site_strategy_registry
+        self._login_header_cache: dict[tuple[str, str], tuple[float, dict[str, str]]] = {}
 
     async def fetch_channel_catalog(
         self,
@@ -1313,7 +1279,7 @@ class NewApiStrategy(ProviderStrategy):
                     fallback_headers = dict(headers)
                     fallback_headers.pop("Authorization", None)
                 else:
-                    fallback_headers = await self.login_management_headers(platform)
+                    fallback_headers = await self.login_management_headers(platform, force_refresh=True)
                 if fallback_headers is not None:
                     client.headers.clear()
                     client.headers.update(fallback_headers)
@@ -1471,9 +1437,18 @@ class NewApiStrategy(ProviderStrategy):
                 headers[key] = value
         return headers
 
-    async def login_management_headers(self, platform: RelayPlatform) -> dict[str, str] | None:
+    async def login_management_headers(
+        self,
+        platform: RelayPlatform,
+        *,
+        force_refresh: bool = False,
+    ) -> dict[str, str] | None:
         account = self.first_login_account(platform)
-        return await self.login_management_headers_for_account(platform, account)
+        return await self.login_management_headers_for_account(
+            platform,
+            account,
+            force_refresh=force_refresh,
+        )
 
     async def login_management_header_candidates(self, platform: RelayPlatform) -> list[dict[str, str]]:
         candidates: list[dict[str, str]] = []
@@ -1497,6 +1472,8 @@ class NewApiStrategy(ProviderStrategy):
         self,
         platform: RelayPlatform,
         account: PlatformAccountMonitor | None,
+        *,
+        force_refresh: bool = False,
     ) -> dict[str, str] | None:
         if account is None or not account.username or not account.password_encrypted:
             return None
@@ -1508,6 +1485,11 @@ class NewApiStrategy(ProviderStrategy):
             return None
 
         site_url = self.site_url(platform)
+        if not force_refresh:
+            cached_headers = self.cached_login_headers(site_url, account)
+            if cached_headers is not None:
+                return cached_headers
+
         request_headers = {
             "Accept": "application/json, text/plain, */*",
             "Cache-Control": "no-store",
@@ -1545,7 +1527,60 @@ class NewApiStrategy(ProviderStrategy):
             cookie_header = self.session_cookie_header(login_response, client)
             if cookie_header:
                 headers["Cookie"] = cookie_header
+            self.cache_login_headers(site_url, account, headers)
             return headers
+
+    def cached_login_headers(
+        self,
+        site_url: str,
+        account: PlatformAccountMonitor | None,
+    ) -> dict[str, str] | None:
+        cache_key = self.login_header_cache_key(site_url, account)
+        if cache_key is None:
+            return None
+        cached = self._login_header_cache.get(cache_key)
+        if cached is None:
+            return None
+        expires_at, cached_headers = cached
+        if expires_at <= monotonic():
+            self._login_header_cache.pop(cache_key, None)
+            return None
+        return dict(cached_headers)
+
+    def cache_login_headers(
+        self,
+        site_url: str,
+        account: PlatformAccountMonitor | None,
+        headers: dict[str, str],
+    ) -> None:
+        cache_key = self.login_header_cache_key(site_url, account)
+        if cache_key is None:
+            return
+        self._login_header_cache[cache_key] = (
+            monotonic() + self.LOGIN_HEADER_CACHE_SECONDS,
+            dict(headers),
+        )
+
+    def drop_cached_login_headers(
+        self,
+        site_url: str,
+        account: PlatformAccountMonitor | None,
+    ) -> None:
+        cache_key = self.login_header_cache_key(site_url, account)
+        if cache_key is not None:
+            self._login_header_cache.pop(cache_key, None)
+
+    @staticmethod
+    def login_header_cache_key(
+        site_url: str,
+        account: PlatformAccountMonitor | None,
+    ) -> tuple[str, str] | None:
+        if account is None or not account.username:
+            return None
+        username = account.username.strip().lower()
+        if not username:
+            return None
+        return site_url.rstrip("/") + "/", username
 
     @staticmethod
     def first_login_account(platform: RelayPlatform) -> PlatformAccountMonitor | None:
@@ -1768,7 +1803,7 @@ class NewApiStrategy(ProviderStrategy):
         for default_delay in self.LOGIN_RATE_LIMIT_RETRY_DELAYS:
             if response.status_code != 429:
                 return response, endpoint
-            delay = self.retry_after_seconds(response) or default_delay
+            delay = self.retry_after_seconds(response) or self.retry_delay_with_jitter(default_delay)
             await asyncio.sleep(delay)
             response, endpoint = await self.post_first_available(
                 client,
@@ -1790,6 +1825,10 @@ class NewApiStrategy(ProviderStrategy):
         if seconds < 0:
             return None
         return min(seconds, 30.0)
+
+    def retry_delay_with_jitter(self, default_delay: float) -> float:
+        jitter = random.uniform(0.0, self.LOGIN_RETRY_JITTER_SECONDS)
+        return default_delay + jitter
 
     async def fetch_key_summaries(
         self,

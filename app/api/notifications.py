@@ -12,7 +12,7 @@ from app.schemas.notification import (
     NotificationSettingResponse,
     NotificationSettingUpdate,
 )
-from app.services.notification import get_notification_setting, send_test_email
+from app.services.notification import get_notification_setting, notification_config_errors, send_test_email
 
 router = APIRouter(tags=["notifications"])
 
@@ -31,6 +31,13 @@ def update_settings(payload: NotificationSettingUpdate, db: Session = Depends(ge
         setattr(setting, field, value)
     if smtp_password:
         setting.smtp_password_encrypted = encrypt_secret(smtp_password)
+    if not notification_config_errors(setting) and setting.last_error:
+        incomplete_config_markers = (
+            "邮件通知配置不完整",
+            "邮件通知未启用或 SMTP 配置不完整",
+        )
+        if any(marker in setting.last_error for marker in incomplete_config_markers):
+            setting.last_error = None
     db.add(setting)
     db.commit()
     db.refresh(setting)

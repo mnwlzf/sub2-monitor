@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from croniter import croniter
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from app.core.database import get_db
 from app.core.security import encrypt_secret, utcnow

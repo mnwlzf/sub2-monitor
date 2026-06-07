@@ -1220,6 +1220,9 @@ async function saveNotification() {
   savingNotification.value = true
   try {
     const payload = { ...notificationForm }
+    if (payload.smtp_use_ssl) {
+      payload.smtp_use_tls = false
+    }
     if (!payload.smtp_password) {
       delete payload.smtp_password
     }

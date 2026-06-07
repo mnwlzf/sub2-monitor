@@ -14,6 +14,7 @@ from app.models.notification import NotificationRecipient, NotificationSetting
 from app.models.platform import PlatformStatus, RelayPlatform
 from app.models.snapshot import DiscoveredChannelRateSnapshot, GroupRateSnapshot
 from app.services.monitoring import run_platform_balance_monitor, run_platform_rate_monitor
+from app.services.notification import send_mail
 from app.services.provider_strategy import (
     AccountBalanceResult,
     DiscoveredChannelRateResult,
@@ -224,6 +225,22 @@ def test_rate_monitor_sends_email_when_configured_group_rate_changes(monkeypatch
         assert "0.1 -> 0.25" in body
     finally:
         db.close()
+
+
+def test_notification_error_lists_missing_smtp_fields() -> None:
+    setting = NotificationSetting(enabled=False, smtp_port=587)
+    recipient = NotificationRecipient(name="Ops", email="ops@example.com", enabled=True)
+
+    try:
+        send_mail(setting, [recipient], "Subject", "Body")
+    except ValueError as exc:
+        message = str(exc)
+    else:
+        raise AssertionError("send_mail should fail when SMTP config is incomplete")
+
+    assert "未启用邮件通知" in message
+    assert "未配置 SMTP 主机" in message
+    assert "未配置发件人邮箱" in message
 
 
 def test_balance_monitor_adds_key_group_as_group_monitor(monkeypatch) -> None:

@@ -30,12 +30,22 @@ def get_notification_setting(db: Session) -> NotificationSetting:
 
 
 def notification_ready(setting: NotificationSetting) -> bool:
-    return bool(
-        setting.enabled
-        and setting.smtp_host
-        and setting.smtp_port
-        and setting.from_email
-    )
+    return not notification_config_errors(setting)
+
+
+def notification_config_errors(setting: NotificationSetting) -> list[str]:
+    errors: list[str] = []
+    if not setting.enabled:
+        errors.append("未启用邮件通知")
+    if not setting.smtp_host or not setting.smtp_host.strip():
+        errors.append("未配置 SMTP 主机")
+    if not setting.smtp_port:
+        errors.append("未配置 SMTP 端口")
+    if not setting.from_email or not setting.from_email.strip():
+        errors.append("未配置发件人邮箱")
+    if setting.smtp_use_ssl and setting.smtp_use_tls:
+        errors.append("SSL 和 STARTTLS 不能同时启用")
+    return errors
 
 
 def send_mail(
@@ -44,11 +54,12 @@ def send_mail(
     subject: str,
     body: str,
 ) -> None:
-    if not notification_ready(setting):
-        raise ValueError("邮件通知未启用或 SMTP 配置不完整")
+    config_errors = notification_config_errors(setting)
+    if config_errors:
+        raise ValueError("邮件通知配置不完整：" + "；".join(config_errors))
     recipient_emails = [recipient.email for recipient in recipients if recipient.enabled]
     if not recipient_emails:
-        raise ValueError("没有启用的邮件收件人")
+        raise ValueError("邮件通知配置不完整：没有启用的邮件收件人")
 
     message = EmailMessage()
     message["Subject"] = subject
@@ -108,10 +119,15 @@ def notify_group_rate_changes(
     if not changes:
         return
     setting = get_notification_setting(db)
-    if not notification_ready(setting):
+    config_errors = notification_config_errors(setting)
+    if config_errors:
+        setting.last_error = "邮件通知配置不完整：" + "；".join(config_errors)
+        db.add(setting)
         return
     recipients = enabled_recipients(db)
     if not recipients:
+        setting.last_error = "邮件通知配置不完整：没有启用的邮件收件人"
+        db.add(setting)
         return
 
     lines = [

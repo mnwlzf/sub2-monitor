@@ -183,33 +183,6 @@
                   <div v-else class="embedded-empty">未配置账号</div>
                 </div>
 
-                <div class="embedded-metrics">
-                  <div>
-                    <span>账号数</span>
-                    <strong>{{ row.account_monitors.length }}</strong>
-                  </div>
-                  <div>
-                    <span>总余额</span>
-                    <strong>{{ formatMoney(row.balance) }}</strong>
-                  </div>
-                  <div>
-                    <span>总消耗</span>
-                    <strong>{{ formatMoney(row.quota_used) }}</strong>
-                  </div>
-                  <div>
-                    <span>最后采集</span>
-                    <strong>{{ formatTime(row.checked_at) }}</strong>
-                  </div>
-                  <div>
-                    <span>充值/到账</span>
-                    <strong>{{ formatRateConversion(row) }}</strong>
-                  </div>
-                  <div>
-                    <span>充值倍率系数</span>
-                    <strong>{{ formatMultiplier(row.effective_rate_factor) }}</strong>
-                  </div>
-                </div>
-
                 <div class="embedded-group-rate-panel">
                   <div class="embedded-section-label">接口分组速览</div>
                   <div

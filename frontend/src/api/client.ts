@@ -235,6 +235,7 @@ export interface NotificationSetting {
   smtp_use_ssl: boolean
   smtp_use_tls: boolean
   from_email: string | null
+  from_name: string | null
   last_error: string | null
   last_tested_at: string | null
   updated_at: string
@@ -249,6 +250,7 @@ export interface NotificationSettingPayload {
   smtp_use_ssl: boolean
   smtp_use_tls: boolean
   from_email: string | null
+  from_name: string | null
 }
 
 export interface NotificationRecipient {

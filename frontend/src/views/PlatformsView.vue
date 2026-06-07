@@ -435,50 +435,66 @@
                   </div>
                 </div>
                 <div class="embedded-platform-controls">
-                  <el-button :loading="savingNotification" type="primary" @click="saveNotification">保存配置</el-button>
+                  <el-button :loading="savingNotification" type="primary" @click="saveNotification()">保存配置</el-button>
                 </div>
               </header>
 
-              <el-form class="notification-form" :model="notificationForm" label-width="120px">
-                <el-form-item label="启用通知">
-                  <el-switch v-model="notificationForm.enabled" />
-                </el-form-item>
+              <el-form class="notification-form notification-form-grid" :model="notificationForm" label-position="top">
                 <el-form-item label="SMTP 主机">
-                  <el-input v-model="notificationForm.smtp_host" placeholder="smtp.example.com" />
+                  <el-input v-model="notificationForm.smtp_host" placeholder="smtp.qq.com" />
                 </el-form-item>
                 <el-form-item label="SMTP 端口">
-                  <el-input-number v-model="notificationForm.smtp_port" :min="1" :max="65535" class="full-width" />
+                  <el-input-number v-model="notificationForm.smtp_port" :min="1" :max="65535" class="full-width" controls-position="right" />
                 </el-form-item>
                 <el-form-item label="SMTP 用户">
-                  <el-input v-model="notificationForm.smtp_username" placeholder="发信账号，可留空" />
+                  <el-input v-model="notificationForm.smtp_username" placeholder="3097553108@qq.com" />
                 </el-form-item>
                 <el-form-item label="SMTP 密码">
                   <el-input
                     v-model="notificationForm.smtp_password"
-                    :placeholder="notificationSetting?.has_smtp_password ? '留空则不修改已有密码' : '请输入 SMTP 密码'"
+                    :placeholder="notificationSetting?.has_smtp_password ? '留空则不修改已有密码' : '请输入 SMTP 授权码'"
                     show-password
                     type="password"
                   />
+                  <div v-if="notificationSetting?.has_smtp_password" class="form-help">密码已配置，留空会保留当前值。</div>
                 </el-form-item>
-                <el-form-item label="SSL">
-                  <el-switch v-model="notificationForm.smtp_use_ssl" />
+                <el-form-item label="发件人邮箱">
+                  <el-input v-model="notificationForm.from_email" placeholder="3097553108@qq.com" />
                 </el-form-item>
-                <el-form-item label="STARTTLS">
-                  <el-switch v-model="notificationForm.smtp_use_tls" :disabled="notificationForm.smtp_use_ssl" />
-                </el-form-item>
-                <el-form-item label="发件人">
-                  <el-input v-model="notificationForm.from_email" placeholder="bot@example.com" />
+                <el-form-item label="发件人名称">
+                  <el-input v-model="notificationForm.from_name" placeholder="Sub2API" />
                 </el-form-item>
               </el-form>
+
+              <div class="notification-switches">
+                <div class="notification-switch-item">
+                  <div>
+                    <strong>启用通知</strong>
+                    <span>倍率变化时向启用的收件人发送邮件</span>
+                  </div>
+                  <el-switch v-model="notificationForm.enabled" />
+                </div>
+                <div class="notification-switch-item">
+                  <div>
+                    <strong>使用 SSL</strong>
+                    <span>QQ 邮箱 465 端口建议开启 SSL</span>
+                  </div>
+                  <el-switch v-model="notificationForm.smtp_use_ssl" />
+                </div>
+                <div class="notification-switch-item">
+                  <div>
+                    <strong>使用 STARTTLS</strong>
+                    <span>587 端口通常使用 STARTTLS，不能和 SSL 同时启用</span>
+                  </div>
+                  <el-switch v-model="notificationForm.smtp_use_tls" :disabled="notificationForm.smtp_use_ssl" />
+                </div>
+              </div>
 
               <div class="notification-status">
                 <el-tag :type="notificationForm.enabled ? 'success' : 'info'" effect="light">
                   {{ notificationForm.enabled ? '已启用' : '未启用' }}
                 </el-tag>
                 <span>最近测试：{{ formatTime(notificationSetting?.last_tested_at ?? null) }}</span>
-              </div>
-              <div v-if="notificationSetting?.last_error" class="embedded-account-error">
-                {{ notificationSetting.last_error }}
               </div>
             </article>
 
@@ -1060,6 +1076,7 @@ const notificationForm = reactive<NotificationSettingPayload>({
   smtp_use_ssl: false,
   smtp_use_tls: true,
   from_email: null,
+  from_name: null,
 })
 
 const recipientForm = reactive<NotificationRecipientPayload>({
@@ -1213,10 +1230,11 @@ function syncNotificationForm(setting: NotificationSetting) {
     smtp_use_ssl: setting.smtp_use_ssl,
     smtp_use_tls: setting.smtp_use_tls,
     from_email: setting.from_email,
+    from_name: setting.from_name,
   })
 }
 
-async function saveNotification() {
+async function saveNotification(showError = true) {
   savingNotification.value = true
   try {
     const payload = { ...notificationForm }
@@ -1230,6 +1248,12 @@ async function saveNotification() {
     notificationSetting.value = saved
     syncNotificationForm(saved)
     ElMessage.success('通知配置已保存')
+    return saved
+  } catch (error) {
+    if (showError) {
+      await showNotificationError('保存通知配置失败', error)
+    }
+    throw error
   } finally {
     savingNotification.value = false
   }
@@ -1263,9 +1287,9 @@ async function removeRecipient(row: NotificationRecipient) {
 }
 
 async function testRecipient(row: NotificationRecipient) {
-  await saveNotification()
   testingNotification.value = true
   try {
+    await saveNotification(false)
     await testNotificationRecipient(row.id)
     ElMessage.success(`测试邮件已发送给 ${row.email}`)
     const [latestSetting, latestRecipients] = await Promise.all([
@@ -1275,9 +1299,52 @@ async function testRecipient(row: NotificationRecipient) {
     notificationSetting.value = latestSetting
     notificationRecipients.value = latestRecipients
     syncNotificationForm(latestSetting)
+  } catch (error) {
+    const [latestSetting, latestRecipients] = await Promise.all([
+      fetchNotificationSetting(),
+      fetchNotificationRecipients(),
+    ])
+    notificationSetting.value = latestSetting
+    notificationRecipients.value = latestRecipients
+    syncNotificationForm(latestSetting)
+    await showNotificationError('测试邮件发送失败', error)
   } finally {
     testingNotification.value = false
   }
+}
+
+function notificationErrorMessage(error: unknown): string {
+  if (typeof error === 'object' && error !== null && 'response' in error) {
+    const response = (error as { response?: { data?: { detail?: unknown } } }).response
+    const detail = response?.data?.detail
+    if (typeof detail === 'string' && detail.trim()) {
+      return detail
+    }
+    if (Array.isArray(detail)) {
+      return detail
+        .map((item) => {
+          if (typeof item === 'string') return item
+          if (typeof item === 'object' && item !== null && 'msg' in item) {
+            const msg = (item as { msg?: unknown }).msg
+            return typeof msg === 'string' ? msg : ''
+          }
+          return ''
+        })
+        .filter(Boolean)
+        .join('\n')
+    }
+  }
+  if (error instanceof Error && error.message) {
+    return error.message
+  }
+  return '操作失败，请检查 SMTP 配置和收件人设置。'
+}
+
+async function showNotificationError(title: string, error: unknown) {
+  await ElMessageBox.alert(notificationErrorMessage(error), title, {
+    type: 'error',
+    confirmButtonText: '知道了',
+  })
 }
 
 async function reloadDetail() {

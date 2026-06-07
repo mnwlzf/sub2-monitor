@@ -108,6 +108,7 @@ def ensure_schema() -> None:
         }
         notification_column_sql = {
             "smtp_use_ssl": "ALTER TABLE notification_settings ADD COLUMN smtp_use_ssl BOOLEAN NOT NULL DEFAULT 0",
+            "from_name": "ALTER TABLE notification_settings ADD COLUMN from_name VARCHAR(255)",
         }
         with engine.begin() as conn:
             for column, statement in notification_column_sql.items():

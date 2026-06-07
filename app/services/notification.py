@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from email.message import EmailMessage
+from email.utils import formataddr
 import smtplib
 
 from sqlalchemy import select
@@ -63,7 +64,7 @@ def send_mail(
 
     message = EmailMessage()
     message["Subject"] = subject
-    message["From"] = setting.from_email or ""
+    message["From"] = formataddr((setting.from_name or "", setting.from_email or ""))
     message["To"] = ", ".join(recipient_emails)
     message.set_content(body)
 

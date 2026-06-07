@@ -19,6 +19,7 @@ class NotificationSetting(Base):
     smtp_use_ssl: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     smtp_use_tls: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     from_email: Mapped[str | None] = mapped_column(String(255))
+    from_name: Mapped[str | None] = mapped_column(String(255))
     last_error: Mapped[str | None] = mapped_column(Text)
     last_tested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)

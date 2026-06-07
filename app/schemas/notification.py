@@ -14,6 +14,7 @@ class NotificationSettingResponse(BaseModel):
     smtp_use_ssl: bool
     smtp_use_tls: bool
     from_email: str | None
+    from_name: str | None
     last_error: str | None
     last_tested_at: datetime | None
     updated_at: datetime
@@ -28,6 +29,7 @@ class NotificationSettingUpdate(BaseModel):
     smtp_use_ssl: bool = False
     smtp_use_tls: bool = True
     from_email: str | None = Field(default=None, max_length=255)
+    from_name: str | None = Field(default=None, max_length=255)
 
     @field_validator("from_email")
     @classmethod
@@ -38,6 +40,13 @@ class NotificationSettingUpdate(BaseModel):
         if "@" not in value or value.startswith("@") or value.endswith("@"):
             raise ValueError("邮箱格式无效")
         return value
+
+    @field_validator("from_name")
+    @classmethod
+    def normalize_from_name(cls, value: str | None) -> str | None:
+        if value is None or not value.strip():
+            return None
+        return value.strip()
 
 
 class NotificationRecipientBase(BaseModel):

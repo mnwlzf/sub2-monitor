@@ -917,13 +917,13 @@ body {
 
 .embedded-account-list {
   display: grid;
-  grid-template-columns: repeat(2, minmax(360px, 1fr));
+  grid-template-columns: minmax(0, 1fr);
   gap: 10px;
 }
 
 .embedded-account-row {
   display: grid;
-  grid-template-columns: minmax(170px, 0.95fr) minmax(180px, 0.8fr) minmax(170px, 0.9fr);
+  grid-template-columns: minmax(220px, 1fr) minmax(240px, 0.75fr) minmax(220px, 0.9fr);
   gap: 12px;
   align-items: start;
   border: 1px solid #e8edf5;
@@ -964,7 +964,7 @@ body {
 
 .embedded-account-meta span {
   display: inline-flex;
-  max-width: 220px;
+  max-width: 100%;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1436,12 +1436,8 @@ body {
     justify-content: space-between;
   }
 
-  .embedded-account-list {
-    grid-template-columns: 1fr;
-  }
-
   .embedded-account-row {
-    grid-template-columns: minmax(180px, 0.9fr) minmax(260px, 0.8fr) minmax(220px, 1fr);
+    grid-template-columns: minmax(180px, 1fr) minmax(220px, 0.8fr) minmax(180px, 0.9fr);
   }
 }
 
@@ -1533,9 +1529,12 @@ body {
 @media (max-width: 460px) {
   .embedded-shell .stats-grid,
   .embedded-metrics,
-  .embedded-account-values,
   .embedded-trend-grid {
     grid-template-columns: 1fr;
+  }
+
+  .embedded-account-values {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .embedded-platform-title span {

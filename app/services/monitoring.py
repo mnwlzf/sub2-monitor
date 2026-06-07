@@ -21,6 +21,7 @@ from app.models.snapshot import (
     DiscoveredGroupRateSnapshot,
     GroupRateSnapshot,
 )
+from app.services.notification import GroupRateChange, notify_group_rate_changes
 from app.services.provider_strategy import (
     DiscoveredChannelRateResult,
     DiscoveredGroupRateResult,
@@ -175,6 +176,7 @@ async def run_platform_rate_monitor(db: Session, platform_id: int) -> RelayPlatf
 
     strategy = provider_registry.get(platform.provider_type)
     errors: list[str] = []
+    rate_changes: list[GroupRateChange] = []
     started_at = monotonic()
     logger.info(
         "rate monitor start platform_id=%s name=%s provider=%s site_strategy=%s groups=%s",
@@ -323,7 +325,7 @@ async def run_platform_rate_monitor(db: Session, platform_id: int) -> RelayPlatf
             )
             if configured_group is not None:
                 if configured_group.enabled:
-                    record_configured_group_rate(
+                    change = record_configured_group_rate(
                         db=db,
                         platform=platform,
                         group=configured_group,
@@ -332,6 +334,8 @@ async def run_platform_rate_monitor(db: Session, platform_id: int) -> RelayPlatf
                         error=item.error,
                         checked_at=checked_at,
                     )
+                    if change is not None:
+                        rate_changes.append(change)
             if item.error:
                 errors.append(f"group {item.name}: {item.error}")
                 logger.warning(
@@ -357,7 +361,7 @@ async def run_platform_rate_monitor(db: Session, platform_id: int) -> RelayPlatf
         checked_at = utcnow()
         try:
             result = await strategy.fetch_group_rate(platform, group)
-            record_configured_group_rate(
+            change = record_configured_group_rate(
                 db=db,
                 platform=platform,
                 group=group,
@@ -366,6 +370,8 @@ async def run_platform_rate_monitor(db: Session, platform_id: int) -> RelayPlatf
                 error=result.error,
                 checked_at=checked_at,
             )
+            if change is not None:
+                rate_changes.append(change)
             if result.error:
                 errors.append(f"group {group.name}: {result.error}")
                 logger.warning(
@@ -405,6 +411,7 @@ async def run_platform_rate_monitor(db: Session, platform_id: int) -> RelayPlatf
     now = utcnow()
     platform.rate_last_run_at = now
     platform.rate_next_run_at = croniter(platform.rate_cron, now).get_next(type(now))
+    notify_group_rate_changes(db, platform, rate_changes)
     update_platform_status(platform, errors)
     db.add(platform)
     db.commit()
@@ -573,9 +580,10 @@ def record_configured_group_rate(
     rpm_limit: int | None,
     error: str | None,
     checked_at: datetime | None = None,
-) -> None:
+) -> GroupRateChange | None:
     if checked_at is None:
         checked_at = utcnow()
+    previous_rate = group.rate_multiplier
     group.rate_multiplier = rate_multiplier
     group.rpm_limit = rpm_limit
     group.last_error = error
@@ -590,4 +598,15 @@ def record_configured_group_rate(
             error_message=error,
             created_at=checked_at,
         )
+    )
+    if error or previous_rate is None or rate_multiplier is None:
+        return None
+    if abs(previous_rate - rate_multiplier) <= 0.000000001:
+        return None
+    return GroupRateChange(
+        group_name=group.name,
+        external_group_id=group.external_group_id,
+        old_rate=previous_rate,
+        new_rate=rate_multiplier,
+        rpm_limit=rpm_limit,
     )

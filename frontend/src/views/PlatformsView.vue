@@ -423,6 +423,71 @@
           </section>
         </div>
 
+        <div v-else-if="activeEmbeddedView === 'notifications'" class="embedded-panel-list">
+          <section class="embedded-provider-group">
+            <div class="embedded-section-label">邮件通知</div>
+            <article class="embedded-platform-card notification-card">
+              <header class="embedded-platform-header">
+                <div class="embedded-platform-title">
+                  <div>
+                    <strong>SMTP 通知配置</strong>
+                    <span>分组倍率发生变化时发送邮件给指定收件人</span>
+                  </div>
+                </div>
+                <div class="embedded-platform-controls">
+                  <el-button :loading="testingNotification" @click="testNotification">发送测试邮件</el-button>
+                  <el-button :loading="savingNotification" type="primary" @click="saveNotification">保存配置</el-button>
+                </div>
+              </header>
+
+              <el-form class="notification-form" :model="notificationForm" label-width="120px">
+                <el-form-item label="启用通知">
+                  <el-switch v-model="notificationForm.enabled" />
+                </el-form-item>
+                <el-form-item label="SMTP 主机">
+                  <el-input v-model="notificationForm.smtp_host" placeholder="smtp.example.com" />
+                </el-form-item>
+                <el-form-item label="SMTP 端口">
+                  <el-input-number v-model="notificationForm.smtp_port" :min="1" :max="65535" class="full-width" />
+                </el-form-item>
+                <el-form-item label="SMTP 用户">
+                  <el-input v-model="notificationForm.smtp_username" placeholder="发信账号，可留空" />
+                </el-form-item>
+                <el-form-item label="SMTP 密码">
+                  <el-input
+                    v-model="notificationForm.smtp_password"
+                    :placeholder="notificationSetting?.has_smtp_password ? '留空则不修改已有密码' : '请输入 SMTP 密码'"
+                    show-password
+                    type="password"
+                  />
+                </el-form-item>
+                <el-form-item label="SSL">
+                  <el-switch v-model="notificationForm.smtp_use_ssl" />
+                </el-form-item>
+                <el-form-item label="STARTTLS">
+                  <el-switch v-model="notificationForm.smtp_use_tls" :disabled="notificationForm.smtp_use_ssl" />
+                </el-form-item>
+                <el-form-item label="发件人">
+                  <el-input v-model="notificationForm.from_email" placeholder="bot@example.com" />
+                </el-form-item>
+                <el-form-item label="收件人">
+                  <el-input v-model="notificationForm.recipient_email" placeholder="ops@example.com" />
+                </el-form-item>
+              </el-form>
+
+              <div class="notification-status">
+                <el-tag :type="notificationForm.enabled ? 'success' : 'info'" effect="light">
+                  {{ notificationForm.enabled ? '已启用' : '未启用' }}
+                </el-tag>
+                <span>最近测试：{{ formatTime(notificationSetting?.last_tested_at ?? null) }}</span>
+              </div>
+              <div v-if="notificationSetting?.last_error" class="embedded-account-error">
+                {{ notificationSetting.last_error }}
+              </div>
+            </article>
+          </section>
+        </div>
+
         <div v-else class="embedded-panel-list">
           <section v-for="group in previewPlatformGroups" :key="`settings-${group.key}`" class="embedded-provider-group">
             <div class="embedded-section-label">{{ group.label }}</div>
@@ -803,6 +868,7 @@ import {
   deletePlatform,
   fetchBalanceHistory,
   fetchDashboard,
+  fetchNotificationSetting,
   fetchPlatform,
   fetchPlatforms,
   fetchProviders,
@@ -811,7 +877,9 @@ import {
   runPlatformBalanceMonitor,
   runPlatformMonitor,
   runPlatformRateMonitor,
+  testNotificationSetting,
   updateAccountMonitor,
+  updateNotificationSetting,
   updatePlatform,
   type AccountKeySummary,
   type AccountMonitor,
@@ -822,6 +890,8 @@ import {
   type DiscoveredGroupRate,
   type GroupRateHistorySeries,
   type GroupMonitorPayload,
+  type NotificationSetting,
+  type NotificationSettingPayload,
   type PlatformDetail,
   type PlatformPayload,
   type PlatformStatus,
@@ -837,9 +907,12 @@ const stats = ref<DashboardStats | null>(null)
 const detail = ref<PlatformDetail | null>(null)
 const platformBalanceHistory = ref<Record<number, AccountBalanceHistorySeries[]>>({})
 const platformRateHistory = ref<Record<number, GroupRateHistorySeries[]>>({})
+const notificationSetting = ref<NotificationSetting | null>(null)
 const loading = ref(false)
 const saving = ref(false)
 const monitoring = ref(false)
+const savingNotification = ref(false)
+const testingNotification = ref(false)
 const dialogVisible = ref(false)
 const errorDialogVisible = ref(false)
 const detailVisible = ref(false)
@@ -849,7 +922,7 @@ const editing = ref<RelayPlatform | null>(null)
 const accountEditing = ref<AccountMonitor | null>(null)
 const formRef = ref<FormInstance>()
 const collapsedGroupRatePanels = ref<Array<number | string>>([])
-const activeEmbeddedView = ref<'overview' | 'balances' | 'rates' | 'groupRates' | 'settings'>('overview')
+const activeEmbeddedView = ref<'overview' | 'balances' | 'rates' | 'groupRates' | 'notifications' | 'settings'>('overview')
 const maxAccountKeysShown = 3
 
 const embeddedMenuItems = [
@@ -872,6 +945,11 @@ const embeddedMenuItems = [
     key: 'groupRates',
     label: '分组倍率',
     description: '按平台查看全部分组倍率',
+  },
+  {
+    key: 'notifications',
+    label: '邮件通知',
+    description: '倍率变化 SMTP 告警',
   },
   {
     key: 'settings',
@@ -930,6 +1008,18 @@ const groupForm = reactive<GroupMonitorPayload>({
   name: '',
   external_group_id: '',
   enabled: true,
+})
+
+const notificationForm = reactive<NotificationSettingPayload>({
+  enabled: false,
+  smtp_host: null,
+  smtp_port: 587,
+  smtp_username: null,
+  smtp_password: null,
+  smtp_use_ssl: false,
+  smtp_use_tls: true,
+  from_email: null,
+  recipient_email: null,
 })
 
 const rules: FormRules = {
@@ -1045,20 +1135,67 @@ async function openDetail(row: RelayPlatform) {
 async function load() {
   loading.value = true
   try {
-    const [providerRows, siteStrategyRows, dashboard, rows] = await Promise.all([
+    const [providerRows, siteStrategyRows, dashboard, rows, notification] = await Promise.all([
       fetchProviders(),
       fetchSiteStrategies(),
       fetchDashboard(),
       fetchPlatforms(),
+      fetchNotificationSetting(),
     ])
     const details = await Promise.all(rows.map((row) => fetchPlatform(row.id)))
     providers.value = providerRows
     siteStrategies.value = siteStrategyRows
     stats.value = dashboard
     platforms.value = details
+    notificationSetting.value = notification
+    syncNotificationForm(notification)
     await loadEmbeddedHistories(details.map((row) => row.id))
   } finally {
     loading.value = false
+  }
+}
+
+function syncNotificationForm(setting: NotificationSetting) {
+  Object.assign(notificationForm, {
+    enabled: setting.enabled,
+    smtp_host: setting.smtp_host,
+    smtp_port: setting.smtp_port,
+    smtp_username: setting.smtp_username,
+    smtp_password: null,
+    smtp_use_ssl: setting.smtp_use_ssl,
+    smtp_use_tls: setting.smtp_use_tls,
+    from_email: setting.from_email,
+    recipient_email: setting.recipient_email,
+  })
+}
+
+async function saveNotification() {
+  savingNotification.value = true
+  try {
+    const payload = { ...notificationForm }
+    if (!payload.smtp_password) {
+      delete payload.smtp_password
+    }
+    const saved = await updateNotificationSetting(payload)
+    notificationSetting.value = saved
+    syncNotificationForm(saved)
+    ElMessage.success('通知配置已保存')
+  } finally {
+    savingNotification.value = false
+  }
+}
+
+async function testNotification() {
+  await saveNotification()
+  testingNotification.value = true
+  try {
+    await testNotificationSetting()
+    ElMessage.success('测试邮件已发送')
+    const latest = await fetchNotificationSetting()
+    notificationSetting.value = latest
+    syncNotificationForm(latest)
+  } finally {
+    testingNotification.value = false
   }
 }
 

@@ -11,7 +11,13 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from app.api.router import api_router
 from app.core.config import get_settings
 from app.core.database import SessionLocal, ensure_schema
-from app.models.all import AuthSession, PlatformSnapshot, RelayPlatform, User  # noqa: F401
+from app.models.all import (  # noqa: F401
+    AuthSession,
+    NotificationSetting,
+    PlatformSnapshot,
+    RelayPlatform,
+    User,
+)
 from app.services.auth import bootstrap_first_user, delete_expired_sessions
 from app.services.scheduler import MonitorScheduler
 

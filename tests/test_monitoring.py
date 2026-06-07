@@ -6,9 +6,11 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 
 import app.models.all  # noqa: F401
+import app.services.notification as notification_service
 from app.api.platforms import build_account_balance_points
 from app.core.database import Base
 from app.models.monitor import PlatformAccountMonitor, PlatformGroupMonitor
+from app.models.notification import NotificationSetting
 from app.models.platform import PlatformStatus, RelayPlatform
 from app.models.snapshot import DiscoveredChannelRateSnapshot, GroupRateSnapshot
 from app.services.monitoring import run_platform_balance_monitor, run_platform_rate_monitor
@@ -161,6 +163,58 @@ def test_rate_monitor_persists_configured_group_snapshot_without_catalog(monkeyp
         assert refreshed_group.rate_multiplier == 0.25
         assert refreshed_group.rpm_limit == 120
         assert refreshed_group.checked_at is not None
+    finally:
+        db.close()
+
+
+def test_rate_monitor_sends_email_when_configured_group_rate_changes(monkeypatch) -> None:
+    monkeypatch.setitem(provider_registry._strategies, "fake", FakeProvider())
+    sent_messages: list[tuple[str, str]] = []
+
+    def fake_send_mail(setting, subject: str, body: str) -> None:
+        sent_messages.append((subject, body))
+
+    monkeypatch.setattr(notification_service, "send_mail", fake_send_mail)
+    db = make_session()
+    try:
+        platform = RelayPlatform(
+            name="Fake",
+            base_url="https://example.com",
+            provider_type="fake",
+            rate_cron="*/5 * * * *",
+            balance_cron="*/10 * * * *",
+            status=PlatformStatus.unknown,
+        )
+        db.add(platform)
+        db.flush()
+        db.add(
+            NotificationSetting(
+                id=1,
+                enabled=True,
+                smtp_host="smtp.example.com",
+                smtp_port=587,
+                smtp_username="bot@example.com",
+                from_email="bot@example.com",
+                recipient_email="ops@example.com",
+            )
+        )
+        group = PlatformGroupMonitor(
+            platform_id=platform.id,
+            name="codex",
+            external_group_id="codex",
+            enabled=True,
+            rate_multiplier=0.1,
+        )
+        db.add(group)
+        db.commit()
+
+        asyncio.run(run_platform_rate_monitor(db, platform.id))
+
+        assert len(sent_messages) == 1
+        subject, body = sent_messages[0]
+        assert "Fake" in subject
+        assert "codex" in body
+        assert "0.1 -> 0.25" in body
     finally:
         db.close()
 

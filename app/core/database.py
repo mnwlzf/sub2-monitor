@@ -101,3 +101,15 @@ def ensure_schema() -> None:
             for column, statement in discovered_snapshot_column_sql.items():
                 if column not in discovered_snapshot_columns:
                     conn.execute(text(statement))
+
+    if "notification_settings" in table_names:
+        notification_columns = {
+            column["name"] for column in inspector.get_columns("notification_settings")
+        }
+        notification_column_sql = {
+            "smtp_use_ssl": "ALTER TABLE notification_settings ADD COLUMN smtp_use_ssl BOOLEAN NOT NULL DEFAULT 0",
+        }
+        with engine.begin() as conn:
+            for column, statement in notification_column_sql.items():
+                if column not in notification_columns:
+                    conn.execute(text(statement))

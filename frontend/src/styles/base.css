@@ -282,6 +282,24 @@ body {
   min-width: 0;
 }
 
+.notification-card {
+  max-width: 860px;
+}
+
+.notification-form {
+  max-width: 680px;
+  padding-top: 16px;
+}
+
+.notification-status {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 10px;
+  color: #64748b;
+  font-size: 12px;
+}
+
 .monitor-section-title {
   display: flex;
   align-items: center;

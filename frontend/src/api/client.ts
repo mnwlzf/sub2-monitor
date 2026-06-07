@@ -226,6 +226,33 @@ export interface GroupRateHistorySeries {
   points: GroupRateHistoryPoint[]
 }
 
+export interface NotificationSetting {
+  enabled: boolean
+  smtp_host: string | null
+  smtp_port: number
+  smtp_username: string | null
+  has_smtp_password: boolean
+  smtp_use_ssl: boolean
+  smtp_use_tls: boolean
+  from_email: string | null
+  recipient_email: string | null
+  last_error: string | null
+  last_tested_at: string | null
+  updated_at: string
+}
+
+export interface NotificationSettingPayload {
+  enabled: boolean
+  smtp_host: string | null
+  smtp_port: number
+  smtp_username: string | null
+  smtp_password?: string | null
+  smtp_use_ssl: boolean
+  smtp_use_tls: boolean
+  from_email: string | null
+  recipient_email: string | null
+}
+
 export const http = axios.create({
   baseURL: `${import.meta.env.BASE_URL}api`,
   withCredentials: true,
@@ -329,6 +356,20 @@ export async function fetchBalanceHistory(id: number) {
 export async function fetchRateHistory(id: number) {
   const { data } = await http.get<GroupRateHistorySeries[]>(`/platforms/${id}/history/rates`)
   return data
+}
+
+export async function fetchNotificationSetting() {
+  const { data } = await http.get<NotificationSetting>('/notification-settings')
+  return data
+}
+
+export async function updateNotificationSetting(payload: NotificationSettingPayload) {
+  const { data } = await http.put<NotificationSetting>('/notification-settings', payload)
+  return data
+}
+
+export async function testNotificationSetting() {
+  await http.post('/notification-settings/test')
 }
 
 export async function createAccountMonitor(platformId: number, payload: AccountMonitorPayload) {

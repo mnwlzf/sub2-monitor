@@ -4,6 +4,7 @@ from app.models.monitor import (
     PlatformDiscoveredGroupRate,
     PlatformGroupMonitor,
 )
+from app.models.notification import NotificationSetting
 from app.models.platform import RelayPlatform
 from app.models.session import AuthSession
 from app.models.snapshot import (
@@ -26,6 +27,7 @@ __all__ = [
     "DiscoveredChannelRateSnapshot",
     "DiscoveredGroupRateSnapshot",
     "GroupRateSnapshot",
+    "NotificationSetting",
     "RelayPlatform",
     "User",
 ]

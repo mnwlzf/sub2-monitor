@@ -12,6 +12,7 @@
 
 body {
   margin: 0;
+  overflow: hidden;
   min-width: 320px;
   background: #f5f7fb;
 }
@@ -21,11 +22,15 @@ body {
 }
 
 .app-shell {
+  height: 100vh;
   min-height: 100vh;
+  overflow: hidden;
 }
 
 .main-panel {
+  height: 100vh;
   min-width: 0;
+  overflow: hidden;
 }
 
 .sidebar {
@@ -100,6 +105,8 @@ body {
 }
 
 .content {
+  height: calc(100vh - 72px);
+  overflow: hidden;
   padding: 24px;
 }
 
@@ -669,16 +676,16 @@ body {
 .embedded-workspace {
   display: grid;
   gap: 12px;
+  height: 100%;
   grid-template-columns: 220px minmax(0, 1fr);
-  min-height: calc(100vh - 120px);
+  min-height: 0;
+  overflow: hidden;
 }
 
 .embedded-menu {
-  position: sticky;
-  top: 24px;
   display: flex;
   width: 220px;
-  max-height: calc(100vh - 48px);
+  max-height: 100%;
   flex-direction: column;
   gap: 8px;
   align-self: start;
@@ -755,9 +762,12 @@ body {
 
 .embedded-render {
   display: grid;
+  max-height: 100%;
   min-width: 0;
   align-content: start;
   gap: 12px;
+  overflow-y: auto;
+  padding-right: 2px;
 }
 
 .embedded-render-head {
@@ -1767,6 +1777,21 @@ body {
 }
 
 @media (max-width: 760px) {
+  body {
+    overflow: auto;
+  }
+
+  .app-shell,
+  .main-panel {
+    height: auto;
+    overflow: visible;
+  }
+
+  .content {
+    height: auto;
+    overflow: visible;
+  }
+
   .embedded-metrics,
   .embedded-trends {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1774,7 +1799,9 @@ body {
 
   .embedded-workspace {
     grid-template-columns: 1fr;
+    height: auto;
     min-height: 0;
+    overflow: visible;
   }
 
   .embedded-menu {
@@ -1789,6 +1816,12 @@ body {
 
   .embedded-menu-brand {
     grid-column: 1 / -1;
+  }
+
+  .embedded-render {
+    max-height: none;
+    overflow: visible;
+    padding-right: 0;
   }
 
   .embedded-render-head {

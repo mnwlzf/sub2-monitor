@@ -150,7 +150,8 @@
         <el-table
           v-loading="prioritySyncLoading || prioritySyncRunning"
           :data="prioritySyncRun?.items ?? []"
-          class="sql-log-table"
+          :height="prioritySyncTableHeight"
+          class="sql-log-table priority-sync-table"
           :row-key="prioritySyncRowKey"
         >
           <el-table-column label="状态" width="92">
@@ -165,7 +166,7 @@
               {{ row.priority ?? '-' }}
             </template>
           </el-table-column>
-          <el-table-column label="平台 / base_url" min-width="260">
+          <el-table-column label="平台 / base_url" width="360">
             <template #default="{ row }">
               <div class="priority-sync-main">
                 <strong>{{ row.platform_name }}</strong>
@@ -173,7 +174,7 @@
               </div>
             </template>
           </el-table-column>
-          <el-table-column label="最低有效倍率" min-width="170">
+          <el-table-column label="最低有效倍率" width="220">
             <template #default="{ row }">
               <div class="priority-sync-rate">
                 <strong>{{ formatMultiplier(row.effective_rate_multiplier) }}</strong>
@@ -181,7 +182,7 @@
               </div>
             </template>
           </el-table-column>
-          <el-table-column label="候选分组" min-width="260">
+          <el-table-column label="候选分组" width="360">
             <template #default="{ row }">
               <div class="priority-sync-groups">
                 <el-tag
@@ -202,7 +203,7 @@
               {{ row.matched_accounts ?? '-' }} / {{ row.updated_accounts ?? '-' }}
             </template>
           </el-table-column>
-          <el-table-column label="错误" min-width="180">
+          <el-table-column label="错误" width="260">
             <template #default="{ row }">
               <span class="sql-error-cell">{{ row.error_message || '-' }}</span>
             </template>
@@ -255,8 +256,14 @@
         </div>
       </div>
 
-      <el-table v-loading="logsLoading" :data="logs.items" class="sql-log-table" row-key="id">
-        <el-table-column label="时间" min-width="170">
+      <el-table
+        v-loading="logsLoading"
+        :data="logs.items"
+        :height="sqlLogTableHeight"
+        class="sql-log-table"
+        row-key="id"
+      >
+        <el-table-column label="时间" width="180">
           <template #default="{ row }">
             {{ formatTime(row.created_at) }}
           </template>
@@ -268,8 +275,8 @@
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="操作" min-width="130" prop="operation" />
-        <el-table-column label="执行人" min-width="120">
+        <el-table-column label="操作" width="180" prop="operation" />
+        <el-table-column label="执行人" width="140">
           <template #default="{ row }">
             {{ row.executed_by_username || '-' }}
           </template>
@@ -279,12 +286,12 @@
             {{ row.affected_rows ?? '-' }}
           </template>
         </el-table-column>
-        <el-table-column label="SQL" min-width="280">
+        <el-table-column label="SQL" width="520">
           <template #default="{ row }">
             <code class="sql-inline">{{ sqlSummary(row.sql_text) }}</code>
           </template>
         </el-table-column>
-        <el-table-column label="错误" min-width="180">
+        <el-table-column label="错误" width="260">
           <template #default="{ row }">
             <span class="sql-error-cell">{{ row.error_message || '-' }}</span>
           </template>
@@ -300,7 +307,7 @@
         <el-pagination
           v-model:current-page="currentPage"
           v-model:page-size="pageSize"
-          :page-sizes="[25, 50, 100, 200]"
+          :page-sizes="[10, 25, 50, 100]"
           :total="logs.total"
           background
           layout="total, sizes, prev, pager, next"
@@ -378,7 +385,7 @@ const prioritySyncRun = ref<Sub2APIPrioritySyncRun | null>(null)
 const logs = ref<Sub2APISQLLogPage>({
   items: [],
   total: 0,
-  limit: 25,
+  limit: 10,
   offset: 0,
 })
 const filters = reactive({
@@ -393,7 +400,9 @@ const logsLoading = ref(false)
 const detailVisible = ref(false)
 const selectedLog = ref<Sub2APISQLLog | null>(null)
 const currentPage = ref(1)
-const pageSize = ref(25)
+const pageSize = ref(10)
+const prioritySyncTableHeight = 456
+const sqlLogTableHeight = 456
 
 const statusLabel = computed(() => {
   if (!status.value?.config.configured) {

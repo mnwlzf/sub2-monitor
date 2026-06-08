@@ -1657,8 +1657,9 @@ body {
 .priority-sync-groups {
   display: flex;
   gap: 6px;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   min-width: 0;
+  overflow: hidden;
 }
 
 .sql-log-toolbar {
@@ -1679,6 +1680,19 @@ body {
 
 .sql-log-table {
   width: 100%;
+}
+
+.sql-log-table .el-table__cell {
+  vertical-align: top;
+}
+
+.sql-log-table .cell {
+  line-height: 1.45;
+}
+
+.priority-sync-table .el-table__body-wrapper,
+.sql-log-table .el-table__body-wrapper {
+  overflow: auto;
 }
 
 .sql-inline {

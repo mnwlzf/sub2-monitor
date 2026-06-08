@@ -442,8 +442,58 @@ class GenericNewApiSiteStrategy(NewApiSiteStrategy):
         provider: "NewApiStrategy",
         platform: RelayPlatform,
     ) -> list[DiscoveredGroupRateResult] | None:
-        site_url = self.site_url(platform)
         auth_headers = await provider.resolve_management_headers(platform)
+        errors: list[str] = []
+        try:
+            return await self.fetch_group_catalog_with_headers(provider, platform, auth_headers)
+        except ValueError as exc:
+            errors.append(str(exc))
+
+        fallback_candidates: list[dict[str, str]] = []
+
+        def add_fallback_candidate(headers: dict[str, str] | None) -> None:
+            if not headers:
+                return
+            candidate = dict(headers)
+            if candidate == auth_headers:
+                return
+            if candidate in fallback_candidates:
+                return
+            fallback_candidates.append(candidate)
+
+        if "Authorization" in auth_headers and "Cookie" in auth_headers:
+            cookie_only_headers = dict(auth_headers)
+            cookie_only_headers.pop("Authorization", None)
+            add_fallback_candidate(cookie_only_headers)
+
+        for headers in fallback_candidates:
+            try:
+                return await self.fetch_group_catalog_with_headers(provider, platform, headers)
+            except ValueError as exc:
+                errors.append(str(exc))
+
+        fallback_candidates = []
+        add_fallback_candidate(await provider.login_management_headers(platform, force_refresh=True))
+        for candidate in await provider.login_management_header_candidates(platform):
+            add_fallback_candidate(candidate)
+
+        for headers in fallback_candidates:
+            try:
+                return await self.fetch_group_catalog_with_headers(provider, platform, headers)
+            except ValueError as exc:
+                errors.append(str(exc))
+
+        if errors:
+            raise ValueError(errors[-1])
+        return None
+
+    async def fetch_group_catalog_with_headers(
+        self,
+        provider: "NewApiStrategy",
+        platform: RelayPlatform,
+        headers: dict[str, str],
+    ) -> list[DiscoveredGroupRateResult] | None:
+        site_url = self.site_url(platform)
         async with httpx.AsyncClient(
             base_url=site_url,
             follow_redirects=True,
@@ -452,20 +502,32 @@ class GenericNewApiSiteStrategy(NewApiSiteStrategy):
                 "Cache-Control": "no-store",
                 "Origin": self.site_origin(platform),
                 "Referer": f"{site_url}login",
-                **auth_headers,
+                **headers,
             },
             timeout=provider.timeout_seconds,
         ) as client:
             response = await client.get(self.GROUPS_ENDPOINT)
-            if response.status_code >= 400:
-                raise ValueError(
-                    f"newapi group catalog endpoint returned HTTP {response.status_code}"
-                )
             payload = self.safe_json(response)
+            if response.status_code >= 400:
+                message = self.response_message(payload)
+                suffix = f": {message}" if message else f" ({self.response_debug_summary(response, payload)})"
+                raise ValueError(
+                    f"newapi group catalog endpoint returned HTTP {response.status_code}{suffix}"
+                )
+            if self.response_failed(payload):
+                message = self.response_message(payload)
+                if message:
+                    raise ValueError(message)
+                raise ValueError(
+                    f"newapi group catalog failed ({self.response_debug_summary(response, payload)})"
+                )
 
         groups = self.parse_group_catalog_payload(payload)
         if groups is None:
-            raise ValueError("newapi group catalog response missing data")
+            raise ValueError(
+                "newapi group catalog response missing data "
+                f"({self.response_debug_summary(response, payload)})"
+            )
         return groups
 
     async def login_headers_for_account(
@@ -576,12 +638,22 @@ class GenericNewApiSiteStrategy(NewApiSiteStrategy):
 
     @staticmethod
     def safe_json(response: httpx.Response) -> Any:
-        if not response.headers.get("content-type", "").lower().startswith("application/json"):
-            return {}
         try:
             return response.json()
         except ValueError:
             return {}
+
+    @staticmethod
+    def response_failed(payload: Any) -> bool:
+        return NewApiStrategy.response_failed(payload)
+
+    @staticmethod
+    def response_message(payload: Any) -> str | None:
+        return NewApiStrategy.response_message(payload)
+
+    @staticmethod
+    def response_debug_summary(response: httpx.Response, payload: Any) -> str:
+        return NewApiStrategy.response_debug_summary(response, payload)
 
     async def fetch_quota_per_unit(
         self,
@@ -1612,6 +1684,37 @@ class NewApiStrategy(ProviderStrategy):
             return None
         message = payload.get("message") or payload.get("msg") or payload.get("error")
         return str(message) if message else None
+
+    @staticmethod
+    def response_debug_summary(response: httpx.Response, payload: Any) -> str:
+        content_type = response.headers.get("content-type", "").split(";", 1)[0] or "unknown"
+        parts = [
+            f"status={response.status_code}",
+            f"content_type={content_type}",
+        ]
+        if isinstance(payload, dict):
+            if payload:
+                parts.append(f"json_keys={','.join(str(key) for key in list(payload)[:8])}")
+                message = NewApiStrategy.response_message(payload)
+                if message:
+                    parts.append(f"message={NewApiStrategy.truncate_debug_text(message)!r}")
+                if "success" in payload:
+                    parts.append(f"success={payload.get('success')!r}")
+            else:
+                parts.append(f"body={NewApiStrategy.truncate_debug_text(response.text)!r}")
+        elif isinstance(payload, list):
+            parts.append("json_type=list")
+            parts.append(f"json_len={len(payload)}")
+        else:
+            parts.append(f"body={NewApiStrategy.truncate_debug_text(response.text)!r}")
+        return " ".join(parts)
+
+    @staticmethod
+    def truncate_debug_text(value: Any, limit: int = 180) -> str:
+        text = " ".join(str(value or "").split())
+        if len(text) <= limit:
+            return text
+        return f"{text[:limit]}..."
 
     @staticmethod
     def extract_user_id(payload: Any) -> int | str | None:

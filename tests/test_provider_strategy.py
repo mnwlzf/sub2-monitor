@@ -133,6 +133,144 @@ def test_newapi_group_catalog_fetches_self_groups_with_platform_token(monkeypatc
     assert result[0].description == "Claude MAX（满血，测试100%，特价不稳定）"
 
 
+def test_newapi_group_catalog_retries_with_cookie_when_access_token_is_rejected(monkeypatch) -> None:
+    class StubAsyncClient:
+        login_count = 0
+
+        def __init__(self, *args, **kwargs) -> None:
+            self.base_url = str(kwargs.get("base_url") or "")
+            self.headers = dict(kwargs.get("headers") or {})
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def get(self, path: str):
+            if path == "login":
+                return httpx.Response(
+                    200,
+                    text="ok",
+                    request=httpx.Request("GET", f"{self.base_url}{path}"),
+                )
+            if path == "api/user/self/groups":
+                if "Authorization" in self.headers:
+                    assert self.headers["Authorization"] == "Bearer stale-token-123"
+                    assert self.headers["Cookie"] == "session=session-token-123"
+                    assert self.headers["New-Api-User"] == "647"
+                    return httpx.Response(
+                        200,
+                        json={"success": False, "message": "invalid access token"},
+                        request=httpx.Request("GET", f"{self.base_url}{path}"),
+                    )
+                assert self.headers["Cookie"] == "session=session-token-123"
+                assert self.headers["New-Api-User"] == "647"
+                return httpx.Response(
+                    200,
+                    json={
+                        "success": True,
+                        "data": {
+                            "codex": {
+                                "desc": "Codex group",
+                                "ratio": 0.08,
+                            },
+                        },
+                    },
+                    request=httpx.Request("GET", f"{self.base_url}{path}"),
+                )
+            raise AssertionError(path)
+
+        async def post(self, path: str, json: dict):
+            if path == "api/user/login?turnstile=":
+                StubAsyncClient.login_count += 1
+                return httpx.Response(
+                    200,
+                    json={
+                        "success": True,
+                        "message": "",
+                        "data": {"id": 647, "username": json["username"]},
+                    },
+                    headers={"Set-Cookie": "session=session-token-123; Path=/; HttpOnly"},
+                    request=httpx.Request("POST", f"{self.base_url}{path}"),
+                )
+            raise AssertionError(path)
+
+    monkeypatch.setattr(provider_module.httpx, "AsyncClient", StubAsyncClient)
+
+    result = asyncio.run(
+        NewApiStrategy().fetch_group_catalog(
+            SimpleNamespace(
+                base_url="https://relayai.tech/",
+                site_strategy="generic",
+                api_key_encrypted=encrypt_secret("Bearer stale-token-123"),
+                auth_header_name="Authorization",
+                auth_header_prefix="Bearer",
+                account_monitors=[
+                    SimpleNamespace(
+                        enabled=True,
+                        external_account_id="user@example.com",
+                        username="user@example.com",
+                        password_encrypted=encrypt_secret("pw"),
+                    ),
+                ],
+            )
+        )
+    )
+
+    assert result is not None
+    assert result[0].external_group_id == "codex"
+    assert result[0].rate_multiplier == 0.08
+    assert StubAsyncClient.login_count == 1
+
+
+def test_newapi_group_catalog_missing_data_error_includes_response_summary(monkeypatch) -> None:
+    class StubAsyncClient:
+        def __init__(self, *args, **kwargs) -> None:
+            self.base_url = str(kwargs.get("base_url") or "")
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def get(self, path: str):
+            if path == "api/user/self/groups":
+                return httpx.Response(
+                    200,
+                    text="<html>login</html>",
+                    headers={"Content-Type": "text/html; charset=utf-8"},
+                    request=httpx.Request("GET", f"{self.base_url}{path}"),
+                )
+            raise AssertionError(path)
+
+    monkeypatch.setattr(provider_module.httpx, "AsyncClient", StubAsyncClient)
+
+    try:
+        asyncio.run(
+            NewApiStrategy().fetch_group_catalog(
+                SimpleNamespace(
+                    base_url="https://relayai.tech/",
+                    site_strategy="generic",
+                    api_key_encrypted=None,
+                    auth_header_name="Authorization",
+                    auth_header_prefix="Bearer",
+                    account_monitors=[],
+                )
+            )
+        )
+    except ValueError as exc:
+        message = str(exc)
+    else:
+        raise AssertionError("expected group catalog parse failure")
+
+    assert "newapi group catalog response missing data" in message
+    assert "status=200" in message
+    assert "content_type=text/html" in message
+    assert "<html>login</html>" in message
+
+
 def test_sub2api_api_base_url_uses_configured_platform_base_url() -> None:
     assert (
         Sub2ApiStrategy.api_base_url(platform("https://example.com"))

@@ -2,7 +2,6 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.api.deps import current_user
 from app.core.config import Settings, get_settings
 from app.core.database import get_db
 from app.models.sub2api import Sub2APISQLLog
@@ -16,7 +15,6 @@ from app.services.sub2api_database import probe_sub2api_database, safe_database_
 router = APIRouter(
     prefix="/sub2api",
     tags=["sub2api"],
-    dependencies=[Depends(current_user)],
 )
 
 

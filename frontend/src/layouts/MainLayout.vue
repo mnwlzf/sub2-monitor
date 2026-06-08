@@ -26,10 +26,6 @@
           <h1>{{ pageTitle }}</h1>
           <p>{{ pageSubtitle }}</p>
         </div>
-        <div class="account">
-          <span>{{ auth.user?.username ?? '-' }}</span>
-          <el-button :icon="SwitchButton" plain size="small" @click="signOut">退出</el-button>
-        </div>
       </el-header>
       <nav class="mobile-nav">
         <RouterLink to="/">平台监控</RouterLink>
@@ -43,15 +39,11 @@
 </template>
 
 <script setup lang="ts">
-import { DataAnalysis, Monitor, SwitchButton } from '@element-plus/icons-vue'
+import { DataAnalysis, Monitor } from '@element-plus/icons-vue'
 import { computed } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { useRoute } from 'vue-router'
 
-import { useAuthStore } from '@/stores/auth'
-
-const auth = useAuthStore()
 const route = useRoute()
-const router = useRouter()
 
 const activePath = computed(() => (route.path === '/sub2api-database' ? route.path : '/'))
 const pageTitle = computed(() => {
@@ -66,9 +58,4 @@ const pageSubtitle = computed(() => {
   }
   return '跟踪中转平台余额、倍率和账号状态'
 })
-
-async function signOut() {
-  await auth.logout()
-  await router.replace('/login')
-}
 </script>

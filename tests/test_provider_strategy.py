@@ -76,6 +76,42 @@ def test_newapi_generic_group_catalog_parser_reads_desc_and_ratio() -> None:
     assert groups[1].rate_multiplier == 1.8
 
 
+def test_newapi_generic_group_catalog_parser_reads_group_ratio_fallback() -> None:
+    groups = GenericNewApiSiteStrategy.parse_group_catalog_payload(
+        {"group_ratio": {"codex": 0.08, "default": "1"}}
+    )
+
+    assert groups is not None
+    assert [item.external_group_id for item in groups] == ["codex", "default"]
+    assert groups[0].rate_multiplier == 0.08
+    assert groups[1].rate_multiplier == 1
+
+
+def test_newapi_generic_group_catalog_parser_reads_nested_list() -> None:
+    groups = GenericNewApiSiteStrategy.parse_group_catalog_payload(
+        {
+            "data": {
+                "groups": [
+                    {
+                        "id": "codex",
+                        "name": "Codex",
+                        "description": "Codex group",
+                        "rate_multiplier": "0.08",
+                        "rpm": "120",
+                    }
+                ]
+            }
+        }
+    )
+
+    assert groups is not None
+    assert groups[0].external_group_id == "codex"
+    assert groups[0].name == "Codex"
+    assert groups[0].description == "Codex group"
+    assert groups[0].rate_multiplier == 0.08
+    assert groups[0].rpm_limit == 120
+
+
 def test_newapi_group_catalog_fetches_self_groups_with_platform_token(monkeypatch) -> None:
     class StubAsyncClient:
         def __init__(self, *args, **kwargs) -> None:

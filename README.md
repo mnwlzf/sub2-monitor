@@ -71,7 +71,7 @@ sub2api:
     port: 5432
     user: "newapi"
     password: "change-this-database-password"
-    dbname: "newapi"
+    dbname: "sub2api"
     sslmode: "disable"
     connect_timeout_seconds: 5
 ```
@@ -84,6 +84,8 @@ GET /api/sub2api/database/status?test=false
 ```
 
 接口会脱敏返回 DSN；`test=true` 只执行 `select current_database(), current_user, version()`。
+账号 Priority 同步会写入该连接库中的 `accounts.priority`，请确保这里配置的是 Sub2API 库
+（默认库名 `sub2api`），不是 New API 库。
 
 ## 当前已实现
 

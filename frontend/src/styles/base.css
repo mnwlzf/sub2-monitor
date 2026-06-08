@@ -24,6 +24,10 @@ body {
   min-height: 100vh;
 }
 
+.main-panel {
+  min-width: 0;
+}
+
 .sidebar {
   border-right: 1px solid #e5e7eb;
   background: #ffffff;

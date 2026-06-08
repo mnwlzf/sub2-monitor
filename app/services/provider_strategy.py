@@ -665,51 +665,101 @@ class GenericNewApiSiteStrategy(NewApiSiteStrategy):
     def parse_group_catalog_payload(payload: Any) -> list[DiscoveredGroupRateResult] | None:
         if not isinstance(payload, dict):
             return None
-        data = payload.get("data")
-        if not isinstance(data, dict):
+        data = GenericNewApiSiteStrategy.group_catalog_data(payload)
+        if data is None:
             return None
 
         groups: list[DiscoveredGroupRateResult] = []
-        for external_group_id, raw_group in data.items():
-            if not isinstance(external_group_id, str) or not external_group_id.strip():
-                continue
-            name = external_group_id.strip()
-            description: str | None = None
-            rate_multiplier: float | None = None
-            rpm_limit: int | None = None
-            error: str | None = None
-
-            if isinstance(raw_group, dict):
-                desc = raw_group.get("desc")
-                if isinstance(desc, str) and desc.strip():
-                    description = desc.strip()
-                raw_ratio = raw_group.get("ratio")
-                if raw_ratio is not None:
-                    try:
-                        rate_multiplier = float(raw_ratio)
-                    except (TypeError, ValueError):
-                        error = f"newapi group ratio is not numeric: {raw_ratio!r}"
-                raw_rpm = raw_group.get("rpm_limit", raw_group.get("rpm"))
-                if raw_rpm is not None:
-                    try:
-                        rpm_limit = int(float(raw_rpm))
-                    except (TypeError, ValueError):
-                        if error is None:
-                            error = f"newapi group rpm is not numeric: {raw_rpm!r}"
-            else:
-                error = f"newapi group payload is not an object: {raw_group!r}"
-
-            groups.append(
-                DiscoveredGroupRateResult(
-                    external_group_id=name,
-                    name=name,
-                    description=description,
-                    rate_multiplier=rate_multiplier,
-                    rpm_limit=rpm_limit,
-                    error=error,
-                )
-            )
+        for external_group_id, raw_group in GenericNewApiSiteStrategy.group_catalog_items(data):
+            group = GenericNewApiSiteStrategy.parse_group_catalog_item(external_group_id, raw_group)
+            if group is not None:
+                groups.append(group)
         return groups
+
+    @staticmethod
+    def group_catalog_data(payload: dict[str, Any]) -> Any | None:
+        data = payload.get("data")
+        if isinstance(data, dict):
+            for key in ("groups", "items", "list", "records", "group_ratio"):
+                candidate = data.get(key)
+                if isinstance(candidate, dict | list):
+                    return candidate
+        for candidate in (data, payload.get("groups"), payload.get("group_ratio")):
+            if isinstance(candidate, dict | list):
+                return candidate
+        return None
+
+    @staticmethod
+    def group_catalog_items(data: Any) -> list[tuple[Any, Any]]:
+        if isinstance(data, dict):
+            return list(data.items())
+        if isinstance(data, list):
+            items: list[tuple[Any, Any]] = []
+            for index, item in enumerate(data):
+                if isinstance(item, dict):
+                    external_group_id = (
+                        item.get("id")
+                        or item.get("group")
+                        or item.get("group_id")
+                        or item.get("name")
+                        or item.get("key")
+                    )
+                    items.append((external_group_id or index, item))
+                else:
+                    items.append((item, item))
+            return items
+        return []
+
+    @staticmethod
+    def parse_group_catalog_item(external_group_id: Any, raw_group: Any) -> DiscoveredGroupRateResult | None:
+        if not isinstance(external_group_id, str | int | float):
+            return None
+        name = str(external_group_id).strip()
+        if not name:
+            return None
+
+        description: str | None = None
+        rate_multiplier: float | None = None
+        rpm_limit: int | None = None
+        error: str | None = None
+
+        if isinstance(raw_group, dict):
+            raw_name = raw_group.get("name") or raw_group.get("group_name") or raw_group.get("label")
+            if isinstance(raw_name, str) and raw_name.strip():
+                name = raw_name.strip()
+            desc = raw_group.get("desc") or raw_group.get("description")
+            if isinstance(desc, str) and desc.strip():
+                description = desc.strip()
+            raw_ratio = raw_group.get("ratio", raw_group.get("rate_multiplier", raw_group.get("rate")))
+            if raw_ratio is not None:
+                try:
+                    rate_multiplier = float(raw_ratio)
+                except (TypeError, ValueError):
+                    error = f"newapi group ratio is not numeric: {raw_ratio!r}"
+            raw_rpm = raw_group.get("rpm_limit", raw_group.get("rpm"))
+            if raw_rpm is not None:
+                try:
+                    rpm_limit = int(float(raw_rpm))
+                except (TypeError, ValueError):
+                    if error is None:
+                        error = f"newapi group rpm is not numeric: {raw_rpm!r}"
+        elif isinstance(raw_group, int | float | str):
+            try:
+                rate_multiplier = float(raw_group)
+            except (TypeError, ValueError):
+                if str(raw_group).strip() and str(raw_group).strip() != name:
+                    description = str(raw_group).strip()
+        else:
+            error = f"newapi group payload is not an object: {raw_group!r}"
+
+        return DiscoveredGroupRateResult(
+            external_group_id=str(external_group_id).strip(),
+            name=name,
+            description=description,
+            rate_multiplier=rate_multiplier,
+            rpm_limit=rpm_limit,
+            error=error,
+        )
 
     @staticmethod
     def site_url(platform: RelayPlatform) -> str:

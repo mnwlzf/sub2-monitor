@@ -11,8 +11,8 @@ sub2api:
     port: 5432
     user: "newapi"
     password: "change-this-database-password"
-    dbname: "newapi"
+    dbname: "sub2api"
     sslmode: "disable"
     connect_timeout_seconds: 5
     # Optional: use one DSN instead of host/user/password/dbname fields.
-    # dsn: "postgresql://newapi:change-this-database-password@sub2api-postgres:5432/newapi?sslmode=disable"
+    # dsn: "postgresql://newapi:change-this-database-password@sub2api-postgres:5432/sub2api?sslmode=disable"

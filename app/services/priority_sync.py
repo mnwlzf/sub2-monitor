@@ -24,12 +24,19 @@ from app.services.sub2api_database import (
 logger = logging.getLogger(__name__)
 
 PRIORITY_SYNC_OPERATION = "sync_account_priority"
+PRIORITY_SYNC_TARGET_DATABASE = "sub2api"
 PRIORITY_SYNC_SQL = """
 WITH matched AS (
     SELECT id
     FROM accounts
     WHERE deleted_at IS NULL
-      AND trim(trailing '/' FROM credentials->>'base_url') = trim(trailing '/' FROM %(base_url)s)
+      AND (
+        trim(trailing '/' FROM coalesce(credentials->>'base_url', '')) = trim(trailing '/' FROM %(base_url)s)
+        OR (
+          coalesce(extra->>'custom_base_url_enabled', 'false') = 'true'
+          AND trim(trailing '/' FROM coalesce(extra->>'custom_base_url', '')) = trim(trailing '/' FROM %(base_url)s)
+        )
+      )
 ),
 updated AS (
     UPDATE accounts
@@ -41,6 +48,20 @@ SELECT
     (SELECT count(*) FROM matched) AS matched_accounts,
     (SELECT count(*) FROM updated) AS updated_accounts
 """
+
+
+def priority_sync_database_error(database: Sub2APIDatabaseSettings) -> str | None:
+    configured_dbname = (database.dbname or "").strip()
+    if database.dsn:
+        from urllib.parse import urlsplit
+
+        configured_dbname = urlsplit(database.dsn).path.strip("/") or configured_dbname
+    if configured_dbname and configured_dbname != PRIORITY_SYNC_TARGET_DATABASE:
+        return (
+            "Sub2API account priority sync must target database "
+            f"{PRIORITY_SYNC_TARGET_DATABASE!r}, got {configured_dbname!r}"
+        )
+    return None
 
 
 async def refresh_enabled_platforms_for_priority_sync(db: Session) -> list[dict[str, Any]]:
@@ -406,6 +427,23 @@ def sync_sub2api_account_priorities(
             items=items,
             status="failed",
             error_message=error_message,
+        )
+
+    database_error = priority_sync_database_error(database)
+    if database_error:
+        failed_sql_logs_for_items(
+            db,
+            database=database,
+            items=items,
+            error_message=database_error,
+            user=user,
+        )
+        return finish_priority_sync_run(
+            db,
+            run,
+            items=items,
+            status="failed",
+            error_message=database_error,
         )
 
     try:

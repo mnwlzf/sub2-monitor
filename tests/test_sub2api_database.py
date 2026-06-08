@@ -11,7 +11,11 @@ from app.models.monitor import PlatformAccountMonitor, PlatformGroupMonitor
 from app.models.platform import PlatformStatus, RelayPlatform
 from app.models.sub2api import Sub2APISQLLog
 from app.models.user import User
-from app.services.priority_sync import build_priority_sync_plan, sync_sub2api_account_priorities
+from app.services.priority_sync import (
+    PRIORITY_SYNC_SQL,
+    build_priority_sync_plan,
+    sync_sub2api_account_priorities,
+)
 from app.services.sub2api_database import create_sql_log, execute_recorded_sub2api_write
 
 
@@ -201,6 +205,14 @@ def test_priority_sync_plan_uses_lowest_effective_key_group_rate() -> None:
         db.close()
 
 
+def test_priority_sync_sql_targets_sub2api_accounts_url_fields() -> None:
+    assert "UPDATE accounts" in PRIORITY_SYNC_SQL
+    assert "SET priority = %(priority)s" in PRIORITY_SYNC_SQL
+    assert "credentials->>'base_url'" in PRIORITY_SYNC_SQL
+    assert "extra->>'custom_base_url'" in PRIORITY_SYNC_SQL
+    assert "extra->>'custom_base_url_enabled'" in PRIORITY_SYNC_SQL
+
+
 def test_priority_sync_logs_failed_sql_when_target_database_is_unconfigured() -> None:
     db = make_session()
     try:
@@ -260,5 +272,60 @@ def test_priority_sync_logs_failed_sql_when_target_database_is_unconfigured() ->
         assert logs[0].executed_by_username == "admin"
         assert logs[0].sql_params_json is not None
         assert json.loads(logs[0].sql_params_json)["base_url"] == "https://relay.example.com"
+    finally:
+        db.close()
+
+
+def test_priority_sync_rejects_non_sub2api_target_database() -> None:
+    db = make_session()
+    try:
+        platform = RelayPlatform(
+            name="Wrong DB Sync Target",
+            base_url="https://relay.example.com/",
+            provider_type="fake",
+            rate_cron="*/10 * * * *",
+            balance_cron="*/10 * * * *",
+            status=PlatformStatus.unknown,
+        )
+        db.add(platform)
+        db.flush()
+        account = PlatformAccountMonitor(
+            platform_id=platform.id,
+            name="Main",
+            external_account_id="main",
+            enabled=True,
+        )
+        account.key_summaries = (
+            {"id": "101", "name": "main-key", "group_id": "7", "group_name": "codex"},
+        )
+        db.add_all(
+            [
+                account,
+                PlatformGroupMonitor(
+                    platform_id=platform.id,
+                    name="codex",
+                    external_group_id="7",
+                    enabled=True,
+                    rate_multiplier=0.08,
+                ),
+            ]
+        )
+        db.commit()
+
+        run = sync_sub2api_account_priorities(
+            db,
+            database=Sub2APIDatabaseSettings(
+                host="sub2api-postgres",
+                user="newapi",
+                password="secret",
+                dbname="newapi",
+            ),
+        )
+
+        expected = "Sub2API account priority sync must target database 'sub2api', got 'newapi'"
+        assert run.status == "failed"
+        assert run.error_message == expected
+        assert run.items[0]["status"] == "failed"
+        assert run.items[0]["error_message"] == expected
     finally:
         db.close()

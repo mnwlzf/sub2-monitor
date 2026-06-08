@@ -12,7 +12,7 @@ sub2api:
     port: 5432
     user: "newapi"
     password: "secret-password"
-    dbname: "newapi"
+    dbname: "sub2api"
     sslmode: "disable"
     connect_timeout_seconds: 7
 """,
@@ -24,7 +24,7 @@ sub2api:
     assert settings.sub2api.database.is_configured is True
     assert settings.sub2api.database.host == "sub2api-postgres"
     assert settings.sub2api.database.user == "newapi"
-    assert settings.sub2api.database.dbname == "newapi"
+    assert settings.sub2api.database.dbname == "sub2api"
     assert settings.sub2api.database.connect_timeout_seconds == 7
 
 
@@ -33,7 +33,7 @@ def test_sub2api_database_dsn_is_masked() -> None:
         host="sub2api-postgres",
         user="newapi",
         password="secret-password",
-        dbname="newapi",
+        dbname="sub2api",
     )
 
     safe_config = safe_database_config(database)
@@ -41,6 +41,6 @@ def test_sub2api_database_dsn_is_masked() -> None:
     assert safe_config["configured"] is True
     assert safe_config["has_password"] is True
     assert safe_config["dsn"] == (
-        "postgresql://newapi:<masked>@sub2api-postgres:5432/newapi?sslmode=disable"
+        "postgresql://newapi:<masked>@sub2api-postgres:5432/sub2api?sslmode=disable"
     )
     assert "secret-password" not in safe_config["dsn"]

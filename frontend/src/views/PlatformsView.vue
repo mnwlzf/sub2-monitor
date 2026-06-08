@@ -11,7 +11,7 @@
           :key="item.key"
           :class="{ active: activeEmbeddedView === item.key }"
           type="button"
-          @click="activeEmbeddedView = item.key"
+          @click="selectEmbeddedMenuItem(item)"
         >
           <span>{{ item.label }}</span>
           <small>{{ item.description }}</small>
@@ -965,6 +965,7 @@ import { Delete, Edit, Plus, Refresh, Setting } from '@element-plus/icons-vue'
 import type { FormInstance, FormRules } from 'element-plus'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { computed, onMounted, reactive, ref } from 'vue'
+import { useRouter } from 'vue-router'
 
 import BalanceLineChart from '@/components/BalanceLineChart.vue'
 import RateLineChart from '@/components/RateLineChart.vue'
@@ -1015,6 +1016,7 @@ import {
   type SiteStrategyOption,
 } from '@/api/client'
 
+const router = useRouter()
 const providers = ref<ProviderOption[]>([])
 const siteStrategies = ref<SiteStrategyOption[]>([])
 const platforms = ref<PlatformDetail[]>([])
@@ -1039,7 +1041,9 @@ const editing = ref<RelayPlatform | null>(null)
 const accountEditing = ref<AccountMonitor | null>(null)
 const formRef = ref<FormInstance>()
 const collapsedGroupRatePanels = ref<Array<number | string>>([])
-const activeEmbeddedView = ref<'overview' | 'balances' | 'rates' | 'groupRates' | 'notifications' | 'settings'>('overview')
+type EmbeddedViewKey = 'overview' | 'balances' | 'rates' | 'groupRates' | 'notifications' | 'settings'
+
+const activeEmbeddedView = ref<EmbeddedViewKey>('overview')
 const maxAccountKeysShown = 3
 
 const embeddedMenuItems = [
@@ -1073,7 +1077,16 @@ const embeddedMenuItems = [
     label: '监控配置',
     description: '账号、分组和采集任务入口',
   },
+  {
+    key: 'sub2apiDatabase',
+    label: 'Sub2API 数据库',
+    description: '连接状态、SQL 日志和权重同步',
+    route: '/sub2api-database',
+  },
 ] as const
+
+type EmbeddedMenuItem = (typeof embeddedMenuItems)[number]
+type EmbeddedPanelMenuItem = Extract<EmbeddedMenuItem, { key: EmbeddedViewKey }>
 
 const embeddedView = computed(
   () => embeddedMenuItems.find((item) => item.key === activeEmbeddedView.value) ?? embeddedMenuItems[0],
@@ -1093,6 +1106,14 @@ const previewPlatformGroups = computed(() => {
 const errorSummaryItems = computed(() => {
   return platforms.value.flatMap((platform) => platformErrorSummaryItems(platform))
 })
+
+function selectEmbeddedMenuItem(item: EmbeddedMenuItem) {
+  if ('route' in item) {
+    router.push(item.route)
+    return
+  }
+  activeEmbeddedView.value = (item as EmbeddedPanelMenuItem).key
+}
 
 const form = reactive<PlatformPayload>({
   name: '',

@@ -280,6 +280,52 @@ export interface NotificationRecipientPayload {
   enabled: boolean
 }
 
+export interface Sub2APIDatabaseConfig {
+  configured: boolean
+  host: string
+  port: number
+  user: string
+  dbname: string
+  sslmode: string
+  has_password: boolean
+  dsn: string | null
+  connect_timeout_seconds: number
+}
+
+export interface Sub2APIDatabaseProbe {
+  ok: boolean
+  error: string | null
+  current_database: string | null
+  current_user: string | null
+  server_version: string | null
+}
+
+export interface Sub2APIDatabaseStatus {
+  config: Sub2APIDatabaseConfig
+  probe: Sub2APIDatabaseProbe | null
+}
+
+export interface Sub2APISQLLog {
+  id: number
+  operation: string
+  target_database: string
+  sql_text: string
+  sql_params_json: string | null
+  status: string
+  affected_rows: number | null
+  error_message: string | null
+  executed_by_user_id: number | null
+  executed_by_username: string | null
+  created_at: string
+}
+
+export interface Sub2APISQLLogPage {
+  items: Sub2APISQLLog[]
+  total: number
+  limit: number
+  offset: number
+}
+
 export const http = axios.create({
   baseURL: `${import.meta.env.BASE_URL}api`,
   withCredentials: true,
@@ -397,6 +443,28 @@ export async function updateNotificationSetting(payload: NotificationSettingPayl
 
 export async function fetchNotificationRecipients() {
   const { data } = await http.get<NotificationRecipient[]>('/notification-recipients')
+  return data
+}
+
+export async function fetchSub2APIDatabaseStatus(test = true) {
+  const { data } = await http.get<Sub2APIDatabaseStatus>('/sub2api/database/status', {
+    params: { test },
+  })
+  return data
+}
+
+export async function fetchSub2APISQLLogs(params: {
+  limit?: number
+  offset?: number
+  status?: string
+  operation?: string
+} = {}) {
+  const { data } = await http.get<Sub2APISQLLogPage>('/sub2api/sql-logs', { params })
+  return data
+}
+
+export async function fetchSub2APISQLLog(id: number) {
+  const { data } = await http.get<Sub2APISQLLog>(`/sub2api/sql-logs/${id}`)
   return data
 }
 

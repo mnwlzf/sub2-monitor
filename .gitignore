@@ -7,6 +7,7 @@ __pycache__/
 .env
 /config/config.yaml
 .pytest_cache/
+.pytest-tmp/
 .ruff_cache/
 .idea/
 .DS_Store

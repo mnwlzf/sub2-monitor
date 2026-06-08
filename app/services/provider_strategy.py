@@ -2244,7 +2244,7 @@ class NewApiStrategy(ProviderStrategy):
             if text.isdigit():
                 group_id = text
             elif string_group_as_id:
-                group_id = text
+                group_id = NewApiStrategy.group_id_from_display_name(text)
                 group_name = text
             else:
                 group_name = text
@@ -2264,6 +2264,18 @@ class NewApiStrategy(ProviderStrategy):
             group_name = group_id
 
         return group_id, group_name
+
+    @staticmethod
+    def group_id_from_display_name(group_name: str) -> str:
+        text = group_name.strip()
+        if not text:
+            return text
+        for separator in ("（", "("):
+            if separator in text:
+                candidate = text.split(separator, 1)[0].strip()
+                if candidate:
+                    return candidate
+        return text
 
     def management_client(self, platform: RelayPlatform) -> httpx.AsyncClient:
         return httpx.AsyncClient(

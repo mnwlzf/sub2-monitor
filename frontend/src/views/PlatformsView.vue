@@ -506,8 +506,8 @@
                 </div>
                 <div class="notification-feature-item">
                   <div>
-                    <strong>倍率变化通知</strong>
-                    <span>平台分组倍率发生变化时发送邮件</span>
+                    <strong>分组变化通知</strong>
+                    <span>平台分组倍率变化、接口分组新增或减少时发送邮件</span>
                   </div>
                   <el-switch v-model="notificationForm.notify_group_rate_changes" :disabled="!notificationForm.enabled" />
                 </div>
@@ -533,7 +533,7 @@
                 <div class="embedded-platform-title">
                   <div>
                     <strong>收件人</strong>
-                    <span>倍率变化通知会发送给所有启用的收件人</span>
+                    <span>分组变化通知会发送给所有启用的收件人</span>
                   </div>
                 </div>
               </header>
@@ -1066,7 +1066,7 @@ const embeddedMenuItems = [
   {
     key: 'notifications',
     label: '邮件通知',
-    description: '倍率变化 SMTP 告警',
+    description: '分组变化 SMTP 告警',
   },
   {
     key: 'settings',

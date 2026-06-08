@@ -516,7 +516,7 @@ def test_newapi_fetch_account_balance_reads_key_summaries(monkeypatch) -> None:
         {
             "id": "13",
             "name": "promo-key",
-            "group_id": "codex（特价分组-4）",
+            "group_id": "codex",
             "group_name": "codex（特价分组-4）",
         },
     )
@@ -1160,7 +1160,7 @@ def test_newapi_generic_fetch_account_balance_uses_session_cookie_without_access
         {
             "id": "811",
             "name": "111",
-            "group_id": "codex（特价分组-1）",
+            "group_id": "codex",
             "group_name": "codex（特价分组-1）",
         },
     )
@@ -1266,7 +1266,7 @@ def test_newapi_generic_fetch_account_balance_uses_user_session_when_password_is
         {
             "id": "811",
             "name": "111",
-            "group_id": "codex（特价分组-1）",
+            "group_id": "codex",
             "group_name": "codex（特价分组-1）",
         },
     )

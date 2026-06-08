@@ -20,6 +20,15 @@ class GroupRateChange:
     rpm_limit: int | None
 
 
+@dataclass(frozen=True)
+class GroupCatalogChange:
+    action: str
+    group_name: str
+    external_group_id: str
+    rate_multiplier: float | None
+    rpm_limit: int | None
+
+
 LOW_BALANCE_MAX_CONSECUTIVE_NOTIFICATIONS = 3
 
 
@@ -119,8 +128,10 @@ def notify_group_rate_changes(
     db: Session,
     platform: RelayPlatform,
     changes: list[GroupRateChange],
+    catalog_changes: list[GroupCatalogChange] | None = None,
 ) -> None:
-    if not changes:
+    catalog_changes = catalog_changes or []
+    if not changes and not catalog_changes:
         return
     setting = get_notification_setting(db)
     if not setting.notify_group_rate_changes:
@@ -140,20 +151,34 @@ def notify_group_rate_changes(
         f"平台：{platform.name}",
         f"地址：{platform.base_url}",
         "",
-        "检测到分组倍率变化：",
+        "检测到分组变化：",
     ]
-    for change in changes:
-        rpm = change.rpm_limit if change.rpm_limit is not None else "-"
-        lines.append(
-            f"- {change.group_name} ({change.external_group_id}): "
-            f"{format_rate(change.old_rate)} -> {format_rate(change.new_rate)}，RPM: {rpm}"
-        )
+    if changes:
+        lines.append("")
+        lines.append("倍率变化：")
+        for change in changes:
+            rpm = change.rpm_limit if change.rpm_limit is not None else "-"
+            lines.append(
+                f"- {change.group_name} ({change.external_group_id}): "
+                f"{format_rate(change.old_rate)} -> {format_rate(change.new_rate)}，RPM: {rpm}"
+            )
+    if catalog_changes:
+        lines.append("")
+        lines.append("分组新增/减少：")
+        for change in catalog_changes:
+            action_label = "新增" if change.action == "added" else "减少"
+            rate = format_optional_rate(change.rate_multiplier)
+            rpm = change.rpm_limit if change.rpm_limit is not None else "-"
+            lines.append(
+                f"- {action_label} {change.group_name} ({change.external_group_id})，"
+                f"倍率: {rate}，RPM: {rpm}"
+            )
 
     try:
         send_mail(
             setting,
             recipients,
-            f"Sub2 Monitor 分组倍率变化 - {platform.name}",
+            f"Sub2 Monitor 分组变化 - {platform.name}",
             "\n".join(lines),
         )
         setting.last_error = None
@@ -235,3 +260,7 @@ def notify_low_balance(
 
 def format_rate(value: float) -> str:
     return f"{value:.6f}".rstrip("0").rstrip(".")
+
+
+def format_optional_rate(value: float | None) -> str:
+    return format_rate(value) if value is not None else "-"

@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+from dataclasses import dataclass
 from datetime import datetime
 from time import monotonic
 
@@ -22,7 +23,12 @@ from app.models.snapshot import (
     DiscoveredGroupRateSnapshot,
     GroupRateSnapshot,
 )
-from app.services.notification import GroupRateChange, notify_group_rate_changes, notify_low_balance
+from app.services.notification import (
+    GroupCatalogChange,
+    GroupRateChange,
+    notify_group_rate_changes,
+    notify_low_balance,
+)
 from app.services.provider_strategy import (
     DiscoveredChannelRateResult,
     DiscoveredGroupRateResult,
@@ -31,6 +37,14 @@ from app.services.provider_strategy import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class GroupCatalogItem:
+    external_group_id: str
+    name: str
+    rate_multiplier: float | None
+    rpm_limit: int | None
 
 
 async def run_platform_monitor(db: Session, platform_id: int) -> RelayPlatform:
@@ -270,6 +284,7 @@ async def run_platform_rate_monitor(db: Session, platform_id: int) -> RelayPlatf
     strategy = provider_registry.get(platform.provider_type)
     errors: list[str] = []
     rate_changes: list[GroupRateChange] = []
+    group_catalog_changes: list[GroupCatalogChange] = []
     started_at = monotonic()
     logger.info(
         "rate monitor start platform_id=%s name=%s provider=%s site_strategy=%s groups=%s",
@@ -393,6 +408,7 @@ async def run_platform_rate_monitor(db: Session, platform_id: int) -> RelayPlatf
         )
 
     if discovered_catalog is not None:
+        previous_discovered_groups = current_discovered_group_catalog(db, platform.id)
         db.execute(
             delete(PlatformDiscoveredGroupRate).where(
                 PlatformDiscoveredGroupRate.platform_id == platform.id,
@@ -403,6 +419,7 @@ async def run_platform_rate_monitor(db: Session, platform_id: int) -> RelayPlatf
         discovered_groups: dict[str, DiscoveredGroupRateResult] = {}
         for item in discovered_catalog:
             discovered_groups[item.external_group_id] = item
+        group_catalog_changes = group_catalog_delta(previous_discovered_groups, discovered_groups)
         for item in discovered_groups.values():
             checked_at = utcnow()
             configured_group = configured_groups.get(item.external_group_id)
@@ -517,7 +534,7 @@ async def run_platform_rate_monitor(db: Session, platform_id: int) -> RelayPlatf
     now = utcnow()
     platform.rate_last_run_at = now
     platform.rate_next_run_at = croniter(platform.rate_cron, now).get_next(type(now))
-    notify_group_rate_changes(db, platform, rate_changes)
+    notify_group_rate_changes(db, platform, rate_changes, group_catalog_changes)
     update_platform_status(platform, errors)
     db.add(platform)
     db.commit()
@@ -551,6 +568,59 @@ def monitored_target_label(name: str | None, external_id: str | None) -> str:
     return " / ".join(parts) if parts else "未知目标"
 
 
+def current_discovered_group_catalog(
+    db: Session,
+    platform_id: int,
+) -> dict[str, GroupCatalogItem]:
+    rows = db.scalars(
+        select(PlatformDiscoveredGroupRate).where(
+            PlatformDiscoveredGroupRate.platform_id == platform_id,
+        )
+    ).all()
+    return {
+        row.external_group_id: GroupCatalogItem(
+            external_group_id=row.external_group_id,
+            name=row.name,
+            rate_multiplier=row.rate_multiplier,
+            rpm_limit=row.rpm_limit,
+        )
+        for row in rows
+    }
+
+
+def group_catalog_delta(
+    previous_groups: dict[str, GroupCatalogItem],
+    current_groups: dict[str, DiscoveredGroupRateResult],
+) -> list[GroupCatalogChange]:
+    if not previous_groups:
+        return []
+
+    changes: list[GroupCatalogChange] = []
+    for external_group_id in sorted(set(current_groups) - set(previous_groups)):
+        item = current_groups[external_group_id]
+        changes.append(
+            GroupCatalogChange(
+                action="added",
+                group_name=item.name,
+                external_group_id=item.external_group_id,
+                rate_multiplier=item.rate_multiplier,
+                rpm_limit=item.rpm_limit,
+            )
+        )
+    for external_group_id in sorted(set(previous_groups) - set(current_groups)):
+        item = previous_groups[external_group_id]
+        changes.append(
+            GroupCatalogChange(
+                action="removed",
+                group_name=item.name,
+                external_group_id=item.external_group_id,
+                rate_multiplier=item.rate_multiplier,
+                rpm_limit=item.rpm_limit,
+            )
+        )
+    return changes
+
+
 def update_platform_status(platform: RelayPlatform, errors: list[str]) -> None:
     platform.checked_at = utcnow()
     platform.last_error = "\n".join(errors) if errors else None
@@ -581,36 +651,9 @@ def sync_key_group_monitors(
     changed = False
     added_count = 0
     renamed_count = 0
-    migrated_count = 0
     unchanged_count = 0
     for external_group_id, name in candidates.items():
         existing_group = existing_groups.get(external_group_id)
-        if existing_group is None:
-            legacy_group = legacy_display_name_group_monitor(
-                existing_groups,
-                external_group_id,
-                name,
-            )
-            if legacy_group is not None:
-                old_external_group_id = legacy_group.external_group_id
-                legacy_group.external_group_id = external_group_id
-                legacy_group.name = name
-                db.add(legacy_group)
-                existing_groups.pop(old_external_group_id, None)
-                existing_groups[external_group_id] = legacy_group
-                changed = True
-                migrated_count += 1
-                logger.info(
-                    "key group monitor sync migrated legacy group platform_id=%s group_db_id=%s old_external_group_id=%s new_external_group_id=%s name=%s source=%s",
-                    platform.id,
-                    legacy_group.id,
-                    old_external_group_id,
-                    external_group_id,
-                    name,
-                    source,
-                )
-                continue
-
         if existing_group is not None:
             default_names = {external_group_id, f"分组 {external_group_id}"}
             if existing_group.name in default_names and existing_group.name != name:
@@ -652,43 +695,16 @@ def sync_key_group_monitors(
     if changed:
         db.flush()
     logger.info(
-        "key group monitor sync done platform_id=%s name=%s source=%s candidates=%s added=%s renamed=%s migrated=%s unchanged=%s changed=%s",
+        "key group monitor sync done platform_id=%s name=%s source=%s candidates=%s added=%s renamed=%s unchanged=%s changed=%s",
         platform.id,
         platform.name,
         source,
         len(candidates),
         added_count,
         renamed_count,
-        migrated_count,
         unchanged_count,
         changed,
     )
-
-
-def legacy_display_name_group_monitor(
-    existing_groups: dict[str, PlatformGroupMonitor],
-    external_group_id: str,
-    name: str,
-) -> PlatformGroupMonitor | None:
-    legacy_external_group_id = legacy_display_name_group_id(external_group_id)
-    if legacy_external_group_id == external_group_id:
-        return None
-    group = existing_groups.get(legacy_external_group_id)
-    if group is None or group.name != name:
-        return None
-    return group
-
-
-def legacy_display_name_group_id(group_name: str) -> str:
-    text = group_name.strip()
-    if not text:
-        return text
-    for separator in ("（", "("):
-        if separator in text:
-            candidate = text.split(separator, 1)[0].strip()
-            if candidate:
-                return candidate
-    return text
 
 
 def key_group_monitor_candidates(

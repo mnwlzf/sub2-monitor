@@ -115,6 +115,24 @@ class FakeCatalogProvider:
         return GroupRateResult(rate_multiplier=0.99)
 
 
+class MutableCatalogProvider(FakeCatalogProvider):
+    def __init__(self, groups: list[DiscoveredGroupRateResult]) -> None:
+        self.groups = groups
+
+    async def fetch_group_catalog(self, platform: RelayPlatform):
+        return self.groups
+
+    async def fetch_key_group_catalog(self, platform: RelayPlatform):
+        return None
+
+    async def fetch_group_rate(
+        self,
+        platform: RelayPlatform,
+        group: PlatformGroupMonitor,
+    ) -> GroupRateResult:
+        return GroupRateResult()
+
+
 class FakeChannelCatalogProvider:
     async def fetch_channel_catalog(self, platform: RelayPlatform):
         return [
@@ -374,6 +392,85 @@ def test_rate_monitor_sends_email_when_configured_group_rate_changes(monkeypatch
         db.close()
 
 
+def test_rate_monitor_sends_email_when_discovered_groups_are_added_or_removed(monkeypatch) -> None:
+    provider = MutableCatalogProvider(
+        [
+            DiscoveredGroupRateResult(
+                external_group_id="7",
+                name="codex",
+                rate_multiplier=0.12,
+                rpm_limit=60,
+            ),
+            DiscoveredGroupRateResult(
+                external_group_id="8",
+                name="premium",
+                rate_multiplier=0.8,
+            ),
+        ]
+    )
+    monkeypatch.setitem(provider_registry._strategies, "mutable-catalog", provider)
+    sent_messages: list[tuple[list[str], str, str]] = []
+
+    def fake_send_mail(setting, recipients, subject: str, body: str) -> None:
+        sent_messages.append(([recipient.email for recipient in recipients], subject, body))
+
+    monkeypatch.setattr(notification_service, "send_mail", fake_send_mail)
+    db = make_session()
+    try:
+        platform = RelayPlatform(
+            name="Catalog Alert",
+            base_url="https://example.com",
+            provider_type="mutable-catalog",
+            rate_cron="*/5 * * * *",
+            balance_cron="*/10 * * * *",
+            status=PlatformStatus.unknown,
+        )
+        db.add(platform)
+        db.flush()
+        db.add(
+            NotificationSetting(
+                id=1,
+                enabled=True,
+                smtp_host="smtp.example.com",
+                smtp_port=587,
+                smtp_username="bot@example.com",
+                from_email="bot@example.com",
+            )
+        )
+        db.add(NotificationRecipient(name="Ops", email="ops@example.com", enabled=True))
+        db.commit()
+
+        asyncio.run(run_platform_rate_monitor(db, platform.id))
+        assert sent_messages == []
+
+        provider.groups = [
+            DiscoveredGroupRateResult(
+                external_group_id="8",
+                name="premium",
+                rate_multiplier=0.8,
+            ),
+            DiscoveredGroupRateResult(
+                external_group_id="9",
+                name="enterprise",
+                rate_multiplier=1.2,
+                rpm_limit=30,
+            ),
+        ]
+        asyncio.run(run_platform_rate_monitor(db, platform.id))
+
+        assert len(sent_messages) == 1
+        recipients, subject, body = sent_messages[0]
+        assert recipients == ["ops@example.com"]
+        assert "分组变化" in subject
+        assert "分组新增/减少" in body
+        assert "新增 enterprise (9)" in body
+        assert "减少 codex (7)" in body
+        assert "倍率: 1.2，RPM: 30" in body
+        assert "倍率: 0.12，RPM: 60" in body
+    finally:
+        db.close()
+
+
 def test_rate_monitor_skips_email_when_group_rate_notification_disabled(monkeypatch) -> None:
     monkeypatch.setitem(provider_registry._strategies, "fake", FakeProvider())
     sent_messages: list[tuple[list[str], str, str]] = []
@@ -593,7 +690,7 @@ def test_balance_monitor_adds_key_group_as_group_monitor(monkeypatch) -> None:
         db.close()
 
 
-def test_key_group_sync_rewrites_legacy_display_name_group_id() -> None:
+def test_key_group_sync_does_not_rewrite_existing_group_id() -> None:
     db = make_session()
     try:
         platform = RelayPlatform(
@@ -634,11 +731,13 @@ def test_key_group_sync_rewrites_legacy_display_name_group_id() -> None:
         sync_key_group_monitors(db, platform)
 
         groups = db.scalars(select(PlatformGroupMonitor)).all()
-        assert len(groups) == 1
-        assert groups[0].id == legacy_group.id
-        assert groups[0].external_group_id == "codex（特价分组-4）"
-        assert groups[0].name == "codex（特价分组-4）"
-        assert groups[0].rate_multiplier == 0.08
+        assert len(groups) == 2
+        by_external_id = {group.external_group_id: group for group in groups}
+        assert by_external_id["codex"].id == legacy_group.id
+        assert by_external_id["codex"].name == "codex（特价分组-4）"
+        assert by_external_id["codex"].rate_multiplier == 0.08
+        assert by_external_id["codex（特价分组-4）"].name == "codex（特价分组-4）"
+        assert by_external_id["codex（特价分组-4）"].enabled is True
     finally:
         db.close()
 

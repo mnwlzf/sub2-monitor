@@ -17,6 +17,7 @@ from app.services.monitoring import (
     run_platform_balance_monitor,
     run_platform_monitor,
     run_platform_rate_monitor,
+    sync_key_group_monitors,
 )
 from app.services.notification import send_mail
 from app.services.provider_strategy import (
@@ -592,6 +593,56 @@ def test_balance_monitor_adds_key_group_as_group_monitor(monkeypatch) -> None:
         db.close()
 
 
+def test_key_group_sync_rewrites_legacy_display_name_group_id() -> None:
+    db = make_session()
+    try:
+        platform = RelayPlatform(
+            name="Legacy Group",
+            base_url="https://example.com",
+            provider_type="fake",
+            rate_cron="*/5 * * * *",
+            balance_cron="*/10 * * * *",
+            status=PlatformStatus.unknown,
+        )
+        db.add(platform)
+        db.flush()
+        account = PlatformAccountMonitor(
+            platform_id=platform.id,
+            name="Main",
+            external_account_id="user@example.com",
+            enabled=True,
+        )
+        account.key_summaries = (
+            {
+                "id": "811",
+                "name": "codex-key",
+                "group_id": "codex（特价分组-4）",
+                "group_name": "codex（特价分组-4）",
+            },
+        )
+        db.add(account)
+        legacy_group = PlatformGroupMonitor(
+            platform_id=platform.id,
+            name="codex（特价分组-4）",
+            external_group_id="codex",
+            enabled=True,
+            rate_multiplier=0.08,
+        )
+        db.add(legacy_group)
+        db.flush()
+
+        sync_key_group_monitors(db, platform)
+
+        groups = db.scalars(select(PlatformGroupMonitor)).all()
+        assert len(groups) == 1
+        assert groups[0].id == legacy_group.id
+        assert groups[0].external_group_id == "codex（特价分组-4）"
+        assert groups[0].name == "codex（特价分组-4）"
+        assert groups[0].rate_multiplier == 0.08
+    finally:
+        db.close()
+
+
 def test_rate_monitor_records_key_group_from_stored_summaries(monkeypatch) -> None:
     monkeypatch.setitem(provider_registry._strategies, "fake-catalog", FakeCatalogProvider())
     db = make_session()
@@ -845,7 +896,7 @@ def test_newapi_account_error_identifies_account(monkeypatch) -> None:
 
         account = db.scalar(select(PlatformAccountMonitor))
         assert account is not None
-        assert account.last_error == "account Primary / primary@example.com / user-1: login returned HTTP 429"
+        assert account.last_error == "账号监控失败（Primary / primary@example.com / user-1）：login returned HTTP 429"
         refreshed = db.get(RelayPlatform, platform.id)
         assert refreshed is not None
         assert refreshed.last_error is not None

@@ -246,7 +246,9 @@ def account_error_message(account: PlatformAccountMonitor, error: str | None) ->
     if account.external_account_id:
         parts.append(account.external_account_id)
     target = " / ".join(str(part) for part in parts if part)
-    return f"account {target}: {error}" if target else f"account #{account.id}: {error}"
+    if target:
+        return f"账号监控失败（{target}）：{error}"
+    return f"账号监控失败（账号 #{account.id}）：{error}"
 
 
 def is_optional_newapi_channel_privilege_error(
@@ -284,7 +286,7 @@ async def run_platform_rate_monitor(db: Session, platform_id: int) -> RelayPlatf
             key_group_catalog = await key_group_catalog_fetcher(platform)
         except Exception as exc:  # noqa: BLE001
             key_group_catalog = None
-            errors.append(f"key group catalog fetch failed: {exc}")
+            errors.append(f"密钥绑定分组目录读取失败：{exc}")
             logger.exception(
                 "rate monitor key group catalog failed platform_id=%s name=%s",
                 platform.id,
@@ -310,7 +312,7 @@ async def run_platform_rate_monitor(db: Session, platform_id: int) -> RelayPlatf
                     exc,
                 )
             else:
-                errors.append(f"channel catalog fetch failed: {exc}")
+                errors.append(f"渠道倍率目录读取失败：{exc}")
                 logger.exception(
                     "rate monitor channel catalog failed platform_id=%s name=%s",
                     platform.id,
@@ -361,7 +363,7 @@ async def run_platform_rate_monitor(db: Session, platform_id: int) -> RelayPlatf
                 )
             )
             if item.error:
-                errors.append(f"channel {item.name}: {item.error}")
+                errors.append(channel_error_message(item, item.error))
                 logger.warning(
                     "rate monitor channel failed platform_id=%s channel_id=%s channel_name=%s error=%s",
                     platform.id,
@@ -383,7 +385,12 @@ async def run_platform_rate_monitor(db: Session, platform_id: int) -> RelayPlatf
         discovered_catalog = await strategy.fetch_group_catalog(platform)
     except Exception as exc:  # noqa: BLE001
         discovered_catalog = None
-        errors.append(f"group catalog fetch failed: {exc}")
+        errors.append(f"分组倍率目录读取失败：{exc}")
+        logger.exception(
+            "rate monitor group catalog failed platform_id=%s name=%s",
+            platform.id,
+            platform.name,
+        )
 
     if discovered_catalog is not None:
         db.execute(
@@ -436,7 +443,7 @@ async def run_platform_rate_monitor(db: Session, platform_id: int) -> RelayPlatf
                     if change is not None:
                         rate_changes.append(change)
             if item.error:
-                errors.append(f"group {item.name}: {item.error}")
+                errors.append(group_error_message(item, item.error))
                 logger.warning(
                     "rate monitor discovered group failed platform_id=%s group_id=%s group_name=%s error=%s",
                     platform.id,
@@ -472,7 +479,7 @@ async def run_platform_rate_monitor(db: Session, platform_id: int) -> RelayPlatf
             if change is not None:
                 rate_changes.append(change)
             if result.error:
-                errors.append(f"group {group.name}: {result.error}")
+                errors.append(group_error_message(group, result.error))
                 logger.warning(
                     "rate monitor configured group failed platform_id=%s group_id=%s group_name=%s error=%s",
                     platform.id,
@@ -499,7 +506,7 @@ async def run_platform_rate_monitor(db: Session, platform_id: int) -> RelayPlatf
                 error=str(exc),
                 checked_at=checked_at,
             )
-            errors.append(f"group {group.name}: {exc}")
+            errors.append(group_error_message(group, str(exc)))
             logger.exception(
                 "rate monitor configured group exception platform_id=%s group_id=%s group_name=%s",
                 platform.id,
@@ -526,6 +533,24 @@ async def run_platform_rate_monitor(db: Session, platform_id: int) -> RelayPlatf
     return platform
 
 
+def channel_error_message(channel: DiscoveredChannelRateResult, error: str | None) -> str:
+    target = monitored_target_label(channel.name, channel.external_channel_id)
+    return f"渠道倍率监控失败（{target}）：{error}"
+
+
+def group_error_message(
+    group: DiscoveredGroupRateResult | PlatformGroupMonitor,
+    error: str | None,
+) -> str:
+    target = monitored_target_label(group.name, group.external_group_id)
+    return f"分组倍率监控失败（{target}）：{error}"
+
+
+def monitored_target_label(name: str | None, external_id: str | None) -> str:
+    parts = [str(part) for part in (name, external_id) if part]
+    return " / ".join(parts) if parts else "未知目标"
+
+
 def update_platform_status(platform: RelayPlatform, errors: list[str]) -> None:
     platform.checked_at = utcnow()
     platform.last_error = "\n".join(errors) if errors else None
@@ -543,18 +568,66 @@ def sync_key_group_monitors(
         else key_group_monitor_candidates(platform.account_monitors)
     )
     if not candidates:
+        logger.debug(
+            "key group monitor sync skipped platform_id=%s name=%s source=%s candidates=0",
+            platform.id,
+            platform.name,
+            "catalog" if key_groups is not None else "account_key_summaries",
+        )
         return
 
     existing_groups = {group.external_group_id: group for group in platform.group_monitors}
+    source = "catalog" if key_groups is not None else "account_key_summaries"
     changed = False
+    added_count = 0
+    renamed_count = 0
+    migrated_count = 0
+    unchanged_count = 0
     for external_group_id, name in candidates.items():
         existing_group = existing_groups.get(external_group_id)
+        if existing_group is None:
+            legacy_group = legacy_display_name_group_monitor(
+                existing_groups,
+                external_group_id,
+                name,
+            )
+            if legacy_group is not None:
+                old_external_group_id = legacy_group.external_group_id
+                legacy_group.external_group_id = external_group_id
+                legacy_group.name = name
+                db.add(legacy_group)
+                existing_groups.pop(old_external_group_id, None)
+                existing_groups[external_group_id] = legacy_group
+                changed = True
+                migrated_count += 1
+                logger.info(
+                    "key group monitor sync migrated legacy group platform_id=%s group_db_id=%s old_external_group_id=%s new_external_group_id=%s name=%s source=%s",
+                    platform.id,
+                    legacy_group.id,
+                    old_external_group_id,
+                    external_group_id,
+                    name,
+                    source,
+                )
+                continue
+
         if existing_group is not None:
             default_names = {external_group_id, f"分组 {external_group_id}"}
             if existing_group.name in default_names and existing_group.name != name:
                 existing_group.name = name
                 db.add(existing_group)
                 changed = True
+                renamed_count += 1
+                logger.info(
+                    "key group monitor sync renamed default group platform_id=%s group_db_id=%s external_group_id=%s name=%s source=%s",
+                    platform.id,
+                    existing_group.id,
+                    external_group_id,
+                    name,
+                    source,
+                )
+            else:
+                unchanged_count += 1
             continue
 
         group = PlatformGroupMonitor(
@@ -567,9 +640,55 @@ def sync_key_group_monitors(
         db.add(group)
         existing_groups[external_group_id] = group
         changed = True
+        added_count += 1
+        logger.info(
+            "key group monitor sync added group platform_id=%s external_group_id=%s name=%s source=%s",
+            platform.id,
+            external_group_id,
+            name,
+            source,
+        )
 
     if changed:
         db.flush()
+    logger.info(
+        "key group monitor sync done platform_id=%s name=%s source=%s candidates=%s added=%s renamed=%s migrated=%s unchanged=%s changed=%s",
+        platform.id,
+        platform.name,
+        source,
+        len(candidates),
+        added_count,
+        renamed_count,
+        migrated_count,
+        unchanged_count,
+        changed,
+    )
+
+
+def legacy_display_name_group_monitor(
+    existing_groups: dict[str, PlatformGroupMonitor],
+    external_group_id: str,
+    name: str,
+) -> PlatformGroupMonitor | None:
+    legacy_external_group_id = legacy_display_name_group_id(external_group_id)
+    if legacy_external_group_id == external_group_id:
+        return None
+    group = existing_groups.get(legacy_external_group_id)
+    if group is None or group.name != name:
+        return None
+    return group
+
+
+def legacy_display_name_group_id(group_name: str) -> str:
+    text = group_name.strip()
+    if not text:
+        return text
+    for separator in ("（", "("):
+        if separator in text:
+            candidate = text.split(separator, 1)[0].strip()
+            if candidate:
+                return candidate
+    return text
 
 
 def key_group_monitor_candidates(

@@ -390,9 +390,18 @@ class GenericNewApiSiteStrategy(NewApiSiteStrategy):
             external_group_id,
         )
         headers = await provider.resolve_management_headers(platform)
+        logger.debug(
+            "newapi group rate auth resolved platform_id=%s group_id=%s auth=%s",
+            platform_id,
+            group_id,
+            provider.auth_debug_summary(headers),
+        )
         if "New-Api-User" not in headers:
             return GroupRateResult(
-                error="newapi group rate monitoring requires an enabled login account"
+                error=(
+                    "NewAPI 分组倍率读取失败：缺少 New-Api-User。"
+                    "请在平台配置中填写管理用户 ID，或配置一个启用的登录账号。"
+                )
             )
         async with httpx.AsyncClient(
             base_url=self.site_url(platform),
@@ -404,50 +413,93 @@ class GenericNewApiSiteStrategy(NewApiSiteStrategy):
                 self.PRICING_ENDPOINTS,
         )
         if response.status_code >= 400:
+            payload = self.safe_json(response)
             logger.warning(
-                "newapi pricing failed platform_id=%s group_id=%s status=%s endpoint=%s",
-                platform_id,
-                group_id,
-                response.status_code,
-                pricing_endpoint,
-            )
-            return GroupRateResult(
-                error=(
-                    "newapi pricing endpoint returned "
-                    f"HTTP {response.status_code}: {pricing_endpoint}"
-                )
-            )
-        payload = self.safe_json(response)
-        if not isinstance(payload, dict) or not isinstance(payload.get("group_ratio"), dict):
-            return GroupRateResult(error="newapi pricing response missing group_ratio")
-        raw_rate = payload["group_ratio"].get(group.external_group_id)
-        if raw_rate is None:
-            logger.warning(
-                "newapi pricing missing group ratio platform_id=%s group_id=%s group_name=%s target=%s",
+                "newapi pricing failed platform_id=%s group_id=%s group_name=%s target=%s status=%s endpoint=%s summary=%s",
                 platform_id,
                 group_id,
                 group_name,
                 external_group_id,
+                response.status_code,
+                pricing_endpoint,
+                self.response_debug_summary(response, payload),
             )
             return GroupRateResult(
-                error=f"newapi group_ratio missing group {external_group_id!r}"
+                error=(
+                    "NewAPI 分组倍率读取失败："
+                    f"{pricing_endpoint} 返回 HTTP {response.status_code}。"
+                    "请检查管理凭证是否有效，或上游站点是否开放 pricing 接口。"
+                )
+            )
+        payload = self.safe_json(response)
+        if not isinstance(payload, dict) or not isinstance(payload.get("group_ratio"), dict):
+            logger.warning(
+                "newapi pricing missing group_ratio platform_id=%s group_id=%s group_name=%s endpoint=%s summary=%s",
+                platform_id,
+                group_id,
+                group_name,
+                pricing_endpoint,
+                self.response_debug_summary(response, payload),
+            )
+            return GroupRateResult(
+                error=(
+                    "NewAPI 分组倍率读取失败：pricing 响应缺少 group_ratio。"
+                    "请确认该站点是 NewAPI 兼容接口，并且当前账号有权限访问 pricing。"
+                )
+            )
+        raw_rate = payload["group_ratio"].get(group.external_group_id)
+        if raw_rate is None:
+            available_groups = list(payload["group_ratio"])[:8]
+            logger.warning(
+                "newapi pricing missing group ratio platform_id=%s group_id=%s group_name=%s target=%s available_count=%s available_sample=%s",
+                platform_id,
+                group_id,
+                group_name,
+                external_group_id,
+                len(payload["group_ratio"]),
+                available_groups,
+            )
+            return GroupRateResult(
+                error=(
+                    f"NewAPI pricing 中没有找到分组 {external_group_id!r}。"
+                    "请确认监控分组 ID 与上游实际分组 ID 完全一致；"
+                    f"当前可用分组示例：{', '.join(str(item) for item in available_groups) or '无'}。"
+                )
             )
         try:
             return GroupRateResult(rate_multiplier=float(raw_rate))
         except (TypeError, ValueError):
-            return GroupRateResult(error=f"newapi group ratio is not numeric: {raw_rate!r}")
+            return GroupRateResult(
+                error=f"NewAPI 分组倍率格式错误：分组 {external_group_id!r} 的倍率不是数字：{raw_rate!r}"
+            )
 
     async def fetch_group_catalog(
         self,
         provider: "NewApiStrategy",
         platform: RelayPlatform,
     ) -> list[DiscoveredGroupRateResult] | None:
+        platform_id = getattr(platform, "id", None)
+        platform_name = getattr(platform, "name", None)
         auth_headers = await provider.resolve_management_headers(platform)
+        logger.debug(
+            "newapi group catalog start platform_id=%s platform_name=%s auth=%s endpoint=%s",
+            platform_id,
+            platform_name,
+            provider.auth_debug_summary(auth_headers),
+            self.GROUPS_ENDPOINT,
+        )
         errors: list[str] = []
         try:
             return await self.fetch_group_catalog_with_headers(provider, platform, auth_headers)
         except ValueError as exc:
             errors.append(str(exc))
+            logger.warning(
+                "newapi group catalog attempt failed platform_id=%s platform_name=%s auth=%s error=%s",
+                platform_id,
+                platform_name,
+                provider.auth_debug_summary(auth_headers),
+                exc,
+            )
 
         fallback_candidates: list[dict[str, str]] = []
 
@@ -471,6 +523,13 @@ class GenericNewApiSiteStrategy(NewApiSiteStrategy):
                 return await self.fetch_group_catalog_with_headers(provider, platform, headers)
             except ValueError as exc:
                 errors.append(str(exc))
+                logger.warning(
+                    "newapi group catalog fallback failed platform_id=%s platform_name=%s auth=%s error=%s",
+                    platform_id,
+                    platform_name,
+                    provider.auth_debug_summary(headers),
+                    exc,
+                )
 
         fallback_candidates = []
         add_fallback_candidate(await provider.login_management_headers(platform, force_refresh=True))
@@ -482,6 +541,13 @@ class GenericNewApiSiteStrategy(NewApiSiteStrategy):
                 return await self.fetch_group_catalog_with_headers(provider, platform, headers)
             except ValueError as exc:
                 errors.append(str(exc))
+                logger.warning(
+                    "newapi group catalog login fallback failed platform_id=%s platform_name=%s auth=%s error=%s",
+                    platform_id,
+                    platform_name,
+                    provider.auth_debug_summary(headers),
+                    exc,
+                )
 
         if errors:
             raise ValueError(errors[-1])
@@ -493,6 +559,8 @@ class GenericNewApiSiteStrategy(NewApiSiteStrategy):
         platform: RelayPlatform,
         headers: dict[str, str],
     ) -> list[DiscoveredGroupRateResult] | None:
+        platform_id = getattr(platform, "id", None)
+        platform_name = getattr(platform, "name", None)
         site_url = self.site_url(platform)
         async with httpx.AsyncClient(
             base_url=site_url,
@@ -508,26 +576,45 @@ class GenericNewApiSiteStrategy(NewApiSiteStrategy):
         ) as client:
             response = await client.get(self.GROUPS_ENDPOINT)
             payload = self.safe_json(response)
+            logger.debug(
+                "newapi group catalog response platform_id=%s platform_name=%s auth=%s summary=%s",
+                platform_id,
+                platform_name,
+                provider.auth_debug_summary(headers),
+                self.response_debug_summary(response, payload),
+            )
             if response.status_code >= 400:
                 message = self.response_message(payload)
-                suffix = f": {message}" if message else f" ({self.response_debug_summary(response, payload)})"
+                suffix = f"上游提示：{message}" if message else self.response_debug_summary(response, payload)
                 raise ValueError(
-                    f"newapi group catalog endpoint returned HTTP {response.status_code}{suffix}"
+                    "NewAPI 分组目录读取失败："
+                    f"{self.GROUPS_ENDPOINT} 返回 HTTP {response.status_code}。"
+                    f"{suffix}。请检查管理凭证是否有效，或该账号是否有权限读取用户分组。"
                 )
             if self.response_failed(payload):
                 message = self.response_message(payload)
                 if message:
-                    raise ValueError(message)
+                    raise ValueError(f"NewAPI 分组目录读取失败：上游返回失败，提示：{message}")
                 raise ValueError(
-                    f"newapi group catalog failed ({self.response_debug_summary(response, payload)})"
+                    "NewAPI 分组目录读取失败：上游返回失败，但没有提供明确提示。"
+                    f"{self.response_debug_summary(response, payload)}。"
                 )
 
         groups = self.parse_group_catalog_payload(payload)
         if groups is None:
             raise ValueError(
+                "NewAPI 分组目录读取失败：响应缺少 data 分组对象。"
                 "newapi group catalog response missing data "
-                f"({self.response_debug_summary(response, payload)})"
+                f"({self.response_debug_summary(response, payload)})。"
+                "常见原因：管理凭证失效、请求被重定向到登录页，或上游站点接口格式不是 NewAPI。"
             )
+        logger.info(
+            "newapi group catalog fetched platform_id=%s platform_name=%s groups=%s auth=%s",
+            platform_id,
+            platform_name,
+            len(groups),
+            provider.auth_debug_summary(headers),
+        )
         return groups
 
     async def login_headers_for_account(
@@ -1255,7 +1342,10 @@ class NewApiStrategy(ProviderStrategy):
             return None
         if errors:
             raise ValueError(errors[-1])
-        raise ValueError("newapi channel rate monitoring requires an enabled login account")
+        raise ValueError(
+            "NewAPI 渠道倍率目录读取失败：缺少可用于登录的启用账号。"
+            "请配置一个启用的登录账号，或在平台配置中填写有效的管理凭证。"
+        )
 
     async def fetch_channel_catalog_with_headers(
         self,
@@ -1263,7 +1353,10 @@ class NewApiStrategy(ProviderStrategy):
         headers: dict[str, str],
     ) -> list[DiscoveredChannelRateResult] | None:
         if "New-Api-User" not in headers:
-            raise ValueError("newapi channel rate monitoring requires an enabled login account")
+            raise ValueError(
+                "NewAPI 渠道倍率目录读取失败：缺少 New-Api-User。"
+                "请在平台配置中填写管理用户 ID，或配置一个启用的登录账号。"
+            )
         async with httpx.AsyncClient(
             base_url=self.site_url(platform),
             headers=headers,
@@ -1289,10 +1382,23 @@ class NewApiStrategy(ProviderStrategy):
             if channels_response.status_code >= 400:
                 message = self.response_message(channels_payload)
                 if message:
-                    raise ValueError(message)
-                raise ValueError(f"newapi ratio sync channels returned HTTP {channels_response.status_code}")
+                    raise ValueError(f"NewAPI 渠道倍率目录读取失败：上游提示：{message}")
+                raise ValueError(
+                    "NewAPI 渠道倍率目录读取失败："
+                    f"{self.RATIO_SYNC_CHANNELS_ENDPOINT} 返回 HTTP {channels_response.status_code}。"
+                    f"{self.response_debug_summary(channels_response, channels_payload)}。"
+                    "请检查管理凭证是否有效，或当前账号是否有权限读取渠道倍率。"
+                )
             if self.response_failed(channels_payload):
-                raise ValueError(self.response_message(channels_payload) or "newapi ratio sync channels failed")
+                message = self.response_message(channels_payload)
+                raise ValueError(
+                    f"NewAPI 渠道倍率目录读取失败：上游返回失败，提示：{message}"
+                    if message
+                    else (
+                        "NewAPI 渠道倍率目录读取失败：上游返回失败，但没有提供明确提示。"
+                        f"{self.response_debug_summary(channels_response, channels_payload)}。"
+                    )
+                )
 
             admin_channels_payload: Any | None = None
             try:
@@ -1323,9 +1429,21 @@ class NewApiStrategy(ProviderStrategy):
             )
             ratio_payload = self.safe_json(ratio_response)
             if ratio_response.status_code >= 400:
-                ratio_error = f"newapi ratio sync fetch returned HTTP {ratio_response.status_code}"
+                ratio_error = (
+                    "NewAPI 渠道模型倍率读取失败："
+                    f"{self.RATIO_SYNC_FETCH_ENDPOINT} 返回 HTTP {ratio_response.status_code}。"
+                    f"{self.response_debug_summary(ratio_response, ratio_payload)}。"
+                )
             elif self.response_failed(ratio_payload):
-                ratio_error = self.response_message(ratio_payload) or "newapi ratio sync fetch failed"
+                message = self.response_message(ratio_payload)
+                ratio_error = (
+                    f"NewAPI 渠道模型倍率读取失败：上游返回失败，提示：{message}"
+                    if message
+                    else (
+                        "NewAPI 渠道模型倍率读取失败：上游返回失败，但没有提供明确提示。"
+                        f"{self.response_debug_summary(ratio_response, ratio_payload)}。"
+                    )
+                )
 
         return self.parse_channel_rate_results(
             channels_payload,
@@ -1686,6 +1804,24 @@ class NewApiStrategy(ProviderStrategy):
         return str(message) if message else None
 
     @staticmethod
+    def auth_debug_summary(headers: dict[str, str] | None) -> str:
+        if not headers:
+            return "none"
+        parts = [
+            f"authorization={'yes' if headers.get('Authorization') else 'no'}",
+            f"new_api_user={'yes' if headers.get('New-Api-User') else 'no'}",
+            f"cookie={'yes' if headers.get('Cookie') else 'no'}",
+        ]
+        extra_headers = sorted(
+            key
+            for key in headers
+            if key not in {"Authorization", "New-Api-User", "Cookie"}
+        )
+        if extra_headers:
+            parts.append(f"extra={','.join(extra_headers[:6])}")
+        return " ".join(parts)
+
+    @staticmethod
     def response_debug_summary(response: httpx.Response, payload: Any) -> str:
         content_type = response.headers.get("content-type", "").split(";", 1)[0] or "unknown"
         parts = [
@@ -1863,13 +1999,48 @@ class NewApiStrategy(ProviderStrategy):
         self,
         platform: RelayPlatform,
     ) -> tuple[dict[str, str | None], ...]:
+        platform_id = getattr(platform, "id", None)
+        platform_name = getattr(platform, "name", None)
         headers = await self.resolve_management_headers(platform)
+        logger.debug(
+            "newapi token summaries start platform_id=%s platform_name=%s auth=%s",
+            platform_id,
+            platform_name,
+            self.auth_debug_summary(headers),
+        )
         async with httpx.AsyncClient(
             base_url=self.site_url(platform),
             headers=headers,
             timeout=self.timeout_seconds,
         ) as client:
-            return await self.fetch_token_summaries(client)
+            try:
+                summaries = await self.fetch_token_summaries(client, string_group_as_id=True)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "newapi token summaries failed platform_id=%s platform_name=%s auth=%s error=%s",
+                    platform_id,
+                    platform_name,
+                    self.auth_debug_summary(headers),
+                    exc,
+                )
+                raise
+            group_ids = sorted(
+                {
+                    str(summary.get("group_id"))
+                    for summary in summaries
+                    if summary.get("group_id")
+                }
+            )
+            logger.info(
+                "newapi token summaries fetched platform_id=%s platform_name=%s keys=%s groups=%s group_sample=%s auth=%s",
+                platform_id,
+                platform_name,
+                len(summaries),
+                len(group_ids),
+                group_ids[:8],
+                self.auth_debug_summary(headers),
+            )
+            return summaries
 
     async def fetch_token_summaries(
         self,
@@ -1888,11 +2059,42 @@ class NewApiStrategy(ProviderStrategy):
             )
             payload = self.safe_json(response)
             if response.status_code >= 400:
-                raise ValueError(f"newapi token list returned HTTP {response.status_code}")
+                logger.warning(
+                    "newapi token list failed page=%s status=%s summary=%s",
+                    page,
+                    response.status_code,
+                    self.response_debug_summary(response, payload),
+                )
+                raise ValueError(
+                    "NewAPI 密钥列表读取失败："
+                    f"api/token/ 返回 HTTP {response.status_code}。"
+                    f"{self.response_debug_summary(response, payload)}。"
+                    "请检查管理凭证是否有效，或当前账号是否有权限读取密钥列表。"
+                )
             if self.response_failed(payload):
-                raise ValueError(self.response_message(payload) or "newapi token list failed")
+                message = self.response_message(payload)
+                logger.warning(
+                    "newapi token list response failed page=%s summary=%s",
+                    page,
+                    self.response_debug_summary(response, payload),
+                )
+                raise ValueError(
+                    f"NewAPI 密钥列表读取失败：上游返回失败，提示：{message}"
+                    if message
+                    else (
+                        "NewAPI 密钥列表读取失败：上游返回失败，但没有提供明确提示。"
+                        f"{self.response_debug_summary(response, payload)}。"
+                    )
+                )
 
             items, total, response_page_size = self.token_list_items(payload)
+            logger.debug(
+                "newapi token list page fetched page=%s items=%s total=%s page_size=%s",
+                page,
+                len(items),
+                total,
+                response_page_size,
+            )
             for item in items:
                 token_id = item.get("id")
                 if token_id is None:
@@ -1910,6 +2112,7 @@ class NewApiStrategy(ProviderStrategy):
             page += 1
 
         if not token_ids:
+            logger.info("newapi token summaries fetched no tokens")
             return ()
 
         details = await self.fetch_token_details(client, token_ids, request_headers=request_headers)
@@ -1929,6 +2132,12 @@ class NewApiStrategy(ProviderStrategy):
                     "group_name": group_name,
                 }
             )
+        logger.debug(
+            "newapi token summaries parsed keys=%s grouped_keys=%s string_group_as_id=%s",
+            len(summaries),
+            sum(1 for summary in summaries if summary.get("group_id")),
+            string_group_as_id,
+        )
         return tuple(summaries)
 
     async def fetch_token_details(
@@ -1942,12 +2151,47 @@ class NewApiStrategy(ProviderStrategy):
             response = await client.get(f"api/token/{token_id}", headers=request_headers)
             payload = self.safe_json(response)
             if response.status_code >= 400:
-                raise ValueError(f"newapi token {token_id} returned HTTP {response.status_code}")
+                logger.warning(
+                    "newapi token detail failed token_id=%s status=%s summary=%s",
+                    token_id,
+                    response.status_code,
+                    self.response_debug_summary(response, payload),
+                )
+                raise ValueError(
+                    "NewAPI 密钥详情读取失败："
+                    f"密钥 {token_id} 返回 HTTP {response.status_code}。"
+                    f"{self.response_debug_summary(response, payload)}。"
+                    "请检查管理凭证是否有效，或该密钥是否仍存在。"
+                )
             if self.response_failed(payload):
-                raise ValueError(self.response_message(payload) or f"newapi token {token_id} failed")
+                message = self.response_message(payload)
+                logger.warning(
+                    "newapi token detail response failed token_id=%s summary=%s",
+                    token_id,
+                    self.response_debug_summary(response, payload),
+                )
+                raise ValueError(
+                    f"NewAPI 密钥详情读取失败：密钥 {token_id} 上游返回失败，提示：{message}"
+                    if message
+                    else (
+                        f"NewAPI 密钥详情读取失败：密钥 {token_id} 上游返回失败，"
+                        f"但没有提供明确提示。{self.response_debug_summary(response, payload)}。"
+                    )
+                )
             data = self.unwrap_payload(payload)
             if isinstance(data, dict):
                 details[token_id] = data
+                logger.debug(
+                    "newapi token detail fetched token_id=%s keys=%s",
+                    token_id,
+                    list(data)[:8],
+                )
+            else:
+                logger.warning(
+                    "newapi token detail missing object token_id=%s payload_type=%s",
+                    token_id,
+                    type(data).__name__,
+                )
         return details
 
     @staticmethod
@@ -2000,7 +2244,7 @@ class NewApiStrategy(ProviderStrategy):
             if text.isdigit():
                 group_id = text
             elif string_group_as_id:
-                group_id = NewApiStrategy.group_id_from_display_name(text)
+                group_id = text
                 group_name = text
             else:
                 group_name = text
@@ -2020,18 +2264,6 @@ class NewApiStrategy(ProviderStrategy):
             group_name = group_id
 
         return group_id, group_name
-
-    @staticmethod
-    def group_id_from_display_name(group_name: str) -> str:
-        text = group_name.strip()
-        if not text:
-            return text
-        for separator in ("（", "("):
-            if separator in text:
-                candidate = text.split(separator, 1)[0].strip()
-                if candidate:
-                    return candidate
-        return text
 
     def management_client(self, platform: RelayPlatform) -> httpx.AsyncClient:
         return httpx.AsyncClient(

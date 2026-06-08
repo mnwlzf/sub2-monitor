@@ -435,8 +435,9 @@ def test_newapi_fetch_account_balance_reads_key_summaries(monkeypatch) -> None:
                             "items": [
                                 {"id": 11, "name": "prod-key"},
                                 {"id": 12, "name": "ops-key"},
+                                {"id": 13, "name": "promo-key"},
                             ],
-                            "total": 2,
+                            "total": 3,
                             "page_size": 100,
                         },
                     },
@@ -457,6 +458,19 @@ def test_newapi_fetch_account_balance_reads_key_summaries(monkeypatch) -> None:
                     json={
                         "success": True,
                         "data": {"id": 12, "name": "ops-key", "group_id": 9, "group_name": "ops"},
+                    },
+                    request=httpx.Request("GET", f"{self.base_url}{path}"),
+                )
+            if target == "api/token/13":
+                return httpx.Response(
+                    200,
+                    json={
+                        "success": True,
+                        "data": {
+                            "id": 13,
+                            "name": "promo-key",
+                            "group": "codex（特价分组-4）",
+                        },
                     },
                     request=httpx.Request("GET", f"{self.base_url}{path}"),
                 )
@@ -499,6 +513,12 @@ def test_newapi_fetch_account_balance_reads_key_summaries(monkeypatch) -> None:
     assert result.key_summaries == (
         {"id": "11", "name": "prod-key", "group_id": "7", "group_name": "codex"},
         {"id": "12", "name": "ops-key", "group_id": "9", "group_name": "ops"},
+        {
+            "id": "13",
+            "name": "promo-key",
+            "group_id": "codex（特价分组-4）",
+            "group_name": "codex（特价分组-4）",
+        },
     )
 
 
@@ -1137,7 +1157,12 @@ def test_newapi_generic_fetch_account_balance_uses_session_cookie_without_access
     assert result.balance == 3.0
     assert result.quota_used == 1.0
     assert result.key_summaries == (
-        {"id": "811", "name": "111", "group_id": "codex", "group_name": "codex（特价分组-1）"},
+        {
+            "id": "811",
+            "name": "111",
+            "group_id": "codex（特价分组-1）",
+            "group_name": "codex（特价分组-1）",
+        },
     )
 
 
@@ -1238,7 +1263,12 @@ def test_newapi_generic_fetch_account_balance_uses_user_session_when_password_is
     assert result.balance == 3.0
     assert result.quota_used == 1.0
     assert result.key_summaries == (
-        {"id": "811", "name": "111", "group_id": "codex", "group_name": "codex（特价分组-1）"},
+        {
+            "id": "811",
+            "name": "111",
+            "group_id": "codex（特价分组-1）",
+            "group_name": "codex（特价分组-1）",
+        },
     )
 
 

@@ -89,7 +89,13 @@
                   <el-switch :model-value="row.enabled" @change="toggleEnabled(row)" />
                   <div class="table-actions">
                     <el-button :icon="Setting" circle title="监控项" @click="openDetail(row)" />
-                    <el-button :icon="Refresh" circle title="采集" @click="runMonitor(row)" />
+                    <el-button
+                      :icon="Refresh"
+                      :loading="monitoringPlatformId === row.id"
+                      circle
+                      title="采集"
+                      @click="runMonitor(row)"
+                    />
                     <el-button :icon="Edit" circle title="编辑" @click="openEdit(row)" />
                     <el-button :icon="Delete" circle plain title="删除" type="danger" @click="remove(row)" />
                   </div>
@@ -98,6 +104,10 @@
 
               <div class="embedded-platform-body">
                 <div class="embedded-platform-metrics">
+                  <div class="timestamp">
+                    <span>最后采集</span>
+                    <strong>{{ formatTime(row.checked_at) }}</strong>
+                  </div>
                   <div>
                     <span>平台余额</span>
                     <strong>{{ formatMoney(row.balance) }}</strong>
@@ -1017,6 +1027,7 @@ const notificationRecipients = ref<NotificationRecipient[]>([])
 const loading = ref(false)
 const saving = ref(false)
 const monitoring = ref(false)
+const monitoringPlatformId = ref<number | null>(null)
 const savingNotification = ref(false)
 const testingNotification = ref(false)
 const dialogVisible = ref(false)
@@ -1417,6 +1428,18 @@ async function reloadDetail() {
   detail.value = await fetchPlatform(detail.value.id)
 }
 
+async function refreshPlatformState(platformId: number, refreshHistories = false) {
+  const [refreshedPlatform, dashboard] = await Promise.all([fetchPlatform(platformId), fetchDashboard()])
+  platforms.value = platforms.value.map((row) => (row.id === platformId ? refreshedPlatform : row))
+  stats.value = dashboard
+  if (detail.value?.id === platformId) {
+    detail.value = refreshedPlatform
+  }
+  if (refreshHistories && detail.value?.id === platformId) {
+    await loadEmbeddedHistories([platformId])
+  }
+}
+
 async function loadPlatformBalanceHistories(platformIds: number[]) {
   const rows = await Promise.all(
     platformIds.map(async (platformId) => ({
@@ -1483,13 +1506,13 @@ async function remove(row: RelayPlatform) {
 }
 
 async function runMonitor(row: RelayPlatform) {
-  monitoring.value = true
+  monitoringPlatformId.value = row.id
   try {
     await runPlatformMonitor(row.id)
     ElMessage.success('采集完成')
-    await load()
+    await refreshPlatformState(row.id)
   } finally {
-    monitoring.value = false
+    monitoringPlatformId.value = null
   }
 }
 
@@ -1501,8 +1524,7 @@ async function runDetailBalanceMonitor() {
   try {
     await runPlatformBalanceMonitor(detail.value.id)
     ElMessage.success('余额采集完成')
-    await reloadDetail()
-    await load()
+    await refreshPlatformState(detail.value.id, true)
   } finally {
     monitoring.value = false
   }
@@ -1516,8 +1538,7 @@ async function runDetailMonitor() {
   try {
     await runPlatformMonitor(detail.value.id)
     ElMessage.success('采集完成')
-    await reloadDetail()
-    await load()
+    await refreshPlatformState(detail.value.id, true)
   } finally {
     monitoring.value = false
   }
@@ -1531,8 +1552,7 @@ async function runDetailRateMonitor() {
   try {
     await runPlatformRateMonitor(detail.value.id)
     ElMessage.success('倍率采集完成')
-    await reloadDetail()
-    await load()
+    await refreshPlatformState(detail.value.id, true)
   } finally {
     monitoring.value = false
   }
@@ -1551,7 +1571,7 @@ async function runDetailRateMonitorFor(row: RelayPlatform) {
   try {
     await runPlatformRateMonitor(row.id)
     ElMessage.success('倍率采集完成')
-    await load()
+    await refreshPlatformState(row.id)
   } finally {
     monitoring.value = false
   }

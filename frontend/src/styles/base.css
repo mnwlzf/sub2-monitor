@@ -870,7 +870,7 @@ body {
 
 .embedded-platform-metrics {
   display: grid;
-  grid-template-columns: repeat(4, minmax(120px, 1fr));
+  grid-template-columns: repeat(5, minmax(120px, 1fr));
   gap: 12px;
 }
 
@@ -897,6 +897,13 @@ body {
   line-height: 1.25;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.embedded-platform-metrics .timestamp strong {
+  font-size: 13px;
+  line-height: 1.4;
+  white-space: normal;
+  text-overflow: clip;
 }
 
 .embedded-section-label {

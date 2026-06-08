@@ -674,9 +674,6 @@ body {
 }
 
 .embedded-menu {
-  position: sticky;
-  top: 88px;
-  z-index: 10;
   display: flex;
   width: 220px;
   flex-direction: column;

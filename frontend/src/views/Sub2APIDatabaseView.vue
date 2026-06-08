@@ -1,21 +1,5 @@
 <template>
-  <div class="sub2api-db-page embedded-workspace">
-    <aside class="embedded-menu">
-      <div class="embedded-menu-brand">
-        <strong>Sub2 Monitor</strong>
-        <span>功能菜单</span>
-      </div>
-      <button type="button" @click="router.push('/')">
-        <span>平台监控</span>
-        <small>状态、余额、倍率和采集操作</small>
-      </button>
-      <button class="active" type="button">
-        <span>Sub2API 数据库</span>
-        <small>连接状态、SQL 日志和权重同步</small>
-      </button>
-    </aside>
-
-    <main class="embedded-render">
+  <div class="sub2api-db-page embedded-render">
       <section class="sub2api-db-head">
         <div>
           <h2>Sub2API 数据库</h2>
@@ -326,8 +310,6 @@
       </div>
     </section>
 
-    </main>
-
     <el-dialog v-model="detailVisible" title="SQL 修改日志" width="760px">
       <div v-if="selectedLog" class="sql-log-detail">
         <div class="sql-log-detail-grid">
@@ -377,7 +359,6 @@
 import { Refresh, View } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import { computed, onMounted, reactive, ref } from 'vue'
-import { useRouter } from 'vue-router'
 
 import {
   fetchLatestSub2APIPrioritySyncRun,
@@ -392,7 +373,6 @@ import {
   type Sub2APISQLLogPage,
 } from '@/api/client'
 
-const router = useRouter()
 const status = ref<Sub2APIDatabaseStatus | null>(null)
 const prioritySyncRun = ref<Sub2APIPrioritySyncRun | null>(null)
 const logs = ref<Sub2APISQLLogPage>({

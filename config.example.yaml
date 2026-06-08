@@ -1,0 +1,18 @@
+# Sub2 Monitor external configuration.
+# Docker deploy path: /app/sub-monitor/config/config.yaml
+#
+# Keep app runtime settings in environment variables unless you need to
+# override them here. This file is primarily for Sub2API database access.
+
+sub2api:
+  database:
+    # This host is reachable from sub-monitor through app_sub2api-network.
+    host: "sub2api-postgres"
+    port: 5432
+    user: "newapi"
+    password: "change-this-database-password"
+    dbname: "newapi"
+    sslmode: "disable"
+    connect_timeout_seconds: 5
+    # Optional: use one DSN instead of host/user/password/dbname fields.
+    # dsn: "postgresql://newapi:change-this-database-password@sub2api-postgres:5432/newapi?sslmode=disable"

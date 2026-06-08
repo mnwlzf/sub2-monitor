@@ -11,6 +11,7 @@ services:
     ports:
       - "${SUB_MONITOR_BIND_HOST:-0.0.0.0}:${SUB_MONITOR_PORT:-18080}:8000"
     environment:
+      - SUB2_MONITOR_CONFIG_FILE=/app/config/config.yaml
       - SUB2_MONITOR_ENV=${SUB2_MONITOR_ENV:-production}
       - SUB2_MONITOR_HOST=0.0.0.0
       - SUB2_MONITOR_PORT=8000
@@ -21,6 +22,7 @@ services:
       - SUB2_MONITOR_CORS_ORIGINS=${SUB2_MONITOR_CORS_ORIGINS:-["*"]}
     volumes:
       - sub_monitor_data:/app/data
+      - ./config:/app/config:ro
     networks:
       - sub2api-network
 

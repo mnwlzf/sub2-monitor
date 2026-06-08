@@ -51,6 +51,40 @@ uv run uvicorn app.main:app --host 0.0.0.0 --port 8000
 
 访问 `http://服务器IP:8000`，FastAPI 会直接托管 `frontend/dist`。
 
+## Docker 外挂配置
+
+Docker 部署会读取容器内 `/app/config/config.yaml`。在服务器部署目录中，对应宿主机路径是：
+
+```bash
+/app/sub-monitor/config/config.yaml
+```
+
+`/app/sub-monitor/update.sh` 会在首次执行时创建 `config/` 目录，并在缺少配置文件时从
+`config.example.yaml` 复制模板。已有 `config/config.yaml` 不会被覆盖。
+
+当前外挂配置先预留 Sub2API PostgreSQL 连接，供后续数据修改功能复用：
+
+```yaml
+sub2api:
+  database:
+    host: "sub2api-postgres"
+    port: 5432
+    user: "newapi"
+    password: "change-this-database-password"
+    dbname: "newapi"
+    sslmode: "disable"
+    connect_timeout_seconds: 5
+```
+
+服务启动后，登录 monitor 后可用只读接口检查配置和连通性：
+
+```bash
+GET /api/sub2api/database/status
+GET /api/sub2api/database/status?test=false
+```
+
+接口会脱敏返回 DSN；`test=true` 只执行 `select current_database(), current_user, version()`。
+
 ## 当前已实现
 
 - 登录、退出、获取当前用户
@@ -59,6 +93,7 @@ uv run uvicorn app.main:app --host 0.0.0.0 --port 8000
 - 平台基础信息 CRUD
 - 平台监控快照接口预留
 - 仪表盘统计接口
+- Sub2API PostgreSQL 外挂配置和只读连通性检查接口
 
 ## Sub2API 监控配置
 

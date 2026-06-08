@@ -209,7 +209,7 @@ def test_priority_sync_plan_uses_lowest_effective_key_group_rate() -> None:
         db.close()
 
 
-def test_priority_sync_plan_dedupes_by_base_url_and_api_key() -> None:
+def test_priority_sync_plan_dedupes_by_base_url_without_api_key() -> None:
     db = make_session()
     try:
         shared_url = "https://relay.example.com/"
@@ -217,7 +217,6 @@ def test_priority_sync_plan_dedupes_by_base_url_and_api_key() -> None:
             name="First",
             base_url=shared_url,
             provider_type="fake",
-            api_key_encrypted=encrypt_secret("sk-first"),
             rate_cron="*/10 * * * *",
             balance_cron="*/10 * * * *",
             status=PlatformStatus.unknown,
@@ -226,7 +225,6 @@ def test_priority_sync_plan_dedupes_by_base_url_and_api_key() -> None:
             name="Second",
             base_url=shared_url,
             provider_type="fake",
-            api_key_encrypted=encrypt_secret("sk-second"),
             rate_cron="*/10 * * * *",
             balance_cron="*/10 * * * *",
             status=PlatformStatus.unknown,
@@ -235,7 +233,6 @@ def test_priority_sync_plan_dedupes_by_base_url_and_api_key() -> None:
             name="Cheaper Duplicate",
             base_url=shared_url,
             provider_type="fake",
-            api_key_encrypted=encrypt_secret("sk-first"),
             rate_cron="*/10 * * * *",
             balance_cron="*/10 * * * *",
             status=PlatformStatus.unknown,
@@ -275,14 +272,13 @@ def test_priority_sync_plan_dedupes_by_base_url_and_api_key() -> None:
 
         assert [item["platform_name"] for item in plan] == [
             "Cheaper Duplicate",
-            "Second",
             "First",
+            "Second",
         ]
-        assert [item["status"] for item in plan] == ["planned", "planned", "skipped"]
-        assert [item["priority"] for item in plan[:2]] == [5, 10]
-        assert plan[2]["error_message"] == (
-            "同一 base_url 和 api_key 已由更低实际倍率平台 Cheaper Duplicate 接管"
-        )
+        assert [item["status"] for item in plan] == ["planned", "skipped", "skipped"]
+        assert plan[0]["priority"] == 5
+        assert plan[1]["error_message"] == "同一 base_url 已由更低实际倍率平台 Cheaper Duplicate 接管"
+        assert plan[2]["error_message"] == "同一 base_url 已由更低实际倍率平台 First 接管"
     finally:
         db.close()
 
@@ -291,7 +287,7 @@ def test_priority_sync_sql_targets_sub2api_accounts_url_fields() -> None:
     assert PRIORITY_SYNC_PRIORITY_STEP == 5
     assert "UPDATE accounts" in PRIORITY_SYNC_SQL
     assert "SET priority = %(priority)s" in PRIORITY_SYNC_SQL
-    assert "credentials->>'api_key'" in PRIORITY_SYNC_SQL
+    assert "credentials->>'api_key'" not in PRIORITY_SYNC_SQL
     assert "credentials->>'base_url'" in PRIORITY_SYNC_SQL
     assert "extra->>'custom_base_url'" in PRIORITY_SYNC_SQL
     assert "extra->>'custom_base_url_enabled'" in PRIORITY_SYNC_SQL
@@ -305,7 +301,6 @@ def test_priority_sync_logs_failed_sql_when_target_database_is_unconfigured() ->
             name="Sync Target",
             base_url="https://relay.example.com/",
             provider_type="fake",
-            api_key_encrypted=encrypt_secret("sk-sync-target"),
             rate_cron="*/10 * * * *",
             balance_cron="*/10 * * * *",
             status=PlatformStatus.unknown,
@@ -358,8 +353,7 @@ def test_priority_sync_logs_failed_sql_when_target_database_is_unconfigured() ->
         assert logs[0].sql_params_json is not None
         log_params = json.loads(logs[0].sql_params_json)
         assert log_params["base_url"] == "https://relay.example.com"
-        assert log_params["api_key"].startswith("<masked:")
-        assert "sk-sync-target" not in logs[0].sql_params_json
+        assert "api_key" not in log_params
     finally:
         db.close()
 

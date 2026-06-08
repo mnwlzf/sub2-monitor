@@ -5,7 +5,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
 from app.core.config import Sub2APIDatabaseSettings
-from app.core.security import decrypt_secret, hash_token, utcnow
+from app.core.security import utcnow
 from app.models.monitor import (
     PlatformAccountMonitor,
     PlatformDiscoveredGroupRate,
@@ -31,7 +31,6 @@ WITH matched AS (
     SELECT id
     FROM accounts
     WHERE deleted_at IS NULL
-      AND trim(coalesce(credentials->>'api_key', '')) = %(api_key)s
       AND (
         trim(trailing '/' FROM coalesce(credentials->>'base_url', '')) = trim(trailing '/' FROM %(base_url)s)
         OR (
@@ -128,43 +127,9 @@ def normalize_base_url(value: str | None) -> str:
     return (value or "").strip().rstrip("/")
 
 
-def normalize_api_key(value: str | None) -> str:
-    return (value or "").strip()
-
-
-def api_key_fingerprint(value: str | None) -> str | None:
-    api_key = normalize_api_key(value)
-    return hash_token(api_key) if api_key else None
-
-
-def decrypt_platform_api_key(platform: RelayPlatform) -> str:
-    return normalize_api_key(decrypt_secret(platform.api_key_encrypted))
-
-
-def load_priority_sync_api_key(db: Session, platform_id: int) -> str:
-    platform = db.get(RelayPlatform, platform_id)
-    if platform is None:
-        return ""
-    return decrypt_platform_api_key(platform)
-
-
-def priority_item_credential_key(item: dict[str, Any]) -> tuple[str, str]:
-    return (item["normalized_base_url"], item.get("api_key_fingerprint") or "")
-
-
-def priority_sql_execute_params(item: dict[str, Any], api_key: str) -> dict[str, Any]:
+def priority_sql_params(item: dict[str, Any]) -> dict[str, Any]:
     return {
         "base_url": item["normalized_base_url"],
-        "api_key": api_key,
-        "priority": item["priority"],
-    }
-
-
-def priority_sql_log_params(item: dict[str, Any]) -> dict[str, Any]:
-    fingerprint = item.get("api_key_fingerprint")
-    return {
-        "base_url": item["normalized_base_url"],
-        "api_key": f"<masked:{fingerprint}>" if fingerprint else "<masked>",
         "priority": item["priority"],
     }
 
@@ -261,12 +226,6 @@ def group_candidate(
 
 def platform_priority_candidate(platform: RelayPlatform) -> dict[str, Any]:
     normalized_base_url = normalize_base_url(platform.base_url)
-    try:
-        api_key = decrypt_platform_api_key(platform)
-        api_key_error = None
-    except Exception:  # noqa: BLE001
-        api_key = ""
-        api_key_error = "平台 api_key 无法解密"
     rate_factor = platform.effective_rate_factor
     used_group_names = key_group_ids_from_accounts(platform.account_monitors)
     configured_groups = configured_group_lookup(platform.group_monitors)
@@ -295,10 +254,6 @@ def platform_priority_candidate(platform: RelayPlatform) -> dict[str, Any]:
     error_message: str | None = None
     if not normalized_base_url:
         error_message = "平台 base_url 为空"
-    elif api_key_error:
-        error_message = api_key_error
-    elif not api_key:
-        error_message = "平台 api_key 为空"
     elif rate_factor is None:
         error_message = "平台充值金额或到账金额无效，无法计算实际倍率"
     elif not used_group_names:
@@ -311,7 +266,6 @@ def platform_priority_candidate(platform: RelayPlatform) -> dict[str, Any]:
         "platform_name": platform.name,
         "base_url": platform.base_url,
         "normalized_base_url": normalized_base_url,
-        "api_key_fingerprint": api_key_fingerprint(api_key),
         "rate_factor": rate_factor,
         "candidate_groups": candidate_groups,
         "selected_group": selected_group,
@@ -328,16 +282,16 @@ def platform_priority_candidate(platform: RelayPlatform) -> dict[str, Any]:
 
 
 def dedupe_priority_items(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    by_credentials: dict[tuple[str, str], dict[str, Any]] = {}
+    by_base_url: dict[str, dict[str, Any]] = {}
     skipped: list[dict[str, Any]] = []
     for item in items:
         if item["status"] == "skipped":
             skipped.append(item)
             continue
-        credential_key = priority_item_credential_key(item)
-        existing = by_credentials.get(credential_key)
+        normalized_base_url = item["normalized_base_url"]
+        existing = by_base_url.get(normalized_base_url)
         if existing is None:
-            by_credentials[credential_key] = item
+            by_base_url[normalized_base_url] = item
             continue
         existing_rate = existing["effective_rate_multiplier"]
         item_rate = item["effective_rate_multiplier"]
@@ -347,24 +301,20 @@ def dedupe_priority_items(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
                     **existing,
                     "status": "skipped",
                     "priority": None,
-                    "error_message": (
-                        f"同一 base_url 和 api_key 已由更低实际倍率平台 {item['platform_name']} 接管"
-                    ),
+                    "error_message": f"同一 base_url 已由更低实际倍率平台 {item['platform_name']} 接管",
                 }
             )
-            by_credentials[credential_key] = item
+            by_base_url[normalized_base_url] = item
         else:
             skipped.append(
                 {
                     **item,
                     "status": "skipped",
                     "priority": None,
-                    "error_message": (
-                        f"同一 base_url 和 api_key 已由更低实际倍率平台 {existing['platform_name']} 接管"
-                    ),
+                    "error_message": f"同一 base_url 已由更低实际倍率平台 {existing['platform_name']} 接管",
                 }
             )
-    return [*by_credentials.values(), *skipped]
+    return [*by_base_url.values(), *skipped]
 
 
 def build_priority_sync_plan(db: Session) -> list[dict[str, Any]]:
@@ -378,19 +328,12 @@ def build_priority_sync_plan(db: Session) -> list[dict[str, Any]]:
             float(item["effective_rate_multiplier"]),
             item["platform_name"],
             item["normalized_base_url"],
-            item.get("api_key_fingerprint") or "",
         )
     )
     for index, item in enumerate(planned_items, start=1):
         item["priority"] = index * PRIORITY_SYNC_PRIORITY_STEP
     skipped_items = [item for item in items if item["status"] == "skipped"]
-    skipped_items.sort(
-        key=lambda item: (
-            item["platform_name"],
-            item["normalized_base_url"],
-            item.get("api_key_fingerprint") or "",
-        )
-    )
+    skipped_items.sort(key=lambda item: (item["platform_name"], item["normalized_base_url"]))
     return [*planned_items, *skipped_items]
 
 
@@ -456,7 +399,7 @@ def failed_sql_logs_for_items(
             operation=PRIORITY_SYNC_OPERATION,
             database=database,
             sql_text=PRIORITY_SYNC_SQL,
-            sql_params=priority_sql_log_params(item),
+            sql_params=priority_sql_params(item),
             user=user,
         )
         update_sql_log_result(db, log, status="failed", error_message=error_message)
@@ -541,17 +484,13 @@ def sync_sub2api_account_priorities(
                     operation=PRIORITY_SYNC_OPERATION,
                     database=database,
                     sql_text=PRIORITY_SYNC_SQL,
-                    sql_params=priority_sql_log_params(item),
+                    sql_params=priority_sql_params(item),
                     user=user,
                 )
                 item["sql_log_id"] = log.id
                 try:
-                    api_key = load_priority_sync_api_key(db, item["platform_id"])
-                    if not api_key:
-                        raise ValueError("平台 api_key 为空")
-                    sql_params = priority_sql_execute_params(item, api_key)
                     with conn.cursor() as cursor:
-                        cursor.execute(PRIORITY_SYNC_SQL, sql_params)
+                        cursor.execute(PRIORITY_SYNC_SQL, priority_sql_params(item))
                         matched_accounts, updated_accounts = cursor.fetchone()
                     conn.commit()
                 except Exception as exc:  # noqa: BLE001
@@ -561,14 +500,10 @@ def sync_sub2api_account_priorities(
                     item["error_message"] = error
                     update_sql_log_result(db, log, status="failed", error_message=error)
                     logger.exception(
-                        (
-                            "sub2api priority sync item failed run_id=%s "
-                            "platform_id=%s base_url=%s api_key_fingerprint=%s"
-                        ),
+                        "sub2api priority sync item failed run_id=%s platform_id=%s base_url=%s",
                         run.id,
                         item["platform_id"],
                         item["normalized_base_url"],
-                        item.get("api_key_fingerprint"),
                     )
                     continue
 

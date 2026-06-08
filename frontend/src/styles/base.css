@@ -762,7 +762,9 @@ body {
 
 .embedded-render {
   display: grid;
+  height: 100%;
   max-height: 100%;
+  min-height: 0;
   min-width: 0;
   align-content: start;
   gap: 12px;
@@ -1459,6 +1461,8 @@ body {
 .sub2api-db-page {
   display: grid;
   gap: 16px;
+  height: 100%;
+  min-height: 0;
   min-width: 0;
 }
 
@@ -1819,7 +1823,9 @@ body {
   }
 
   .embedded-render {
+    height: auto;
     max-height: none;
+    min-height: 0;
     overflow: visible;
     padding-right: 0;
   }

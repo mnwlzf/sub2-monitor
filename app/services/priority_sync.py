@@ -25,6 +25,7 @@ logger = logging.getLogger(__name__)
 
 PRIORITY_SYNC_OPERATION = "sync_account_priority"
 PRIORITY_SYNC_TARGET_DATABASE = "sub2api"
+PRIORITY_SYNC_PRIORITY_STEP = 5
 PRIORITY_SYNC_SQL = """
 WITH matched AS (
     SELECT id
@@ -380,8 +381,8 @@ def build_priority_sync_plan(db: Session) -> list[dict[str, Any]]:
             item.get("api_key_fingerprint") or "",
         )
     )
-    for priority, item in enumerate(planned_items, start=1):
-        item["priority"] = priority
+    for index, item in enumerate(planned_items, start=1):
+        item["priority"] = index * PRIORITY_SYNC_PRIORITY_STEP
     skipped_items = [item for item in items if item["status"] == "skipped"]
     skipped_items.sort(
         key=lambda item: (

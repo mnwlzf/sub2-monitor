@@ -13,6 +13,7 @@ from app.models.platform import PlatformStatus, RelayPlatform
 from app.models.sub2api import Sub2APISQLLog
 from app.models.user import User
 from app.services.priority_sync import (
+    PRIORITY_SYNC_PRIORITY_STEP,
     PRIORITY_SYNC_SQL,
     build_priority_sync_plan,
     sync_sub2api_account_priorities,
@@ -199,7 +200,7 @@ def test_priority_sync_plan_uses_lowest_effective_key_group_rate() -> None:
         plan = build_priority_sync_plan(db)
 
         assert [item["platform_name"] for item in plan] == ["Cheap", "Expensive"]
-        assert [item["priority"] for item in plan] == [1, 2]
+        assert [item["priority"] for item in plan] == [5, 10]
         assert plan[0]["normalized_base_url"] == "https://relay-cheap.example.com"
         assert plan[0]["effective_rate_multiplier"] == 0.05
         assert plan[1]["effective_rate_multiplier"] == 0.2
@@ -278,7 +279,7 @@ def test_priority_sync_plan_dedupes_by_base_url_and_api_key() -> None:
             "First",
         ]
         assert [item["status"] for item in plan] == ["planned", "planned", "skipped"]
-        assert [item["priority"] for item in plan[:2]] == [1, 2]
+        assert [item["priority"] for item in plan[:2]] == [5, 10]
         assert plan[2]["error_message"] == (
             "同一 base_url 和 api_key 已由更低实际倍率平台 Cheaper Duplicate 接管"
         )
@@ -287,6 +288,7 @@ def test_priority_sync_plan_dedupes_by_base_url_and_api_key() -> None:
 
 
 def test_priority_sync_sql_targets_sub2api_accounts_url_fields() -> None:
+    assert PRIORITY_SYNC_PRIORITY_STEP == 5
     assert "UPDATE accounts" in PRIORITY_SYNC_SQL
     assert "SET priority = %(priority)s" in PRIORITY_SYNC_SQL
     assert "credentials->>'api_key'" in PRIORITY_SYNC_SQL
@@ -345,7 +347,7 @@ def test_priority_sync_logs_failed_sql_when_target_database_is_unconfigured() ->
         assert run.failed_items == 1
         assert run.executed_by_username == "admin"
         assert run.items[0]["status"] == "failed"
-        assert run.items[0]["priority"] == 1
+        assert run.items[0]["priority"] == 5
         assert run.items[0]["error_message"] == "Sub2API database is not configured"
 
         logs = db.scalars(select(Sub2APISQLLog)).all()

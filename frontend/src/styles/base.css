@@ -674,11 +674,15 @@ body {
 }
 
 .embedded-menu {
+  position: sticky;
+  top: 24px;
   display: flex;
   width: 220px;
+  max-height: calc(100vh - 48px);
   flex-direction: column;
   gap: 8px;
   align-self: start;
+  overflow: hidden;
   border: 1px solid #e5e7eb;
   border-radius: 10px;
   background: #ffffff;
@@ -1778,7 +1782,9 @@ body {
     display: grid;
     width: auto;
     height: auto;
+    max-height: none;
     grid-template-columns: repeat(2, minmax(0, 1fr));
+    overflow: visible;
   }
 
   .embedded-menu-brand {

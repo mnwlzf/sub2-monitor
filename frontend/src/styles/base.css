@@ -624,6 +624,10 @@ body {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
+  .priority-sync-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .sql-log-toolbar {
     align-items: flex-start;
     flex-direction: column;
@@ -1580,6 +1584,65 @@ body {
   overflow: hidden;
 }
 
+.priority-sync-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.priority-sync-body {
+  display: grid;
+  gap: 14px;
+  padding: 14px 18px 18px;
+}
+
+.priority-sync-summary {
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+}
+
+.priority-sync-main,
+.priority-sync-rate {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.priority-sync-main strong,
+.priority-sync-rate strong {
+  overflow: hidden;
+  color: #0f172a;
+  font-size: 13px;
+  line-height: 1.3;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.priority-sync-main code {
+  overflow: hidden;
+  color: #64748b;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.priority-sync-rate span,
+.priority-sync-empty {
+  overflow: hidden;
+  color: #94a3b8;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.priority-sync-groups {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
 .sql-log-toolbar {
   display: flex;
   align-items: center;
@@ -1793,6 +1856,7 @@ body {
 
   .database-kv-grid,
   .database-kv-grid.compact,
+  .priority-sync-summary,
   .sql-log-detail-grid {
     grid-template-columns: 1fr;
   }

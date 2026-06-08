@@ -326,6 +326,59 @@ export interface Sub2APISQLLogPage {
   offset: number
 }
 
+export interface Sub2APIPrioritySyncGroupItem {
+  external_group_id: string
+  name: string
+  source: string
+  rate_multiplier: number | null
+  rate_factor: number | null
+  effective_rate_multiplier: number | null
+  rpm_limit: number | null
+  last_error: string | null
+}
+
+export interface Sub2APIPrioritySyncItem {
+  platform_id: number
+  platform_name: string
+  base_url: string
+  normalized_base_url: string
+  rate_factor: number | null
+  candidate_groups: Sub2APIPrioritySyncGroupItem[]
+  selected_group: Sub2APIPrioritySyncGroupItem | null
+  effective_rate_multiplier: number | null
+  priority: number | null
+  status: string
+  matched_accounts: number | null
+  updated_accounts: number | null
+  sql_log_id: number | null
+  error_message: string | null
+}
+
+export interface Sub2APIPrioritySyncRun {
+  id: number
+  status: string
+  target_database: string
+  total_items: number
+  succeeded_items: number
+  failed_items: number
+  skipped_items: number
+  matched_accounts: number
+  updated_accounts: number
+  error_message: string | null
+  items: Sub2APIPrioritySyncItem[]
+  executed_by_user_id: number | null
+  executed_by_username: string | null
+  created_at: string
+  completed_at: string | null
+}
+
+export interface Sub2APIPrioritySyncRunPage {
+  items: Sub2APIPrioritySyncRun[]
+  total: number
+  limit: number
+  offset: number
+}
+
 export const http = axios.create({
   baseURL: `${import.meta.env.BASE_URL}api`,
   withCredentials: true,
@@ -465,6 +518,30 @@ export async function fetchSub2APISQLLogs(params: {
 
 export async function fetchSub2APISQLLog(id: number) {
   const { data } = await http.get<Sub2APISQLLog>(`/sub2api/sql-logs/${id}`)
+  return data
+}
+
+export async function fetchSub2APIPrioritySyncRuns(params: {
+  limit?: number
+  offset?: number
+} = {}) {
+  const { data } = await http.get<Sub2APIPrioritySyncRunPage>('/sub2api/priority-sync/runs', {
+    params,
+  })
+  return data
+}
+
+export async function fetchLatestSub2APIPrioritySyncRun() {
+  const { data } = await http.get<Sub2APIPrioritySyncRun | null>(
+    '/sub2api/priority-sync/runs/latest',
+  )
+  return data
+}
+
+export async function runSub2APIPrioritySync() {
+  const { data } = await http.post<Sub2APIPrioritySyncRun>('/sub2api/priority-sync/run', null, {
+    timeout: 120000,
+  })
   return data
 }
 

@@ -1,13 +1,17 @@
 import json
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 
 import app.models.all  # noqa: F401
 from app.api.sub2api import get_sql_log, list_sql_logs
 from app.core.config import Sub2APIDatabaseSettings
 from app.core.database import Base
+from app.models.monitor import PlatformAccountMonitor, PlatformGroupMonitor
+from app.models.platform import PlatformStatus, RelayPlatform
+from app.models.sub2api import Sub2APISQLLog
 from app.models.user import User
+from app.services.priority_sync import build_priority_sync_plan, sync_sub2api_account_priorities
 from app.services.sub2api_database import create_sql_log, execute_recorded_sub2api_write
 
 
@@ -107,5 +111,154 @@ def test_sql_log_api_lists_and_fetches_logs() -> None:
         assert page.items[0].error_message == "permission denied"
         assert detail.id == failed.id
         assert detail.sql_text.startswith("update accounts")
+    finally:
+        db.close()
+
+
+def test_priority_sync_plan_uses_lowest_effective_key_group_rate() -> None:
+    db = make_session()
+    try:
+        expensive = RelayPlatform(
+            name="Expensive",
+            base_url="https://relay-expensive.example.com/",
+            provider_type="fake",
+            rate_cron="*/10 * * * *",
+            balance_cron="*/10 * * * *",
+            recharge_amount=2,
+            received_amount=1,
+            status=PlatformStatus.unknown,
+        )
+        cheap = RelayPlatform(
+            name="Cheap",
+            base_url="https://relay-cheap.example.com",
+            provider_type="fake",
+            rate_cron="*/10 * * * *",
+            balance_cron="*/10 * * * *",
+            recharge_amount=1,
+            received_amount=1,
+            status=PlatformStatus.unknown,
+        )
+        db.add_all([expensive, cheap])
+        db.flush()
+
+        expensive_account = PlatformAccountMonitor(
+            platform_id=expensive.id,
+            name="Expensive Account",
+            external_account_id="expensive",
+            enabled=True,
+        )
+        expensive_account.key_summaries = (
+            {"id": "101", "name": "expensive-low", "group_id": "7", "group_name": "codex"},
+            {"id": "102", "name": "expensive-high", "group_id": "8", "group_name": "premium"},
+        )
+        cheap_account = PlatformAccountMonitor(
+            platform_id=cheap.id,
+            name="Cheap Account",
+            external_account_id="cheap",
+            enabled=True,
+        )
+        cheap_account.key_summaries = (
+            {"id": "201", "name": "cheap-key", "group_id": "9", "group_name": "budget"},
+        )
+        db.add_all(
+            [
+                expensive_account,
+                cheap_account,
+                PlatformGroupMonitor(
+                    platform_id=expensive.id,
+                    name="codex",
+                    external_group_id="7",
+                    enabled=True,
+                    rate_multiplier=0.1,
+                ),
+                PlatformGroupMonitor(
+                    platform_id=expensive.id,
+                    name="premium",
+                    external_group_id="8",
+                    enabled=True,
+                    rate_multiplier=0.3,
+                ),
+                PlatformGroupMonitor(
+                    platform_id=cheap.id,
+                    name="budget",
+                    external_group_id="9",
+                    enabled=True,
+                    rate_multiplier=0.05,
+                ),
+            ]
+        )
+        db.commit()
+
+        plan = build_priority_sync_plan(db)
+
+        assert [item["platform_name"] for item in plan] == ["Cheap", "Expensive"]
+        assert [item["priority"] for item in plan] == [1, 2]
+        assert plan[0]["normalized_base_url"] == "https://relay-cheap.example.com"
+        assert plan[0]["effective_rate_multiplier"] == 0.05
+        assert plan[1]["effective_rate_multiplier"] == 0.2
+        assert plan[1]["selected_group"]["external_group_id"] == "7"
+    finally:
+        db.close()
+
+
+def test_priority_sync_logs_failed_sql_when_target_database_is_unconfigured() -> None:
+    db = make_session()
+    try:
+        user = User(username="admin", password_hash="hash")
+        platform = RelayPlatform(
+            name="Sync Target",
+            base_url="https://relay.example.com/",
+            provider_type="fake",
+            rate_cron="*/10 * * * *",
+            balance_cron="*/10 * * * *",
+            status=PlatformStatus.unknown,
+        )
+        db.add_all([user, platform])
+        db.flush()
+        account = PlatformAccountMonitor(
+            platform_id=platform.id,
+            name="Main",
+            external_account_id="main",
+            enabled=True,
+        )
+        account.key_summaries = (
+            {"id": "101", "name": "main-key", "group_id": "7", "group_name": "codex"},
+        )
+        db.add_all(
+            [
+                account,
+                PlatformGroupMonitor(
+                    platform_id=platform.id,
+                    name="codex",
+                    external_group_id="7",
+                    enabled=True,
+                    rate_multiplier=0.08,
+                ),
+            ]
+        )
+        db.commit()
+        db.refresh(user)
+
+        run = sync_sub2api_account_priorities(
+            db,
+            database=Sub2APIDatabaseSettings(user="", password="", dbname="sub2api"),
+            user=user,
+        )
+
+        assert run.status == "failed"
+        assert run.total_items == 1
+        assert run.failed_items == 1
+        assert run.executed_by_username == "admin"
+        assert run.items[0]["status"] == "failed"
+        assert run.items[0]["priority"] == 1
+        assert run.items[0]["error_message"] == "Sub2API database is not configured"
+
+        logs = db.scalars(select(Sub2APISQLLog)).all()
+        assert len(logs) == 1
+        assert logs[0].operation == "sync_account_priority"
+        assert logs[0].status == "failed"
+        assert logs[0].executed_by_username == "admin"
+        assert logs[0].sql_params_json is not None
+        assert json.loads(logs[0].sql_params_json)["base_url"] == "https://relay.example.com"
     finally:
         db.close()

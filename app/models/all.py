@@ -14,7 +14,7 @@ from app.models.snapshot import (
     GroupRateSnapshot,
     PlatformSnapshot,
 )
-from app.models.sub2api import Sub2APISQLLog
+from app.models.sub2api import Sub2APIPrioritySyncRun, Sub2APISQLLog
 from app.models.user import User
 
 __all__ = [
@@ -31,6 +31,7 @@ __all__ = [
     "NotificationRecipient",
     "NotificationSetting",
     "RelayPlatform",
+    "Sub2APIPrioritySyncRun",
     "Sub2APISQLLog",
     "User",
 ]

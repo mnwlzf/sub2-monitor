@@ -1,14 +1,16 @@
 import asyncio
 import logging
 from contextlib import suppress
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from croniter import croniter
 from sqlalchemy import select
 
+from app.core.config import get_settings
 from app.core.database import SessionLocal
 from app.core.security import utcnow
 from app.models.platform import RelayPlatform
+from app.services.priority_sync import refresh_and_sync_sub2api_account_priorities
 from app.services.monitoring import (
     run_platform_balance_monitor,
     run_platform_monitor,
@@ -19,8 +21,10 @@ logger = logging.getLogger(__name__)
 
 
 class MonitorScheduler:
-    def __init__(self, interval_seconds: int = 30) -> None:
+    def __init__(self, interval_seconds: int = 30, priority_sync_interval_seconds: int = 600) -> None:
         self.interval_seconds = interval_seconds
+        self.priority_sync_interval_seconds = priority_sync_interval_seconds
+        self._last_priority_sync_at: datetime | None = None
         self._task: asyncio.Task | None = None
 
     def start(self) -> None:
@@ -44,6 +48,7 @@ class MonitorScheduler:
 
     async def tick(self) -> None:
         now = utcnow()
+        should_run_priority_sync = self._priority_sync_due(now)
         with SessionLocal() as db:
             platforms = list(
                 db.scalars(select(RelayPlatform).where(RelayPlatform.enabled.is_(True))).all()
@@ -92,6 +97,24 @@ class MonitorScheduler:
             except Exception:  # noqa: BLE001
                 logger.exception("scheduled rate monitor failed for platform_id=%s", platform_id)
 
+        if should_run_priority_sync:
+            self._last_priority_sync_at = now
+            try:
+                with SessionLocal() as db:
+                    await refresh_and_sync_sub2api_account_priorities(
+                        db,
+                        database=get_settings().sub2api.database,
+                    )
+            except Exception:  # noqa: BLE001
+                logger.exception("scheduled sub2api account priority sync failed")
+
     @staticmethod
     def _ensure_next_run(next_run_at: datetime | None, cron_expr: str, now: datetime) -> bool:
         return next_run_at is None and bool(cron_expr)
+
+    def _priority_sync_due(self, now: datetime) -> bool:
+        if self._last_priority_sync_at is None:
+            return True
+        return now - self._last_priority_sync_at >= timedelta(
+            seconds=self.priority_sync_interval_seconds,
+        )

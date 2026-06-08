@@ -93,6 +93,136 @@
       </article>
     </section>
 
+    <section class="sql-log-panel priority-sync-panel">
+      <div class="sql-log-toolbar">
+        <div>
+          <h3>账号 Priority 同步</h3>
+          <p>按平台 base_url 和密钥实际分组倍率排序，写入目标 accounts.priority</p>
+        </div>
+        <div class="priority-sync-actions">
+          <el-button :icon="Refresh" :loading="prioritySyncLoading" size="small" @click="loadPrioritySyncRun">
+            刷新结果
+          </el-button>
+          <el-button
+            :icon="Refresh"
+            :loading="prioritySyncRunning"
+            size="small"
+            type="primary"
+            @click="runPrioritySync"
+          >
+            立即同步
+          </el-button>
+        </div>
+      </div>
+
+      <div class="priority-sync-body">
+        <div class="database-kv-grid priority-sync-summary">
+          <div>
+            <span>最近状态</span>
+            <strong>{{ prioritySyncRun ? prioritySyncStatusText(prioritySyncRun.status) : '-' }}</strong>
+          </div>
+          <div>
+            <span>计划项</span>
+            <strong>{{ prioritySyncRun?.total_items ?? '-' }}</strong>
+          </div>
+          <div>
+            <span>匹配账号</span>
+            <strong>{{ prioritySyncRun?.matched_accounts ?? '-' }}</strong>
+          </div>
+          <div>
+            <span>更新账号</span>
+            <strong>{{ prioritySyncRun?.updated_accounts ?? '-' }}</strong>
+          </div>
+          <div>
+            <span>执行人</span>
+            <strong>{{ prioritySyncRun?.executed_by_username || '系统' }}</strong>
+          </div>
+          <div>
+            <span>完成时间</span>
+            <strong>{{ formatTime(prioritySyncRun?.completed_at ?? null) }}</strong>
+          </div>
+        </div>
+
+        <div v-if="prioritySyncRun?.error_message" class="database-error">
+          {{ prioritySyncRun.error_message }}
+        </div>
+
+        <el-table
+          v-loading="prioritySyncLoading || prioritySyncRunning"
+          :data="prioritySyncRun?.items ?? []"
+          class="sql-log-table"
+          :row-key="prioritySyncRowKey"
+        >
+          <el-table-column label="状态" width="92">
+            <template #default="{ row }">
+              <el-tag :type="prioritySyncStatusTag(row.status)" effect="light" size="small">
+                {{ prioritySyncStatusText(row.status) }}
+              </el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column label="Priority" width="92">
+            <template #default="{ row }">
+              {{ row.priority ?? '-' }}
+            </template>
+          </el-table-column>
+          <el-table-column label="平台 / base_url" min-width="260">
+            <template #default="{ row }">
+              <div class="priority-sync-main">
+                <strong>{{ row.platform_name }}</strong>
+                <code>{{ row.normalized_base_url || row.base_url || '-' }}</code>
+              </div>
+            </template>
+          </el-table-column>
+          <el-table-column label="最低有效倍率" min-width="170">
+            <template #default="{ row }">
+              <div class="priority-sync-rate">
+                <strong>{{ formatMultiplier(row.effective_rate_multiplier) }}</strong>
+                <span>{{ selectedGroupLabel(row) }}</span>
+              </div>
+            </template>
+          </el-table-column>
+          <el-table-column label="候选分组" min-width="260">
+            <template #default="{ row }">
+              <div class="priority-sync-groups">
+                <el-tag
+                  v-for="group in row.candidate_groups"
+                  :key="group.external_group_id"
+                  effect="plain"
+                  size="small"
+                  type="info"
+                >
+                  {{ group.name }}: {{ formatMultiplier(group.effective_rate_multiplier) }}
+                </el-tag>
+                <span v-if="row.candidate_groups.length === 0" class="priority-sync-empty">-</span>
+              </div>
+            </template>
+          </el-table-column>
+          <el-table-column label="账号" width="118">
+            <template #default="{ row }">
+              {{ row.matched_accounts ?? '-' }} / {{ row.updated_accounts ?? '-' }}
+            </template>
+          </el-table-column>
+          <el-table-column label="错误" min-width="180">
+            <template #default="{ row }">
+              <span class="sql-error-cell">{{ row.error_message || '-' }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column align="right" label="SQL" width="86">
+            <template #default="{ row }">
+              <el-button
+                :disabled="!row.sql_log_id"
+                link
+                type="primary"
+                @click="row.sql_log_id && openLog(row.sql_log_id)"
+              >
+                详情
+              </el-button>
+            </template>
+          </el-table-column>
+        </el-table>
+      </div>
+    </section>
+
     <section class="sql-log-panel">
       <div class="sql-log-toolbar">
         <div>
@@ -231,15 +361,20 @@ import { ElMessage } from 'element-plus'
 import { computed, onMounted, reactive, ref } from 'vue'
 
 import {
+  fetchLatestSub2APIPrioritySyncRun,
   fetchSub2APIDatabaseStatus,
   fetchSub2APISQLLog,
   fetchSub2APISQLLogs,
+  runSub2APIPrioritySync,
+  type Sub2APIPrioritySyncItem,
+  type Sub2APIPrioritySyncRun,
   type Sub2APIDatabaseStatus,
   type Sub2APISQLLog,
   type Sub2APISQLLogPage,
 } from '@/api/client'
 
 const status = ref<Sub2APIDatabaseStatus | null>(null)
+const prioritySyncRun = ref<Sub2APIPrioritySyncRun | null>(null)
 const logs = ref<Sub2APISQLLogPage>({
   items: [],
   total: 0,
@@ -252,6 +387,8 @@ const filters = reactive({
 })
 const loading = ref(false)
 const statusLoading = ref(false)
+const prioritySyncLoading = ref(false)
+const prioritySyncRunning = ref(false)
 const logsLoading = ref(false)
 const detailVisible = ref(false)
 const selectedLog = ref<Sub2APISQLLog | null>(null)
@@ -324,10 +461,21 @@ async function loadLogs() {
   }
 }
 
+async function loadPrioritySyncRun() {
+  prioritySyncLoading.value = true
+  try {
+    prioritySyncRun.value = await fetchLatestSub2APIPrioritySyncRun()
+  } catch {
+    ElMessage.error('Priority 同步结果加载失败')
+  } finally {
+    prioritySyncLoading.value = false
+  }
+}
+
 async function refreshAll() {
   loading.value = true
   try {
-    await Promise.all([loadStatus(), loadLogs()])
+    await Promise.all([loadStatus(), loadPrioritySyncRun(), loadLogs()])
   } finally {
     loading.value = false
   }
@@ -341,6 +489,19 @@ async function reloadLogsFromFirstPage() {
 async function openLog(id: number) {
   selectedLog.value = await fetchSub2APISQLLog(id)
   detailVisible.value = true
+}
+
+async function runPrioritySync() {
+  prioritySyncRunning.value = true
+  try {
+    prioritySyncRun.value = await runSub2APIPrioritySync()
+    await loadLogs()
+    ElMessage.success('Priority 同步完成')
+  } catch {
+    ElMessage.error('Priority 同步失败')
+  } finally {
+    prioritySyncRunning.value = false
+  }
 }
 
 function logStatusText(statusValue: string) {
@@ -359,9 +520,49 @@ function logStatusTag(statusValue: string) {
   }[statusValue] ?? 'info'
 }
 
+function prioritySyncStatusText(statusValue: string) {
+  return {
+    pending: '执行中',
+    planned: '计划',
+    succeeded: '成功',
+    failed: '失败',
+    partial: '部分成功',
+    skipped: '跳过',
+  }[statusValue] ?? statusValue
+}
+
+function prioritySyncStatusTag(statusValue: string) {
+  return {
+    pending: 'warning',
+    planned: 'info',
+    succeeded: 'success',
+    failed: 'danger',
+    partial: 'warning',
+    skipped: 'info',
+  }[statusValue] ?? 'info'
+}
+
 function sqlSummary(sql: string) {
   const normalized = sql.replace(/\s+/g, ' ').trim()
   return normalized.length > 140 ? `${normalized.slice(0, 140)}...` : normalized
+}
+
+function selectedGroupLabel(row: Sub2APIPrioritySyncItem) {
+  if (!row.selected_group) {
+    return '-'
+  }
+  return `${row.selected_group.name} / ${formatMultiplier(row.selected_group.rate_multiplier)}`
+}
+
+function prioritySyncRowKey(row: Sub2APIPrioritySyncItem) {
+  return `${row.platform_id}:${row.normalized_base_url}:${row.status}`
+}
+
+function formatMultiplier(value: number | null) {
+  if (value === null) {
+    return '-'
+  }
+  return Number(value.toFixed(6)).toString()
 }
 
 function formatTime(value: string | null) {

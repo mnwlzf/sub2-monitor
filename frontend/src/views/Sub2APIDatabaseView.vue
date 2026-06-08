@@ -147,80 +147,81 @@
           {{ prioritySyncRun.error_message }}
         </div>
 
-        <el-table
-          v-loading="prioritySyncLoading || prioritySyncRunning"
-          :data="prioritySyncRun?.items ?? []"
-          :height="prioritySyncTableHeight"
-          class="sql-log-table priority-sync-table"
-          :row-key="prioritySyncRowKey"
-        >
-          <el-table-column label="状态" width="92">
-            <template #default="{ row }">
-              <el-tag :type="prioritySyncStatusTag(row.status)" effect="light" size="small">
-                {{ prioritySyncStatusText(row.status) }}
-              </el-tag>
-            </template>
-          </el-table-column>
-          <el-table-column label="Priority" width="92">
-            <template #default="{ row }">
-              {{ row.priority ?? '-' }}
-            </template>
-          </el-table-column>
-          <el-table-column label="平台 / base_url" width="360">
-            <template #default="{ row }">
-              <div class="priority-sync-main">
-                <strong>{{ row.platform_name }}</strong>
-                <code>{{ row.normalized_base_url || row.base_url || '-' }}</code>
-              </div>
-            </template>
-          </el-table-column>
-          <el-table-column label="最低有效倍率" width="220">
-            <template #default="{ row }">
-              <div class="priority-sync-rate">
-                <strong>{{ formatMultiplier(row.effective_rate_multiplier) }}</strong>
-                <span>{{ selectedGroupLabel(row) }}</span>
-              </div>
-            </template>
-          </el-table-column>
-          <el-table-column label="候选分组" width="360">
-            <template #default="{ row }">
-              <div class="priority-sync-groups">
-                <el-tag
-                  v-for="group in row.candidate_groups"
-                  :key="group.external_group_id"
-                  effect="plain"
-                  size="small"
-                  type="info"
-                >
-                  {{ group.name }}: {{ formatMultiplier(group.effective_rate_multiplier) }}
+        <div class="database-table-scroll priority-sync-table-scroll">
+          <el-table
+            v-loading="prioritySyncLoading || prioritySyncRunning"
+            :data="prioritySyncRun?.items ?? []"
+            class="sql-log-table priority-sync-table"
+            :row-key="prioritySyncRowKey"
+          >
+            <el-table-column label="状态" width="92">
+              <template #default="{ row }">
+                <el-tag :type="prioritySyncStatusTag(row.status)" effect="light" size="small">
+                  {{ prioritySyncStatusText(row.status) }}
                 </el-tag>
-                <span v-if="row.candidate_groups.length === 0" class="priority-sync-empty">-</span>
-              </div>
-            </template>
-          </el-table-column>
-          <el-table-column label="账号" width="118">
-            <template #default="{ row }">
-              {{ row.matched_accounts ?? '-' }} / {{ row.updated_accounts ?? '-' }}
-            </template>
-          </el-table-column>
-          <el-table-column label="错误" width="260">
-            <template #default="{ row }">
-              <span class="sql-error-cell">{{ row.error_message || '-' }}</span>
-            </template>
-          </el-table-column>
-          <el-table-column align="right" label="SQL" width="86">
-            <template #default="{ row }">
-              <el-button
-                :disabled="!row.sql_log_id"
-                link
-                type="primary"
-                @click="row.sql_log_id && openLog(row.sql_log_id)"
-              >
-                详情
-              </el-button>
-            </template>
-          </el-table-column>
-        </el-table>
+              </template>
+            </el-table-column>
+            <el-table-column label="Priority" width="92">
+              <template #default="{ row }">
+                {{ row.priority ?? '-' }}
+              </template>
+            </el-table-column>
+            <el-table-column label="平台 / base_url" width="360">
+              <template #default="{ row }">
+                <div class="priority-sync-main">
+                  <strong>{{ row.platform_name }}</strong>
+                  <code>{{ row.normalized_base_url || row.base_url || '-' }}</code>
+                </div>
+              </template>
+            </el-table-column>
+            <el-table-column label="最低有效倍率" width="220">
+              <template #default="{ row }">
+                <div class="priority-sync-rate">
+                  <strong>{{ formatMultiplier(row.effective_rate_multiplier) }}</strong>
+                  <span>{{ selectedGroupLabel(row) }}</span>
+                </div>
+              </template>
+            </el-table-column>
+            <el-table-column label="候选分组" width="420">
+              <template #default="{ row }">
+                <div class="priority-sync-groups">
+                  <el-tag
+                    v-for="group in row.candidate_groups"
+                    :key="group.external_group_id"
+                    effect="plain"
+                    size="small"
+                    type="info"
+                  >
+                    {{ group.name }}: {{ formatMultiplier(group.effective_rate_multiplier) }}
+                  </el-tag>
+                  <span v-if="row.candidate_groups.length === 0" class="priority-sync-empty">-</span>
+                </div>
+              </template>
+            </el-table-column>
+            <el-table-column label="账号" width="118">
+              <template #default="{ row }">
+                {{ row.matched_accounts ?? '-' }} / {{ row.updated_accounts ?? '-' }}
+              </template>
+            </el-table-column>
+            <el-table-column label="错误" width="260">
+              <template #default="{ row }">
+                <span class="sql-error-cell">{{ row.error_message || '-' }}</span>
+              </template>
+            </el-table-column>
+            <el-table-column align="right" label="SQL" width="86">
+              <template #default="{ row }">
+                <el-button
+                  :disabled="!row.sql_log_id"
+                  link
+                  type="primary"
+                  @click="row.sql_log_id && openLog(row.sql_log_id)"
+                >
+                  详情
+                </el-button>
+              </template>
+            </el-table-column>
+          </el-table>
+        </div>
       </div>
     </section>
 
@@ -256,52 +257,53 @@
         </div>
       </div>
 
-      <el-table
-        v-loading="logsLoading"
-        :data="logs.items"
-        :height="sqlLogTableHeight"
-        class="sql-log-table"
-        row-key="id"
-      >
-        <el-table-column label="时间" width="180">
-          <template #default="{ row }">
-            {{ formatTime(row.created_at) }}
-          </template>
-        </el-table-column>
-        <el-table-column label="状态" width="92">
-          <template #default="{ row }">
-            <el-tag :type="logStatusTag(row.status)" effect="light" size="small">
-              {{ logStatusText(row.status) }}
-            </el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column label="操作" width="180" prop="operation" />
-        <el-table-column label="执行人" width="140">
-          <template #default="{ row }">
-            {{ row.executed_by_username || '-' }}
-          </template>
-        </el-table-column>
-        <el-table-column label="影响行数" width="100">
-          <template #default="{ row }">
-            {{ row.affected_rows ?? '-' }}
-          </template>
-        </el-table-column>
-        <el-table-column label="SQL" width="520">
-          <template #default="{ row }">
-            <code class="sql-inline">{{ sqlSummary(row.sql_text) }}</code>
-          </template>
-        </el-table-column>
-        <el-table-column label="错误" width="260">
-          <template #default="{ row }">
-            <span class="sql-error-cell">{{ row.error_message || '-' }}</span>
-          </template>
-        </el-table-column>
-        <el-table-column align="right" label="操作" width="96">
-          <template #default="{ row }">
-            <el-button :icon="View" link type="primary" @click="openLog(row.id)">详情</el-button>
-          </template>
-        </el-table-column>
-      </el-table>
+      <div class="database-table-scroll sql-log-table-scroll">
+        <el-table
+          v-loading="logsLoading"
+          :data="logs.items"
+          class="sql-log-table"
+          row-key="id"
+        >
+          <el-table-column label="时间" width="180">
+            <template #default="{ row }">
+              {{ formatTime(row.created_at) }}
+            </template>
+          </el-table-column>
+          <el-table-column label="状态" width="92">
+            <template #default="{ row }">
+              <el-tag :type="logStatusTag(row.status)" effect="light" size="small">
+                {{ logStatusText(row.status) }}
+              </el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column label="操作" width="180" prop="operation" />
+          <el-table-column label="执行人" width="140">
+            <template #default="{ row }">
+              {{ row.executed_by_username || '-' }}
+            </template>
+          </el-table-column>
+          <el-table-column label="影响行数" width="100">
+            <template #default="{ row }">
+              {{ row.affected_rows ?? '-' }}
+            </template>
+          </el-table-column>
+          <el-table-column label="SQL" width="640">
+            <template #default="{ row }">
+              <code class="sql-inline">{{ sqlSummary(row.sql_text) }}</code>
+            </template>
+          </el-table-column>
+          <el-table-column label="错误" width="260">
+            <template #default="{ row }">
+              <span class="sql-error-cell">{{ row.error_message || '-' }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column align="right" label="操作" width="96">
+            <template #default="{ row }">
+              <el-button :icon="View" link type="primary" @click="openLog(row.id)">详情</el-button>
+            </template>
+          </el-table-column>
+        </el-table>
+      </div>
 
       <div class="sql-log-pagination">
         <el-pagination
@@ -401,8 +403,6 @@ const detailVisible = ref(false)
 const selectedLog = ref<Sub2APISQLLog | null>(null)
 const currentPage = ref(1)
 const pageSize = ref(10)
-const prioritySyncTableHeight = 456
-const sqlLogTableHeight = 456
 
 const statusLabel = computed(() => {
   if (!status.value?.config.configured) {

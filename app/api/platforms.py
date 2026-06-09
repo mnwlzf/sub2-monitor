@@ -1,7 +1,7 @@
 from bisect import bisect_right
 from datetime import datetime, timedelta
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from croniter import croniter
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -23,6 +23,7 @@ from app.schemas.platform import (
     AccountMonitorResponse,
     AccountMonitorUpdate,
     DashboardStats,
+    EmbeddedHistoryResponse,
     GroupRateHistorySeries,
     GroupMonitorCreate,
     GroupMonitorResponse,
@@ -346,28 +347,7 @@ def get_balance_history(
     db: Session = Depends(get_db),
 ) -> list[AccountBalanceHistorySeries]:
     platform = detail_or_404(db, platform_id)
-    now = utcnow()
-    since = now - timedelta(days=1)
-    snapshots = db.scalars(
-        select(AccountBalanceSnapshot)
-        .where(
-            AccountBalanceSnapshot.platform_id == platform_id,
-            AccountBalanceSnapshot.created_at >= since,
-        )
-        .order_by(AccountBalanceSnapshot.created_at.asc())
-    ).all()
-    by_account: dict[int, list[AccountBalanceSnapshot]] = {}
-    for snapshot in snapshots:
-        by_account.setdefault(snapshot.account_monitor_id, []).append(snapshot)
-
-    return [
-        AccountBalanceHistorySeries(
-            account_id=account.id,
-            account_name=account.name,
-            points=build_account_balance_points(by_account.get(account.id, [])),
-        )
-        for account in platform.account_monitors
-    ]
+    return build_balance_history_for_platforms(db, [platform], utcnow())[platform_id]
 
 
 @router.get(
@@ -379,39 +359,133 @@ def get_rate_history(
     db: Session = Depends(get_db),
 ) -> list[GroupRateHistorySeries]:
     platform = detail_or_404(db, platform_id)
-    effective_rate_factor = platform.effective_rate_factor
+    return build_rate_history_for_platforms(db, [platform], utcnow())[platform_id]
+
+
+@router.get(
+    "/platforms/history/embedded",
+    response_model=EmbeddedHistoryResponse,
+)
+def get_embedded_histories(
+    platform_ids: list[int] = Query(default_factory=list),
+    db: Session = Depends(get_db),
+) -> EmbeddedHistoryResponse:
+    if not platform_ids:
+        return EmbeddedHistoryResponse(balances={}, rates={})
+    unique_ids = list(dict.fromkeys(platform_ids))
+    platforms = list(
+        db.scalars(
+            select(RelayPlatform)
+            .options(
+                selectinload(RelayPlatform.account_monitors),
+                selectinload(RelayPlatform.group_monitors),
+                selectinload(RelayPlatform.discovered_group_rates),
+            )
+            .where(RelayPlatform.id.in_(unique_ids))
+        ).all()
+    )
+    found_ids = {platform.id for platform in platforms}
+    missing_ids = [platform_id for platform_id in unique_ids if platform_id not in found_ids]
+    if missing_ids:
+        raise HTTPException(status_code=404, detail=f"Platform not found: {missing_ids[0]}")
     now = utcnow()
-    since = now - timedelta(days=7)
-    ticks = build_history_ticks(platform.rate_cron, since, now)
-    start = ticks[0]
+    return EmbeddedHistoryResponse(
+        balances=build_balance_history_for_platforms(db, platforms, now),
+        rates=build_rate_history_for_platforms(db, platforms, now),
+    )
+
+
+def build_balance_history_for_platforms(
+    db: Session,
+    platforms: list[RelayPlatform],
+    now: datetime,
+) -> dict[int, list[AccountBalanceHistorySeries]]:
+    if not platforms:
+        return {}
+    platform_ids = [platform.id for platform in platforms]
+    since = now - timedelta(days=1)
+    snapshots = db.scalars(
+        select(AccountBalanceSnapshot)
+        .where(
+            AccountBalanceSnapshot.platform_id.in_(platform_ids),
+            AccountBalanceSnapshot.created_at >= since,
+        )
+        .order_by(AccountBalanceSnapshot.platform_id.asc(), AccountBalanceSnapshot.created_at.asc())
+    ).all()
+    by_platform_account: dict[tuple[int, int], list[AccountBalanceSnapshot]] = {}
+    for snapshot in snapshots:
+        by_platform_account.setdefault((snapshot.platform_id, snapshot.account_monitor_id), []).append(snapshot)
+
+    return {
+        platform.id: [
+            AccountBalanceHistorySeries(
+                account_id=account.id,
+                account_name=account.name,
+                points=build_account_balance_points(by_platform_account.get((platform.id, account.id), [])),
+            )
+            for account in platform.account_monitors
+        ]
+        for platform in platforms
+    }
+
+
+def build_rate_history_for_platforms(
+    db: Session,
+    platforms: list[RelayPlatform],
+    now: datetime,
+) -> dict[int, list[GroupRateHistorySeries]]:
+    if not platforms:
+        return {}
+    platform_ids = [platform.id for platform in platforms]
+    ticks_by_platform = {
+        platform.id: build_history_ticks(platform.rate_cron, now - timedelta(days=7), now)
+        for platform in platforms
+    }
+    start = min(ticks[0] for ticks in ticks_by_platform.values())
 
     discovered_snapshots = db.scalars(
         select(DiscoveredGroupRateSnapshot)
         .where(
-            DiscoveredGroupRateSnapshot.platform_id == platform_id,
+            DiscoveredGroupRateSnapshot.platform_id.in_(platform_ids),
             DiscoveredGroupRateSnapshot.created_at >= start,
         )
-        .order_by(DiscoveredGroupRateSnapshot.created_at.asc())
+        .order_by(DiscoveredGroupRateSnapshot.platform_id.asc(), DiscoveredGroupRateSnapshot.created_at.asc())
     ).all()
-    by_external_group_id: dict[str, list[DiscoveredGroupRateSnapshot]] = {}
+    by_platform_external_group_id: dict[tuple[int, str], list[DiscoveredGroupRateSnapshot]] = {}
     for snapshot in discovered_snapshots:
-        by_external_group_id.setdefault(snapshot.external_group_id, []).append(snapshot)
+        by_platform_external_group_id.setdefault((snapshot.platform_id, snapshot.external_group_id), []).append(snapshot)
+
     group_snapshots = db.scalars(
         select(GroupRateSnapshot)
         .where(
-            GroupRateSnapshot.platform_id == platform_id,
+            GroupRateSnapshot.platform_id.in_(platform_ids),
             GroupRateSnapshot.created_at >= start,
         )
-        .order_by(GroupRateSnapshot.created_at.asc())
+        .order_by(GroupRateSnapshot.platform_id.asc(), GroupRateSnapshot.created_at.asc())
     ).all()
-    by_group_monitor_id: dict[int, list[GroupRateSnapshot]] = {}
+    by_platform_group_monitor_id: dict[tuple[int, int], list[GroupRateSnapshot]] = {}
     for snapshot in group_snapshots:
-        by_group_monitor_id.setdefault(snapshot.group_monitor_id, []).append(snapshot)
+        by_platform_group_monitor_id.setdefault((snapshot.platform_id, snapshot.group_monitor_id), []).append(snapshot)
 
-    configured_groups = {
-        group.external_group_id: group
-        for group in platform.group_monitors
+    return {
+        platform.id: build_rate_history_for_platform(
+            platform,
+            ticks_by_platform[platform.id],
+            by_platform_external_group_id,
+            by_platform_group_monitor_id,
+        )
+        for platform in platforms
     }
+
+
+def build_rate_history_for_platform(
+    platform: RelayPlatform,
+    ticks: list[datetime],
+    by_platform_external_group_id: dict[tuple[int, str], list[DiscoveredGroupRateSnapshot]],
+    by_platform_group_monitor_id: dict[tuple[int, int], list[GroupRateSnapshot]],
+) -> list[GroupRateHistorySeries]:
+    effective_rate_factor = platform.effective_rate_factor
+    configured_groups = {group.external_group_id: group for group in platform.group_monitors}
 
     if platform.discovered_group_rates:
         return [
@@ -428,7 +502,7 @@ def get_rate_history(
                 is_configured=group.external_group_id in configured_groups,
                 points=build_discovered_rate_points(
                     ticks,
-                    by_external_group_id.get(group.external_group_id, []),
+                    by_platform_external_group_id.get((platform.id, group.external_group_id), []),
                     effective_rate_factor,
                 ),
             )
@@ -445,7 +519,7 @@ def get_rate_history(
             is_configured=True,
             points=build_rate_points(
                 ticks,
-                by_group_monitor_id.get(group.id, []),
+                by_platform_group_monitor_id.get((platform.id, group.id), []),
                 effective_rate_factor,
             ),
         )

@@ -956,14 +956,13 @@ import {
   deleteGroupMonitor,
   deleteNotificationRecipient,
   deletePlatform,
-  fetchBalanceHistory,
   fetchDashboard,
+  fetchEmbeddedHistories,
   fetchNotificationSetting,
   fetchNotificationRecipients,
   fetchPlatform,
   fetchPlatforms,
   fetchProviders,
-  fetchRateHistory,
   fetchSiteStrategies,
   runPlatformBalanceMonitor,
   runPlatformMonitor,
@@ -1431,28 +1430,10 @@ async function refreshPlatformState(platformId: number, refreshHistories = false
   }
 }
 
-async function loadPlatformBalanceHistories(platformIds: number[]) {
-  const rows = await Promise.all(
-    platformIds.map(async (platformId) => ({
-      platformId,
-      balances: await fetchBalanceHistory(platformId),
-    })),
-  )
-  platformBalanceHistory.value = Object.fromEntries(rows.map((row) => [row.platformId, row.balances]))
-}
-
-async function loadPlatformRateHistories(platformIds: number[]) {
-  const rows = await Promise.all(
-    platformIds.map(async (platformId) => ({
-      platformId,
-      rates: await fetchRateHistory(platformId),
-    })),
-  )
-  platformRateHistory.value = Object.fromEntries(rows.map((row) => [row.platformId, row.rates]))
-}
-
 async function loadEmbeddedHistories(platformIds: number[]) {
-  await Promise.all([loadPlatformBalanceHistories(platformIds), loadPlatformRateHistories(platformIds)])
+  const histories = await fetchEmbeddedHistories(platformIds)
+  platformBalanceHistory.value = histories.balances
+  platformRateHistory.value = histories.rates
 }
 
 async function save() {

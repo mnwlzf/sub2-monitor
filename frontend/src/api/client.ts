@@ -232,6 +232,11 @@ export interface GroupRateHistorySeries {
   points: GroupRateHistoryPoint[]
 }
 
+export interface EmbeddedHistoryResponse {
+  balances: Record<number, AccountBalanceHistorySeries[]>
+  rates: Record<number, GroupRateHistorySeries[]>
+}
+
 export interface NotificationSetting {
   enabled: boolean
   smtp_host: string | null
@@ -481,6 +486,15 @@ export async function fetchBalanceHistory(id: number) {
 
 export async function fetchRateHistory(id: number) {
   const { data } = await http.get<GroupRateHistorySeries[]>(`/platforms/${id}/history/rates`)
+  return data
+}
+
+export async function fetchEmbeddedHistories(platformIds: number[]) {
+  const params = new URLSearchParams()
+  for (const platformId of platformIds) {
+    params.append('platform_ids', platformId.toString())
+  }
+  const { data } = await http.get<EmbeddedHistoryResponse>('/platforms/history/embedded', { params })
   return data
 }
 

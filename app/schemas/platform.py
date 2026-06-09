@@ -316,6 +316,11 @@ class GroupRateHistorySeries(BaseModel):
     points: list[GroupRateHistoryPoint]
 
 
+class EmbeddedHistoryResponse(BaseModel):
+    balances: dict[int, list[AccountBalanceHistorySeries]]
+    rates: dict[int, list[GroupRateHistorySeries]]
+
+
 class DashboardStats(BaseModel):
     total_platforms: int
     enabled_platforms: int

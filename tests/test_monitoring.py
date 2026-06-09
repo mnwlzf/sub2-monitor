@@ -9,7 +9,12 @@ from sqlalchemy.orm import sessionmaker
 
 import app.models.all  # noqa: F401
 import app.services.notification as notification_service
-from app.api.platforms import attach_today_quota_usage, build_account_balance_points, dashboard
+from app.api.platforms import (
+    attach_today_quota_usage,
+    build_account_balance_points,
+    dashboard,
+    get_embedded_histories,
+)
 from app.core.database import Base
 from app.models.monitor import PlatformAccountMonitor, PlatformGroupMonitor
 from app.models.notification import NotificationRecipient, NotificationSetting
@@ -338,6 +343,67 @@ def test_today_quota_usage_is_attached_to_dashboard_platform_and_accounts() -> N
         assert account_a.today_quota_used == 3.5
         assert account_b.today_quota_used == 3
         assert dashboard(db).today_quota_used == 6.5
+    finally:
+        db.close()
+
+
+def test_embedded_histories_batches_balances_and_rates() -> None:
+    db = make_session()
+    try:
+        platform = RelayPlatform(
+            name="Embedded History",
+            base_url="https://example.com",
+            provider_type="fake",
+            rate_cron="*/30 * * * *",
+            balance_cron="*/10 * * * *",
+            recharge_amount=2,
+            received_amount=1,
+            status=PlatformStatus.unknown,
+        )
+        db.add(platform)
+        db.flush()
+        account = PlatformAccountMonitor(
+            platform_id=platform.id,
+            name="Primary",
+            external_account_id="primary",
+            enabled=True,
+        )
+        group = PlatformGroupMonitor(
+            platform_id=platform.id,
+            name="codex",
+            external_group_id="7",
+            enabled=True,
+        )
+        db.add_all([account, group])
+        db.flush()
+        now = datetime.now()
+        db.add_all(
+            [
+                AccountBalanceSnapshot(
+                    platform_id=platform.id,
+                    account_monitor_id=account.id,
+                    balance=12.5,
+                    created_at=now,
+                ),
+                GroupRateSnapshot(
+                    platform_id=platform.id,
+                    group_monitor_id=group.id,
+                    rate_multiplier=0.25,
+                    rpm_limit=120,
+                    created_at=now,
+                ),
+            ]
+        )
+        db.commit()
+
+        histories = get_embedded_histories([platform.id], db=db)
+
+        assert histories.balances[platform.id][0].account_name == "Primary"
+        assert histories.balances[platform.id][0].points[-1].balance == 12.5
+        assert histories.rates[platform.id][0].group_name == "codex"
+        latest_rate = [point for point in histories.rates[platform.id][0].points if point.rate_multiplier is not None]
+        assert latest_rate[-1].rate_multiplier == 0.25
+        assert latest_rate[-1].effective_rate_multiplier == 0.5
     finally:
         db.close()
 

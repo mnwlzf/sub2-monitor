@@ -16,6 +16,7 @@ from app.services.monitoring import (
     run_platform_monitor,
     run_platform_rate_monitor,
 )
+from app.services.sub2api_schedulable import record_sub2api_monitor_result
 
 logger = logging.getLogger(__name__)
 
@@ -81,19 +82,43 @@ class MonitorScheduler:
         for platform_id in due_balance:
             try:
                 with SessionLocal() as db:
-                    await run_platform_balance_monitor(db, platform_id)
+                    platform = await run_platform_balance_monitor(db, platform_id)
+                    await record_sub2api_monitor_result(
+                        db,
+                        platform_id=platform.id,
+                        platform_name=platform.name,
+                        base_url=platform.base_url,
+                        error_message=platform.last_error,
+                        settings=get_settings().sub2api,
+                    )
             except Exception:  # noqa: BLE001
                 logger.exception("scheduled balance monitor failed for platform_id=%s", platform_id)
         for platform_id in due_unified:
             try:
                 with SessionLocal() as db:
-                    await run_platform_monitor(db, platform_id)
+                    platform = await run_platform_monitor(db, platform_id)
+                    await record_sub2api_monitor_result(
+                        db,
+                        platform_id=platform.id,
+                        platform_name=platform.name,
+                        base_url=platform.base_url,
+                        error_message=platform.last_error,
+                        settings=get_settings().sub2api,
+                    )
             except Exception:  # noqa: BLE001
                 logger.exception("scheduled newapi monitor failed for platform_id=%s", platform_id)
         for platform_id in due_rate:
             try:
                 with SessionLocal() as db:
-                    await run_platform_rate_monitor(db, platform_id)
+                    platform = await run_platform_rate_monitor(db, platform_id)
+                    await record_sub2api_monitor_result(
+                        db,
+                        platform_id=platform.id,
+                        platform_name=platform.name,
+                        base_url=platform.base_url,
+                        error_message=platform.last_error,
+                        settings=get_settings().sub2api,
+                    )
             except Exception:  # noqa: BLE001
                 logger.exception("scheduled rate monitor failed for platform_id=%s", platform_id)
 

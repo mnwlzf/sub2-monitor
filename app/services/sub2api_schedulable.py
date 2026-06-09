@@ -52,6 +52,16 @@ def matches_platform_base_url(account: dict[str, Any], normalized_base_url: str)
     return normalized_base_url in account_base_urls(account)
 
 
+def is_schedulable_enabled(value: Any) -> bool:
+    if value is True:
+        return True
+    if isinstance(value, int) and value == 1:
+        return True
+    if isinstance(value, str) and value.strip().lower() in {"true", "1", "yes", "on"}:
+        return True
+    return False
+
+
 def get_failure_state(
     db: Session,
     *,
@@ -147,6 +157,35 @@ async def record_sub2api_monitor_failure(
     )
 
 
+async def record_sub2api_monitor_result(
+    db: Session,
+    *,
+    platform_id: int,
+    platform_name: str | None,
+    base_url: str,
+    error_message: str | None,
+    settings: Sub2APISettings,
+) -> None:
+    if error_message:
+        await record_sub2api_monitor_failure(
+            db,
+            platform_id=platform_id,
+            platform_name=platform_name,
+            base_url=base_url,
+            error_message=error_message,
+            settings=settings,
+        )
+        return
+
+    await record_sub2api_monitor_success(
+        db,
+        platform_id=platform_id,
+        platform_name=platform_name,
+        base_url=base_url,
+        settings=settings,
+    )
+
+
 async def suspend_matching_sub2api_accounts(
     db: Session,
     *,
@@ -171,7 +210,7 @@ async def suspend_matching_sub2api_accounts(
         account
         for account in accounts
         if matches_platform_base_url(account, normalized_base_url)
-        and account.get("schedulable") is True
+        and is_schedulable_enabled(account.get("schedulable"))
         and account_id(account) is not None
     ]
     ids = [account_id(account) for account in targets]

@@ -8,6 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
+from app.core.config import Settings, get_settings
 from app.core.database import get_db
 from app.core.security import encrypt_secret, utcnow
 from app.models.monitor import PlatformAccountMonitor, PlatformGroupMonitor
@@ -45,6 +46,7 @@ from app.services.monitoring import (
     run_platform_rate_monitor,
 )
 from app.services.provider_strategy import newapi_site_strategy_registry, provider_registry
+from app.services.sub2api_schedulable import record_sub2api_monitor_result
 
 router = APIRouter(tags=["platforms"])
 
@@ -287,9 +289,21 @@ def delete_platform(platform_id: int, db: Session = Depends(get_db)) -> dict[str
     "/platforms/{platform_id}/monitor/run",
     response_model=MonitorRunResponse,
 )
-async def run_monitor(platform_id: int, db: Session = Depends(get_db)) -> MonitorRunResponse:
+async def run_monitor(
+    platform_id: int,
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> MonitorRunResponse:
     try:
         platform = await run_platform_monitor(db, platform_id)
+        await record_sub2api_monitor_result(
+            db,
+            platform_id=platform.id,
+            platform_name=platform.name,
+            base_url=platform.base_url,
+            error_message=platform.last_error,
+            settings=settings.sub2api,
+        )
     except LookupError as exc:
         raise HTTPException(status_code=404, detail="Platform not found") from exc
     except ValueError as exc:
@@ -307,7 +321,11 @@ async def run_monitor(platform_id: int, db: Session = Depends(get_db)) -> Monito
     "/platforms/{platform_id}/monitor/balance/run",
     response_model=MonitorRunResponse,
 )
-async def run_balance_monitor(platform_id: int, db: Session = Depends(get_db)) -> MonitorRunResponse:
+async def run_balance_monitor(
+    platform_id: int,
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> MonitorRunResponse:
     try:
         existing = db.get(RelayPlatform, platform_id)
         if existing is None:
@@ -316,6 +334,14 @@ async def run_balance_monitor(platform_id: int, db: Session = Depends(get_db)) -
             await run_platform_monitor(db, platform_id)
             if existing.provider_type == "newapi"
             else await run_platform_balance_monitor(db, platform_id)
+        )
+        await record_sub2api_monitor_result(
+            db,
+            platform_id=platform.id,
+            platform_name=platform.name,
+            base_url=platform.base_url,
+            error_message=platform.last_error,
+            settings=settings.sub2api,
         )
     except LookupError as exc:
         raise HTTPException(status_code=404, detail="Platform not found") from exc
@@ -334,7 +360,11 @@ async def run_balance_monitor(platform_id: int, db: Session = Depends(get_db)) -
     "/platforms/{platform_id}/monitor/rate/run",
     response_model=MonitorRunResponse,
 )
-async def run_rate_monitor(platform_id: int, db: Session = Depends(get_db)) -> MonitorRunResponse:
+async def run_rate_monitor(
+    platform_id: int,
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> MonitorRunResponse:
     try:
         existing = db.get(RelayPlatform, platform_id)
         if existing is None:
@@ -343,6 +373,14 @@ async def run_rate_monitor(platform_id: int, db: Session = Depends(get_db)) -> M
             await run_platform_monitor(db, platform_id)
             if existing.provider_type == "newapi"
             else await run_platform_rate_monitor(db, platform_id)
+        )
+        await record_sub2api_monitor_result(
+            db,
+            platform_id=platform.id,
+            platform_name=platform.name,
+            base_url=platform.base_url,
+            error_message=platform.last_error,
+            settings=settings.sub2api,
         )
     except LookupError as exc:
         raise HTTPException(status_code=404, detail="Platform not found") from exc

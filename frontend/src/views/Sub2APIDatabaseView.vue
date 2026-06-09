@@ -3,7 +3,7 @@
       <section class="sub2api-db-head">
         <div>
           <h2>Sub2API 数据库</h2>
-          <p>连接状态与 SQL 修改日志</p>
+          <p>连接状态与账号 Priority 同步</p>
         </div>
         <el-button :icon="Refresh" :loading="loading" type="primary" @click="refreshAll">
           刷新
@@ -93,8 +93,8 @@
       </article>
     </section>
 
-    <section class="sql-log-panel priority-sync-panel">
-      <div class="sql-log-toolbar">
+    <section class="priority-sync-panel">
+      <div class="priority-sync-toolbar">
         <div>
           <h3>账号 Priority 同步</h3>
           <p>按平台 base_url 和密钥实际分组倍率排序，写入 sub2api.accounts.priority</p>
@@ -151,7 +151,7 @@
           <el-table
             v-loading="prioritySyncLoading || prioritySyncRunning"
             :data="prioritySyncRun?.items ?? []"
-            class="sql-log-table priority-sync-table"
+            class="priority-sync-table"
             :row-key="prioritySyncRowKey"
           >
             <el-table-column type="expand" width="42">
@@ -281,204 +281,36 @@
             </el-table-column>
             <el-table-column label="错误" min-width="160">
               <template #default="{ row }">
-                <span class="sql-error-cell">{{ row.error_message || '-' }}</span>
-              </template>
-            </el-table-column>
-            <el-table-column align="right" label="详情" width="86">
-              <template #default="{ row }">
-                <el-button
-                  :disabled="!row.sql_log_id"
-                  link
-                  type="primary"
-                  @click="row.sql_log_id && openLog(row.sql_log_id)"
-                >
-                  SQL
-                </el-button>
+                <span class="priority-sync-error-cell">{{ row.error_message || '-' }}</span>
               </template>
             </el-table-column>
           </el-table>
         </div>
       </div>
     </section>
-
-    <section class="sql-log-panel">
-      <div class="sql-log-toolbar">
-        <div>
-          <h3>SQL 修改日志</h3>
-          <p>{{ logs.total }} 条记录</p>
-        </div>
-        <div class="sql-log-filters">
-          <el-select
-            v-model="filters.status"
-            clearable
-            placeholder="状态"
-            size="small"
-            @change="reloadLogsFromFirstPage"
-          >
-            <el-option label="成功" value="succeeded" />
-            <el-option label="失败" value="failed" />
-            <el-option label="执行中" value="pending" />
-          </el-select>
-          <el-input
-            v-model.trim="filters.operation"
-            clearable
-            placeholder="操作"
-            size="small"
-            @clear="reloadLogsFromFirstPage"
-            @keyup.enter="reloadLogsFromFirstPage"
-          />
-          <el-button :icon="Refresh" :loading="logsLoading" size="small" @click="loadLogs">
-            刷新
-          </el-button>
-        </div>
-      </div>
-
-      <div class="database-table-scroll sql-log-table-scroll">
-        <el-table
-          v-loading="logsLoading"
-          :data="logs.items"
-          class="sql-log-table"
-          row-key="id"
-        >
-          <el-table-column label="时间" width="180">
-            <template #default="{ row }">
-              {{ formatTime(row.created_at) }}
-            </template>
-          </el-table-column>
-          <el-table-column label="状态" width="92">
-            <template #default="{ row }">
-              <el-tag :type="logStatusTag(row.status)" effect="light" size="small">
-                {{ logStatusText(row.status) }}
-              </el-tag>
-            </template>
-          </el-table-column>
-          <el-table-column label="操作" width="180" prop="operation" />
-          <el-table-column label="执行人" width="140">
-            <template #default="{ row }">
-              {{ row.executed_by_username || '-' }}
-            </template>
-          </el-table-column>
-          <el-table-column label="影响行数" width="100">
-            <template #default="{ row }">
-              {{ row.affected_rows ?? '-' }}
-            </template>
-          </el-table-column>
-          <el-table-column label="SQL" width="640">
-            <template #default="{ row }">
-              <code class="sql-inline">{{ sqlSummary(row.sql_text) }}</code>
-            </template>
-          </el-table-column>
-          <el-table-column label="错误" width="260">
-            <template #default="{ row }">
-              <span class="sql-error-cell">{{ row.error_message || '-' }}</span>
-            </template>
-          </el-table-column>
-          <el-table-column align="right" label="操作" width="96">
-            <template #default="{ row }">
-              <el-button :icon="View" link type="primary" @click="openLog(row.id)">详情</el-button>
-            </template>
-          </el-table-column>
-        </el-table>
-      </div>
-
-      <div class="sql-log-pagination">
-        <el-pagination
-          v-model:current-page="currentPage"
-          v-model:page-size="pageSize"
-          :page-sizes="[10, 25, 50, 100]"
-          :total="logs.total"
-          background
-          layout="total, sizes, prev, pager, next"
-          @current-change="loadLogs"
-          @size-change="reloadLogsFromFirstPage"
-        />
-      </div>
-    </section>
-
-    <el-dialog v-model="detailVisible" title="SQL 修改日志" width="760px">
-      <div v-if="selectedLog" class="sql-log-detail">
-        <div class="sql-log-detail-grid">
-          <div>
-            <span>状态</span>
-            <strong>{{ logStatusText(selectedLog.status) }}</strong>
-          </div>
-          <div>
-            <span>操作</span>
-            <strong>{{ selectedLog.operation }}</strong>
-          </div>
-          <div>
-            <span>执行人</span>
-            <strong>{{ selectedLog.executed_by_username || '-' }}</strong>
-          </div>
-          <div>
-            <span>影响行数</span>
-            <strong>{{ selectedLog.affected_rows ?? '-' }}</strong>
-          </div>
-          <div>
-            <span>目标库</span>
-            <strong>{{ selectedLog.target_database }}</strong>
-          </div>
-          <div>
-            <span>时间</span>
-            <strong>{{ formatTime(selectedLog.created_at) }}</strong>
-          </div>
-        </div>
-
-        <div class="sql-log-code-block">
-          <span>SQL</span>
-          <pre>{{ selectedLog.sql_text }}</pre>
-        </div>
-        <div v-if="selectedLog.sql_params_json" class="sql-log-code-block">
-          <span>参数</span>
-          <pre>{{ formattedSelectedParams }}</pre>
-        </div>
-        <div v-if="selectedLog.error_message" class="database-error detail-error">
-          {{ selectedLog.error_message }}
-        </div>
-      </div>
-    </el-dialog>
   </div>
 </template>
 
 <script setup lang="ts">
-import { Refresh, View } from '@element-plus/icons-vue'
+import { Refresh } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 
 import {
   fetchLatestSub2APIPrioritySyncRun,
   fetchSub2APIDatabaseStatus,
-  fetchSub2APISQLLog,
-  fetchSub2APISQLLogs,
   runSub2APIPrioritySync,
   type Sub2APIPrioritySyncItem,
   type Sub2APIPrioritySyncRun,
   type Sub2APIDatabaseStatus,
-  type Sub2APISQLLog,
-  type Sub2APISQLLogPage,
 } from '@/api/client'
 
 const status = ref<Sub2APIDatabaseStatus | null>(null)
 const prioritySyncRun = ref<Sub2APIPrioritySyncRun | null>(null)
-const logs = ref<Sub2APISQLLogPage>({
-  items: [],
-  total: 0,
-  limit: 10,
-  offset: 0,
-})
-const filters = reactive({
-  status: '',
-  operation: '',
-})
 const loading = ref(false)
 const statusLoading = ref(false)
 const prioritySyncLoading = ref(false)
 const prioritySyncRunning = ref(false)
-const logsLoading = ref(false)
-const detailVisible = ref(false)
-const selectedLog = ref<Sub2APISQLLog | null>(null)
-const currentPage = ref(1)
-const pageSize = ref(10)
 
 const statusLabel = computed(() => {
   if (!status.value?.config.configured) {
@@ -507,18 +339,6 @@ const probeTitle = computed(() => {
   return status.value.probe.ok ? '只读探测通过' : '只读探测失败'
 })
 
-const formattedSelectedParams = computed(() => {
-  const rawValue = selectedLog.value?.sql_params_json
-  if (!rawValue) {
-    return ''
-  }
-  try {
-    return JSON.stringify(JSON.parse(rawValue), null, 2)
-  } catch {
-    return rawValue
-  }
-})
-
 async function loadStatus() {
   statusLoading.value = true
   try {
@@ -527,22 +347,6 @@ async function loadStatus() {
     ElMessage.error('数据库状态加载失败')
   } finally {
     statusLoading.value = false
-  }
-}
-
-async function loadLogs() {
-  logsLoading.value = true
-  try {
-    logs.value = await fetchSub2APISQLLogs({
-      limit: pageSize.value,
-      offset: (currentPage.value - 1) * pageSize.value,
-      status: filters.status || undefined,
-      operation: filters.operation || undefined,
-    })
-  } catch {
-    ElMessage.error('SQL 日志加载失败')
-  } finally {
-    logsLoading.value = false
   }
 }
 
@@ -560,49 +364,22 @@ async function loadPrioritySyncRun() {
 async function refreshAll() {
   loading.value = true
   try {
-    await Promise.all([loadStatus(), loadPrioritySyncRun(), loadLogs()])
+    await Promise.all([loadStatus(), loadPrioritySyncRun()])
   } finally {
     loading.value = false
   }
-}
-
-async function reloadLogsFromFirstPage() {
-  currentPage.value = 1
-  await loadLogs()
-}
-
-async function openLog(id: number) {
-  selectedLog.value = await fetchSub2APISQLLog(id)
-  detailVisible.value = true
 }
 
 async function runPrioritySync() {
   prioritySyncRunning.value = true
   try {
     prioritySyncRun.value = await runSub2APIPrioritySync()
-    await loadLogs()
     ElMessage.success('Priority 同步完成')
   } catch {
     ElMessage.error('Priority 同步失败')
   } finally {
     prioritySyncRunning.value = false
   }
-}
-
-function logStatusText(statusValue: string) {
-  return {
-    pending: '执行中',
-    succeeded: '成功',
-    failed: '失败',
-  }[statusValue] ?? statusValue
-}
-
-function logStatusTag(statusValue: string) {
-  return {
-    pending: 'warning',
-    succeeded: 'success',
-    failed: 'danger',
-  }[statusValue] ?? 'info'
 }
 
 function prioritySyncStatusText(statusValue: string) {
@@ -625,11 +402,6 @@ function prioritySyncStatusTag(statusValue: string) {
     partial: 'warning',
     skipped: 'info',
   }[statusValue] ?? 'info'
-}
-
-function sqlSummary(sql: string) {
-  const normalized = sql.replace(/\s+/g, ' ').trim()
-  return normalized.length > 140 ? `${normalized.slice(0, 140)}...` : normalized
 }
 
 function selectedGroupLabel(row: Sub2APIPrioritySyncItem) {

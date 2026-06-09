@@ -26,6 +26,7 @@ from app.services.priority_sync import (
 from app.services.sub2api_database import create_sql_log, execute_recorded_sub2api_write
 from app.services.sub2api_schedulable import (
     record_sub2api_monitor_failure,
+    record_sub2api_monitor_result,
     record_sub2api_monitor_success,
 )
 
@@ -761,6 +762,82 @@ def test_auto_schedulable_suspends_matching_schedulable_accounts(monkeypatch) ->
         assert suspended[0].account_id == 101
         assert suspended[0].account_name == "matched"
         assert suspended[0].restored is False
+    finally:
+        db.close()
+
+
+def test_auto_schedulable_uses_configured_failure_threshold(monkeypatch) -> None:
+    db = make_session()
+    calls: list[tuple[list[int], bool]] = []
+
+    class FakeAdminClient:
+        def __init__(self, settings):  # noqa: ANN001
+            self.settings = settings
+
+        async def list_accounts(self):
+            return [
+                {
+                    "id": "201",
+                    "name": "matched string schedulable",
+                    "schedulable": "true",
+                    "credentials": {"base_url": "https://relay.example.com/"},
+                }
+            ]
+
+        async def bulk_set_schedulable(self, account_ids, schedulable):  # noqa: ANN001
+            ids = list(account_ids)
+            calls.append((ids, schedulable))
+            return {"success": len(ids), "failed": 0, "success_ids": ids, "failed_ids": []}
+
+    monkeypatch.setattr(
+        "app.services.sub2api_schedulable.Sub2APIAdminClient",
+        FakeAdminClient,
+    )
+    settings = Sub2APISettings(
+        admin_base_url="https://sub2api.example.com",
+        admin_api_key="admin-key",
+        auto_schedulable_enabled=True,
+        auto_schedulable_failure_threshold=4,
+    )
+
+    try:
+        for index in range(1, 4):
+            asyncio.run(
+                record_sub2api_monitor_result(
+                    db,
+                    platform_id=9,
+                    platform_name="Relay",
+                    base_url="https://relay.example.com/",
+                    error_message=f"failure {index}",
+                    settings=settings,
+                )
+            )
+            assert calls == []
+
+        asyncio.run(
+            record_sub2api_monitor_result(
+                db,
+                platform_id=9,
+                platform_name="Relay",
+                base_url="https://relay.example.com/",
+                error_message="failure 4",
+                settings=settings,
+            )
+        )
+
+        assert calls == [([201], False)]
+        state = db.scalar(
+            select(Sub2APIMonitorFailureState).where(
+                Sub2APIMonitorFailureState.platform_id == 9,
+            )
+        )
+        assert state is not None
+        assert state.consecutive_failures == 4
+        assert state.paused is True
+        suspended = db.scalars(select(Sub2APIMonitorSuspendedAccount)).all()
+        assert len(suspended) == 1
+        assert suspended[0].account_id == 201
+        assert suspended[0].account_name == "matched string schedulable"
     finally:
         db.close()
 

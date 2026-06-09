@@ -686,11 +686,15 @@ body {
   flex-direction: column;
   gap: 8px;
   align-self: start;
-  overflow: hidden;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   border: 1px solid #e5e7eb;
   border-radius: 10px;
   background: #ffffff;
   padding: 12px;
+  scrollbar-gutter: stable;
 }
 
 .embedded-menu-brand {
@@ -1038,6 +1042,10 @@ body {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
   gap: 10px;
+}
+
+.overview-group-rate-list {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .embedded-group-rate-row {
@@ -1861,6 +1869,10 @@ body {
   .embedded-account-row {
     grid-template-columns: minmax(180px, 1fr) minmax(220px, 0.8fr) minmax(180px, 0.9fr);
   }
+
+  .overview-group-rate-list {
+    grid-template-columns: 1fr;
+  }
 }
 
 @media (max-width: 760px) {
@@ -1947,6 +1959,16 @@ body {
 
   .embedded-account-values {
     grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .overview-group-rate-list {
+    grid-template-columns: 1fr;
+  }
+
+  .overview-group-rate-list .embedded-group-rate-row {
+    grid-template-columns: 1fr;
+    gap: 10px;
+    align-items: flex-start;
   }
 
   .embedded-group-rate-page .embedded-group-rate-row {

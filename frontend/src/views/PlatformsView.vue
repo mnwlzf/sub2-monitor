@@ -181,7 +181,7 @@
                   <div class="embedded-section-label">接口分组速览</div>
                   <div
                     v-if="overviewDiscoveredGroupRates(row.discovered_group_rates).length > 0"
-                    class="embedded-group-rate-list"
+                    class="embedded-group-rate-list overview-group-rate-list"
                   >
                     <div
                       v-for="groupRate in overviewDiscoveredGroupRates(row.discovered_group_rates)"

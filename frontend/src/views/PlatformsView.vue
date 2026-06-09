@@ -942,7 +942,7 @@
 import { Delete, Edit, Plus, Refresh, Setting } from '@element-plus/icons-vue'
 import type { FormInstance, FormRules } from 'element-plus'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 
 import BalanceLineChart from '@/components/BalanceLineChart.vue'
@@ -961,7 +961,7 @@ import {
   fetchNotificationSetting,
   fetchNotificationRecipients,
   fetchPlatform,
-  fetchPlatforms,
+  fetchPlatformDetails,
   fetchProviders,
   fetchSiteStrategies,
   runPlatformBalanceMonitor,
@@ -1001,6 +1001,8 @@ const stats = ref<DashboardStats | null>(null)
 const detail = ref<PlatformDetail | null>(null)
 const platformBalanceHistory = ref<Record<number, AccountBalanceHistorySeries[]>>({})
 const platformRateHistory = ref<Record<number, GroupRateHistorySeries[]>>({})
+const embeddedHistoriesLoaded = ref(false)
+const embeddedHistoriesLoading = ref(false)
 const notificationSetting = ref<NotificationSetting | null>(null)
 const notificationRecipients = ref<NotificationRecipient[]>([])
 const loading = ref(false)
@@ -1260,23 +1262,23 @@ async function openDetail(row: RelayPlatform) {
 async function load() {
   loading.value = true
   try {
-    const [providerRows, siteStrategyRows, dashboard, rows, notification, recipients] = await Promise.all([
+    const [providerRows, siteStrategyRows, dashboard, details, notification, recipients] = await Promise.all([
       fetchProviders(),
       fetchSiteStrategies(),
       fetchDashboard(),
-      fetchPlatforms(),
+      fetchPlatformDetails(),
       fetchNotificationSetting(),
       fetchNotificationRecipients(),
     ])
-    const details = await Promise.all(rows.map((row) => fetchPlatform(row.id)))
     providers.value = providerRows
     siteStrategies.value = siteStrategyRows
     stats.value = dashboard
     platforms.value = details
+    embeddedHistoriesLoaded.value = false
     notificationSetting.value = notification
     notificationRecipients.value = recipients
     syncNotificationForm(notification)
-    await loadEmbeddedHistories(details.map((row) => row.id))
+    void ensureEmbeddedHistoriesLoaded()
   } finally {
     loading.value = false
   }
@@ -1434,6 +1436,23 @@ async function loadEmbeddedHistories(platformIds: number[]) {
   const histories = await fetchEmbeddedHistories(platformIds)
   platformBalanceHistory.value = histories.balances
   platformRateHistory.value = histories.rates
+  embeddedHistoriesLoaded.value = true
+}
+
+function historyViewNeedsData(view: EmbeddedViewKey) {
+  return view === 'balances' || view === 'rates'
+}
+
+async function ensureEmbeddedHistoriesLoaded() {
+  if (embeddedHistoriesLoaded.value || embeddedHistoriesLoading.value || !historyViewNeedsData(activeEmbeddedView.value)) {
+    return
+  }
+  embeddedHistoriesLoading.value = true
+  try {
+    await loadEmbeddedHistories(platforms.value.map((row) => row.id))
+  } finally {
+    embeddedHistoriesLoading.value = false
+  }
 }
 
 async function save() {
@@ -1916,5 +1935,9 @@ function latestBalance(series: AccountBalanceHistorySeries) {
 }
 
 onMounted(load)
+
+watch(activeEmbeddedView, () => {
+  void ensureEmbeddedHistoriesLoaded()
+})
 </script>
 

@@ -1,5 +1,6 @@
 from bisect import bisect_right
 from datetime import datetime, timedelta
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from croniter import croniter
@@ -195,6 +196,24 @@ def list_platforms(db: Session = Depends(get_db)) -> list[RelayPlatform]:
     return platforms
 
 
+@router.get("/platforms/details", response_model=list[PlatformDetailResponse])
+def list_platform_details(db: Session = Depends(get_db)) -> list[RelayPlatform]:
+    platforms = list(
+        db.scalars(
+            select(RelayPlatform)
+            .options(
+                selectinload(RelayPlatform.account_monitors),
+                selectinload(RelayPlatform.group_monitors),
+                selectinload(RelayPlatform.discovered_group_rates),
+                selectinload(RelayPlatform.discovered_channel_rates),
+            )
+            .order_by(RelayPlatform.created_at.desc())
+        ).all()
+    )
+    attach_today_quota_usage(db, platforms)
+    return platforms
+
+
 @router.get("/platforms/{platform_id}", response_model=PlatformDetailResponse)
 def get_platform(platform_id: int, db: Session = Depends(get_db)) -> RelayPlatform:
     return detail_or_404(db, platform_id)
@@ -367,12 +386,11 @@ def get_rate_history(
     response_model=EmbeddedHistoryResponse,
 )
 def get_embedded_histories(
-    platform_ids: list[int] = Query(default_factory=list),
+    platform_ids: Annotated[list[int] | None, Query()] = None,
     db: Session = Depends(get_db),
 ) -> EmbeddedHistoryResponse:
-    if not platform_ids:
-        return EmbeddedHistoryResponse(balances={}, rates={})
-    unique_ids = list(dict.fromkeys(platform_ids))
+    unique_ids = list(dict.fromkeys(platform_ids or []))
+    condition = RelayPlatform.id.in_(unique_ids) if unique_ids else True
     platforms = list(
         db.scalars(
             select(RelayPlatform)
@@ -381,13 +399,15 @@ def get_embedded_histories(
                 selectinload(RelayPlatform.group_monitors),
                 selectinload(RelayPlatform.discovered_group_rates),
             )
-            .where(RelayPlatform.id.in_(unique_ids))
+            .where(condition)
+            .order_by(RelayPlatform.created_at.desc())
         ).all()
     )
-    found_ids = {platform.id for platform in platforms}
-    missing_ids = [platform_id for platform_id in unique_ids if platform_id not in found_ids]
-    if missing_ids:
-        raise HTTPException(status_code=404, detail=f"Platform not found: {missing_ids[0]}")
+    if unique_ids:
+        found_ids = {platform.id for platform in platforms}
+        missing_ids = [platform_id for platform_id in unique_ids if platform_id not in found_ids]
+        if missing_ids:
+            raise HTTPException(status_code=404, detail=f"Platform not found: {missing_ids[0]}")
     now = utcnow()
     return EmbeddedHistoryResponse(
         balances=build_balance_history_for_platforms(db, platforms, now),

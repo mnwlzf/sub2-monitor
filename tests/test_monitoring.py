@@ -14,6 +14,7 @@ from app.api.platforms import (
     build_account_balance_points,
     dashboard,
     get_embedded_histories,
+    list_platform_details,
 )
 from app.core.database import Base
 from app.models.monitor import PlatformAccountMonitor, PlatformGroupMonitor
@@ -404,6 +405,50 @@ def test_embedded_histories_batches_balances_and_rates() -> None:
         latest_rate = [point for point in histories.rates[platform.id][0].points if point.rate_multiplier is not None]
         assert latest_rate[-1].rate_multiplier == 0.25
         assert latest_rate[-1].effective_rate_multiplier == 0.5
+    finally:
+        db.close()
+
+
+def test_platform_details_list_batches_detail_payloads() -> None:
+    db = make_session()
+    try:
+        platform = RelayPlatform(
+            name="Detail Batch",
+            base_url="https://detail.example.com",
+            provider_type="fake",
+            rate_cron="*/30 * * * *",
+            balance_cron="*/10 * * * *",
+            status=PlatformStatus.unknown,
+        )
+        db.add(platform)
+        db.flush()
+        db.add_all(
+            [
+                PlatformAccountMonitor(
+                    platform_id=platform.id,
+                    name="Primary",
+                    external_account_id="primary",
+                    enabled=True,
+                ),
+                PlatformGroupMonitor(
+                    platform_id=platform.id,
+                    name="codex",
+                    external_group_id="7",
+                    enabled=True,
+                ),
+            ]
+        )
+        db.commit()
+
+        details = list_platform_details(db=db)
+        histories = get_embedded_histories(db=db)
+
+        assert len(details) == 1
+        assert details[0].name == "Detail Batch"
+        assert len(details[0].account_monitors) == 1
+        assert len(details[0].group_monitors) == 1
+        assert platform.id in histories.balances
+        assert platform.id in histories.rates
     finally:
         db.close()
 

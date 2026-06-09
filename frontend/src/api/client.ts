@@ -443,6 +443,11 @@ export async function fetchPlatforms() {
   return data
 }
 
+export async function fetchPlatformDetails() {
+  const { data } = await http.get<PlatformDetail[]>('/platforms/details')
+  return data
+}
+
 export async function fetchPlatform(id: number) {
   const { data } = await http.get<PlatformDetail>(`/platforms/${id}`)
   return data

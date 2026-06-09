@@ -1,10 +1,13 @@
 import asyncio
+import sys
 from types import SimpleNamespace
 
 import httpx
 
 import app.services.provider_strategy as provider_module
+from app.core.config import Sub2APIDatabaseSettings
 from app.core.security import encrypt_secret
+from app.services.sub2api_proxy import load_platform_proxy_urls, proxy_url_from_row
 from app.services.provider_strategy import NewApiStrategy, Sub2ApiStrategy, GenericNewApiSiteStrategy
 
 
@@ -655,6 +658,175 @@ def test_newapi_generic_fetch_account_balance_sends_authorization_header(monkeyp
     assert result.error is None
     assert result.balance == 2.0
     assert result.quota_used == 0.5
+
+
+def test_newapi_generic_fetch_account_balance_uses_account_proxy(monkeypatch) -> None:
+    client_proxies: list[str | None] = []
+
+    class StubAsyncClient:
+        def __init__(self, *args, **kwargs) -> None:
+            self.base_url = str(kwargs.get("base_url") or "")
+            self.headers = dict(kwargs.get("headers") or {})
+            client_proxies.append(kwargs.get("proxy"))
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def get(
+            self,
+            path: str,
+            params: dict | None = None,
+            headers: dict | None = None,
+        ):
+            if path == "login":
+                return httpx.Response(200, text="ok", request=httpx.Request("GET", f"{self.base_url}{path}"))
+            if path == "api/status":
+                return httpx.Response(
+                    200,
+                    json={"success": True, "data": {"quota_per_unit": 500000}},
+                    request=httpx.Request("GET", f"{self.base_url}{path}"),
+                )
+            if path == "api/user/self":
+                return httpx.Response(
+                    200,
+                    json={"success": True, "data": {"id": 789, "quota": 1000000}},
+                    request=httpx.Request("GET", f"{self.base_url}{path}"),
+                )
+            if path == "api/token/":
+                return httpx.Response(
+                    200,
+                    json={"success": True, "data": {"items": [], "total": 0, "page_size": 100}},
+                    request=httpx.Request("GET", f"{self.base_url}{path}"),
+                )
+            raise AssertionError(path)
+
+        async def post(self, path: str, json: dict):
+            if path in {"api/user/login?turnstile=", "api/user/login"}:
+                return httpx.Response(
+                    200,
+                    json={"success": True, "data": {"id": 789, "access_token": "login-token-123"}},
+                    request=httpx.Request("POST", f"{self.base_url}{path}"),
+                )
+            raise AssertionError(path)
+
+    monkeypatch.setattr(provider_module.httpx, "AsyncClient", StubAsyncClient)
+    proxy_url = "socks5://user:pass@127.0.0.1:1080"
+
+    result = asyncio.run(
+        GenericNewApiSiteStrategy().fetch_account_balance(
+            NewApiStrategy(),
+            SimpleNamespace(
+                base_url="https://newapi.example.com",
+                api_key_encrypted=encrypt_secret("Bearer fallback-token"),
+                auth_header_name="X-Auth-Token",
+                auth_header_prefix="Bearer",
+                account_monitors=[],
+                site_strategy="generic",
+            ),
+            SimpleNamespace(
+                username="user@example.com",
+                password_encrypted=encrypt_secret("pw"),
+                sub2api_proxy_url=proxy_url,
+            ),
+        )
+    )
+
+    assert result.error is None
+    assert client_proxies == [proxy_url]
+
+
+def test_sub2api_proxy_url_from_row_escapes_credentials() -> None:
+    assert proxy_url_from_row(
+        ("socks5", "154.219.108.160", 12222, "lnyolcy", "w1?7jZb:RZYE#rE#5iev")
+    ) == "socks5://lnyolcy:w1%3F7jZb%3ARZYE%23rE%235iev@154.219.108.160:12222"
+    assert proxy_url_from_row(("ftp", "127.0.0.1", 1080, None, None)) is None
+
+
+def test_load_platform_proxy_urls_matches_platform_base_url(monkeypatch) -> None:
+    execute_calls: list[tuple[str, dict[str, str]]] = []
+
+    class StubCursor:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return None
+
+        def execute(self, sql: str, params: dict[str, str]) -> None:
+            execute_calls.append((sql, params))
+
+        def fetchall(self):
+            return [
+                (
+                    101,
+                    "socks5",
+                    "127.0.0.1",
+                    1080,
+                    "user@example.com",
+                    "p:a#s",
+                    "https://relay.example.com",
+                ),
+                (
+                    102,
+                    "http",
+                    "proxy.example.com",
+                    8080,
+                    None,
+                    None,
+                    "https://relay.example.com",
+                ),
+                (
+                    103,
+                    "ftp",
+                    "proxy.example.com",
+                    21,
+                    None,
+                    None,
+                    "https://relay.example.com",
+                ),
+            ]
+
+    class StubConnection:
+        read_only = False
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return None
+
+        def cursor(self):
+            return StubCursor()
+
+    def connect(*args, **kwargs):
+        assert kwargs["connect_timeout"] == 5
+        return StubConnection()
+
+    psycopg_stub = SimpleNamespace(connect=connect)
+    monkeypatch.setitem(sys.modules, "psycopg", psycopg_stub)
+
+    proxies = load_platform_proxy_urls(
+        Sub2APIDatabaseSettings(
+            host="postgres",
+            user="sub2api",
+            password="secret",
+            dbname="sub2api",
+        ),
+        "https://relay.example.com/",
+    )
+
+    assert proxies == [
+        "socks5://user%40example.com:p%3Aa%23s@127.0.0.1:1080",
+        "http://proxy.example.com:8080",
+    ]
+    assert execute_calls
+    sql, params = execute_calls[0]
+    assert "credentials->>'base_url'" in sql
+    assert "extra->>'custom_base_url'" in sql
+    assert params == {"base_url": "https://relay.example.com"}
 
 
 def test_newapi_generic_login_retries_after_rate_limit(monkeypatch) -> None:

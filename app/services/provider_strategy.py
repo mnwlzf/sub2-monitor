@@ -18,6 +18,16 @@ from app.models.platform import RelayPlatform
 logger = logging.getLogger(__name__)
 
 
+def account_proxy_url(account: PlatformAccountMonitor | None) -> str | None:
+    value = getattr(account, "sub2api_proxy_url", None)
+    return str(value).strip() if value else None
+
+
+def account_proxy_kwargs(account: PlatformAccountMonitor | None) -> dict[str, str]:
+    proxy_url = account_proxy_url(account)
+    return {"proxy": proxy_url} if proxy_url else {}
+
+
 @dataclass(frozen=True)
 class AccountBalanceResult:
     balance: float | None = None
@@ -117,10 +127,17 @@ class ProviderStrategy(ABC):
             value = f"{prefix} {api_key}"
         return {platform.auth_header_name: value}
 
-    async def get_json(self, platform: RelayPlatform, path: str) -> tuple[int, Any, int]:
+    async def get_json(
+        self,
+        platform: RelayPlatform,
+        path: str,
+        *,
+        proxy_url: str | None = None,
+    ) -> tuple[int, Any, int]:
         base_url = platform.base_url.rstrip("/")
         url = f"{base_url}/{path.lstrip('/')}"
-        async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
+        proxy_kwargs = {"proxy": proxy_url} if proxy_url else {}
+        async with httpx.AsyncClient(timeout=self.timeout_seconds, **proxy_kwargs) as client:
             response = await client.get(url, headers=self.auth_headers(platform))
         try:
             latency_ms = int(response.elapsed.total_seconds() * 1000)
@@ -220,6 +237,7 @@ class GenericNewApiSiteStrategy(NewApiSiteStrategy):
             status, payload, _ = await provider.get_json(
                 platform,
                 f"/api/account/{account.external_account_id}",
+                proxy_url=account_proxy_url(account),
             )
             if status >= 400:
                 return AccountBalanceResult(error=f"newapi account endpoint returned HTTP {status}")
@@ -249,6 +267,7 @@ class GenericNewApiSiteStrategy(NewApiSiteStrategy):
             base_url=site_url,
             follow_redirects=True,
             headers=request_headers,
+            **account_proxy_kwargs(account),
             timeout=provider.timeout_seconds,
         ) as client:
             quota_per_unit = await self.fetch_quota_per_unit(provider, client)
@@ -945,7 +964,7 @@ class Sub2ApiStrategy(ProviderStrategy):
         if not password:
             return AccountBalanceResult(error="Sub2API 账号余额监控需要配置登录密码")
 
-        async with self.api_client(platform) as client:
+        async with self.api_client(platform, account) as client:
             login_payload, login_error = await self.login(client, email, password)
             if login_error:
                 return AccountBalanceResult(error=login_error)
@@ -1018,7 +1037,7 @@ class Sub2ApiStrategy(ProviderStrategy):
         if not email or not password:
             raise ValueError("Sub2API 分组采集账号缺少登录邮箱或密码")
 
-        async with self.api_client(platform) as client:
+        async with self.api_client(platform, account) as client:
             _, login_error = await self.login(client, email, password)
             if login_error:
                 raise ValueError(login_error)
@@ -1045,7 +1064,7 @@ class Sub2ApiStrategy(ProviderStrategy):
         if not email or not password:
             return None
 
-        async with self.api_client(platform) as client:
+        async with self.api_client(platform, account) as client:
             _, login_error = await self.login(client, email, password)
             if login_error:
                 raise ValueError(login_error)
@@ -1059,11 +1078,16 @@ class Sub2ApiStrategy(ProviderStrategy):
 
         return self.parse_key_group_catalog(keys_payload)
 
-    def api_client(self, platform: RelayPlatform) -> httpx.AsyncClient:
+    def api_client(
+        self,
+        platform: RelayPlatform,
+        account: PlatformAccountMonitor | None = None,
+    ) -> httpx.AsyncClient:
         return httpx.AsyncClient(
             base_url=f"{self.api_base_url(platform)}/",
             follow_redirects=True,
             headers={"Accept": "application/json"},
+            **account_proxy_kwargs(account),
             timeout=self.timeout_seconds,
         )
 
@@ -1550,12 +1574,19 @@ class NewApiStrategy(ProviderStrategy):
         strategy = self.site_strategies.get(platform.site_strategy)
         return await strategy.fetch_group_catalog(self, platform)
 
-    async def get_json(self, platform: RelayPlatform, path: str) -> tuple[int, Any, int]:
+    async def get_json(
+        self,
+        platform: RelayPlatform,
+        path: str,
+        *,
+        proxy_url: str | None = None,
+    ) -> tuple[int, Any, int]:
         platform_id = getattr(platform, "id", None)
         base_url = platform.base_url.rstrip("/")
         url = f"{base_url}/{path.lstrip('/')}"
         headers = await self.resolve_management_headers(platform)
-        async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
+        proxy_kwargs = {"proxy": proxy_url} if proxy_url else {}
+        async with httpx.AsyncClient(timeout=self.timeout_seconds, **proxy_kwargs) as client:
             response = await client.get(url, headers=headers)
         try:
             latency_ms = int(response.elapsed.total_seconds() * 1000)
@@ -1666,6 +1697,7 @@ class NewApiStrategy(ProviderStrategy):
             base_url=site_url,
             follow_redirects=True,
             headers=request_headers,
+            **account_proxy_kwargs(account),
             timeout=self.timeout_seconds,
         ) as client:
             await client.get("login")

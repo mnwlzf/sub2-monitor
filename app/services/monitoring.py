@@ -35,6 +35,8 @@ from app.services.provider_strategy import (
     KeyGroupMonitorResult,
     provider_registry,
 )
+from app.core.config import get_settings
+from app.services.sub2api_proxy import load_platform_proxy_urls
 
 logger = logging.getLogger(__name__)
 
@@ -201,9 +203,22 @@ async def _run_platform_balance_monitor_once(db: Session, platform_id: int) -> R
     )
 
     previous_newapi_login_site_url: str | None = None
+    sub2api_proxy_urls = (
+        load_platform_proxy_urls(get_settings().sub2api.database, platform.base_url)
+        if platform.provider_type == "newapi" and platform.site_strategy == "sub2api"
+        else []
+    )
+    enabled_account_index = 0
     for account in platform.account_monitors:
         if not account.enabled:
             continue
+        proxy_url = (
+            sub2api_proxy_urls[enabled_account_index % len(sub2api_proxy_urls)]
+            if sub2api_proxy_urls
+            else None
+        )
+        enabled_account_index += 1
+        setattr(account, "sub2api_proxy_url", proxy_url)
         newapi_login_site_url = newapi_account_login_site_url(strategy, platform, account)
         if (
             previous_newapi_login_site_url is not None

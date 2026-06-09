@@ -1,3 +1,4 @@
+import asyncio
 import json
 
 from sqlalchemy import create_engine, select
@@ -16,6 +17,7 @@ from app.services.priority_sync import (
     PRIORITY_SYNC_PRIORITY_STEP,
     PRIORITY_SYNC_SQL,
     build_priority_sync_plan,
+    refresh_and_sync_sub2api_account_priorities,
     sync_sub2api_account_priorities,
 )
 from app.services.sub2api_database import create_sql_log, execute_recorded_sub2api_write
@@ -279,6 +281,134 @@ def test_priority_sync_plan_dedupes_by_base_url_without_api_key() -> None:
         assert plan[0]["priority"] == 5
         assert plan[1]["error_message"] == "同一 base_url 已由更低实际倍率平台 Cheaper Duplicate 接管"
         assert plan[2]["error_message"] == "同一 base_url 已由更低实际倍率平台 First 接管"
+    finally:
+        db.close()
+
+
+def test_priority_sync_plan_excludes_failed_refresh_platforms_from_sorting() -> None:
+    db = make_session()
+    try:
+        failed = RelayPlatform(
+            name="Failed Cheap",
+            base_url="https://failed.example.com/",
+            provider_type="fake",
+            rate_cron="*/10 * * * *",
+            balance_cron="*/10 * * * *",
+            status=PlatformStatus.unknown,
+        )
+        healthy = RelayPlatform(
+            name="Healthy Expensive",
+            base_url="https://healthy.example.com/",
+            provider_type="fake",
+            rate_cron="*/10 * * * *",
+            balance_cron="*/10 * * * *",
+            status=PlatformStatus.unknown,
+        )
+        db.add_all([failed, healthy])
+        db.flush()
+
+        for platform, group_id, rate_multiplier in (
+            (failed, "1", 0.01),
+            (healthy, "2", 0.2),
+        ):
+            account = PlatformAccountMonitor(
+                platform_id=platform.id,
+                name=f"{platform.name} Account",
+                external_account_id=str(platform.id),
+                enabled=True,
+            )
+            account.key_summaries = (
+                {"id": str(platform.id), "name": "key", "group_id": group_id, "group_name": "group"},
+            )
+            db.add_all(
+                [
+                    account,
+                    PlatformGroupMonitor(
+                        platform_id=platform.id,
+                        name="group",
+                        external_group_id=group_id,
+                        enabled=True,
+                        rate_multiplier=rate_multiplier,
+                    ),
+                ]
+            )
+        db.commit()
+
+        plan = build_priority_sync_plan(
+            db,
+            excluded_platforms={failed.id: "Failed Cheap（https://failed.example.com）：连接超时"},
+        )
+
+        assert [item["platform_name"] for item in plan] == ["Healthy Expensive", "Failed Cheap"]
+        assert [item["status"] for item in plan] == ["planned", "skipped"]
+        assert plan[0]["priority"] == 5
+        assert plan[1]["priority"] is None
+        assert plan[1]["error_message"] == (
+            "本次预采集失败，已从 Priority 排序中剔除："
+            "Failed Cheap（https://failed.example.com）：连接超时"
+        )
+    finally:
+        db.close()
+
+
+def test_priority_sync_refresh_error_names_excluded_platform(monkeypatch) -> None:
+    db = make_session()
+    try:
+        platform = RelayPlatform(
+            name="Broken Relay",
+            base_url="https://broken.example.com/",
+            provider_type="fake",
+            rate_cron="*/10 * * * *",
+            balance_cron="*/10 * * * *",
+            status=PlatformStatus.unknown,
+        )
+        db.add(platform)
+        db.flush()
+        account = PlatformAccountMonitor(
+            platform_id=platform.id,
+            name="Main",
+            external_account_id="main",
+            enabled=True,
+        )
+        account.key_summaries = (
+            {"id": "101", "name": "main-key", "group_id": "7", "group_name": "codex"},
+        )
+        db.add_all(
+            [
+                account,
+                PlatformGroupMonitor(
+                    platform_id=platform.id,
+                    name="codex",
+                    external_group_id="7",
+                    enabled=True,
+                    rate_multiplier=0.08,
+                ),
+            ]
+        )
+        db.commit()
+
+        async def fail_monitor(db_arg, platform_id):  # noqa: ANN001
+            raise RuntimeError("分组倍率目录读取失败：HTTP 502")
+
+        monkeypatch.setattr(
+            "app.services.priority_sync.run_platform_monitor",
+            fail_monitor,
+        )
+
+        run = asyncio.run(
+            refresh_and_sync_sub2api_account_priorities(
+                db,
+                database=Sub2APIDatabaseSettings(user="", password="", dbname="sub2api"),
+            )
+        )
+
+        assert run.status == "partial"
+        assert run.skipped_items == 1
+        assert run.items[0]["platform_name"] == "Broken Relay"
+        assert run.items[0]["priority"] is None
+        assert "Broken Relay（https://broken.example.com）" in (run.error_message or "")
+        assert "分组倍率目录读取失败：HTTP 502" in (run.error_message or "")
+        assert "已从本次 Priority 排序中剔除" in (run.error_message or "")
     finally:
         db.close()
 

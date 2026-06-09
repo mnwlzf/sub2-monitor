@@ -51,6 +51,19 @@ SELECT
 """
 
 
+def platform_label(item: dict[str, Any]) -> str:
+    name = str(item.get("platform_name") or "").strip()
+    base_url = normalize_base_url(item.get("base_url"))
+    platform_id = item.get("platform_id")
+    label = name or f"平台 #{platform_id}"
+    return f"{label}（{base_url}）" if base_url else label
+
+
+def refresh_error_detail(item: dict[str, Any]) -> str:
+    error = str(item.get("error_message") or "未提供错误详情").strip()
+    return f"{platform_label(item)}：{error}"
+
+
 def priority_sync_database_error(database: Sub2APIDatabaseSettings) -> str | None:
     configured_dbname = (database.dbname or "").strip()
     if database.dsn:
@@ -66,25 +79,38 @@ def priority_sync_database_error(database: Sub2APIDatabaseSettings) -> str | Non
 
 
 async def refresh_enabled_platforms_for_priority_sync(db: Session) -> list[dict[str, Any]]:
-    platform_ids = list(
+    platforms = list(
         db.scalars(
-            select(RelayPlatform.id)
+            select(RelayPlatform)
             .where(RelayPlatform.enabled.is_(True))
             .order_by(RelayPlatform.id.asc())
         ).all()
     )
     results: list[dict[str, Any]] = []
-    for platform_id in platform_ids:
+    for platform in platforms:
         try:
-            platform = await run_platform_monitor(db, platform_id)
+            platform = await run_platform_monitor(db, platform.id)
         except Exception as exc:  # noqa: BLE001
             db.rollback()
-            logger.exception("priority sync pre-refresh failed platform_id=%s", platform_id)
+            logger.exception("priority sync pre-refresh failed platform_id=%s", platform.id)
             results.append(
                 {
-                    "platform_id": platform_id,
+                    "platform_id": platform.id,
+                    "platform_name": platform.name,
+                    "base_url": platform.base_url,
                     "status": "failed",
-                    "error_message": str(exc),
+                    "error_message": str(exc) or exc.__class__.__name__,
+                }
+            )
+            continue
+        if platform.last_error:
+            results.append(
+                {
+                    "platform_id": platform.id,
+                    "platform_name": platform.name,
+                    "base_url": platform.base_url,
+                    "status": "failed",
+                    "error_message": platform.last_error,
                 }
             )
             continue
@@ -92,8 +118,9 @@ async def refresh_enabled_platforms_for_priority_sync(db: Session) -> list[dict[
             {
                 "platform_id": platform.id,
                 "platform_name": platform.name,
+                "base_url": platform.base_url,
                 "status": "succeeded",
-                "error_message": platform.last_error,
+                "error_message": None,
             }
         )
     return results
@@ -106,16 +133,24 @@ async def refresh_and_sync_sub2api_account_priorities(
     user: User | None = None,
 ) -> Sub2APIPrioritySyncRun:
     refresh_results = await refresh_enabled_platforms_for_priority_sync(db)
-    run = sync_sub2api_account_priorities(db, database=database, user=user)
     failed_refreshes = [item for item in refresh_results if item["status"] == "failed"]
+    excluded_platforms = {
+        int(item["platform_id"]): refresh_error_detail(item) for item in failed_refreshes
+    }
+    run = sync_sub2api_account_priorities(
+        db,
+        database=database,
+        user=user,
+        excluded_platforms=excluded_platforms,
+    )
     if failed_refreshes:
-        refresh_error = "部分平台预采集失败：" + "；".join(
-            f"{item['platform_id']}: {item['error_message']}" for item in failed_refreshes
+        refresh_error = "部分平台预采集失败，已从本次 Priority 排序中剔除：" + "；".join(
+            refresh_error_detail(item) for item in failed_refreshes
         )
         run.error_message = (
             f"{run.error_message}\n{refresh_error}" if run.error_message else refresh_error
         )
-        if run.status == "succeeded":
+        if run.status in {"succeeded", "skipped"}:
             run.status = "partial"
         db.add(run)
         db.commit()
@@ -224,7 +259,11 @@ def group_candidate(
     }
 
 
-def platform_priority_candidate(platform: RelayPlatform) -> dict[str, Any]:
+def platform_priority_candidate(
+    platform: RelayPlatform,
+    *,
+    excluded_reason: str | None = None,
+) -> dict[str, Any]:
     normalized_base_url = normalize_base_url(platform.base_url)
     rate_factor = platform.effective_rate_factor
     used_group_names = key_group_ids_from_accounts(platform.account_monitors)
@@ -252,7 +291,9 @@ def platform_priority_candidate(platform: RelayPlatform) -> dict[str, Any]:
     )
 
     error_message: str | None = None
-    if not normalized_base_url:
+    if excluded_reason:
+        error_message = f"本次预采集失败，已从 Priority 排序中剔除：{excluded_reason}"
+    elif not normalized_base_url:
         error_message = "平台 base_url 为空"
     elif rate_factor is None:
         error_message = "平台充值金额或到账金额无效，无法计算实际倍率"
@@ -317,8 +358,19 @@ def dedupe_priority_items(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [*by_base_url.values(), *skipped]
 
 
-def build_priority_sync_plan(db: Session) -> list[dict[str, Any]]:
-    raw_items = [platform_priority_candidate(platform) for platform in load_priority_sync_platforms(db)]
+def build_priority_sync_plan(
+    db: Session,
+    *,
+    excluded_platforms: dict[int, str] | None = None,
+) -> list[dict[str, Any]]:
+    excluded_platforms = excluded_platforms or {}
+    raw_items = [
+        platform_priority_candidate(
+            platform,
+            excluded_reason=excluded_platforms.get(platform.id),
+        )
+        for platform in load_priority_sync_platforms(db)
+    ]
     items = dedupe_priority_items(raw_items)
     planned_items = [
         item for item in items if item["status"] == "planned" and item["effective_rate_multiplier"] is not None
@@ -413,8 +465,9 @@ def sync_sub2api_account_priorities(
     *,
     database: Sub2APIDatabaseSettings,
     user: User | None = None,
+    excluded_platforms: dict[int, str] | None = None,
 ) -> Sub2APIPrioritySyncRun:
-    items = build_priority_sync_plan(db)
+    items = build_priority_sync_plan(db, excluded_platforms=excluded_platforms)
     run = create_priority_sync_run(db, database=database, items=items, user=user)
     planned_items = [item for item in items if item["status"] == "planned"]
     if not planned_items:

@@ -357,6 +357,14 @@ export interface Sub2APIPrioritySyncItem {
   updated_accounts: number | null
   sql_log_id: number | null
   error_message: string | null
+  change_reason: string | null
+  matched_account_items: Array<Record<string, unknown>>
+  updated_account_ids: number[]
+  failed_account_ids: number[]
+  admin_api_method: string | null
+  admin_api_path: string | null
+  admin_api_payload: Record<string, unknown> | null
+  admin_api_response: Record<string, unknown> | null
 }
 
 export interface Sub2APIPrioritySyncRun {

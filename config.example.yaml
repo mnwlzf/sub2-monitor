@@ -2,9 +2,18 @@
 # Docker deploy path: /app/sub-monitor/config/config.yaml
 #
 # Keep app runtime settings in environment variables unless you need to
-# override them here. This file is primarily for Sub2API database access.
+# override them here.
 
 sub2api:
+  # Required for Priority sync and automatic schedulable pause/restore.
+  # The admin API key is generated in Sub2API admin settings.
+  admin_base_url: "https://your-sub2api.example.com"
+  admin_api_key: "admin-change-this-key"
+  auto_schedulable_enabled: false
+  auto_schedulable_failure_threshold: 3
+
+  # Optional PostgreSQL access. This is only used by database status checks
+  # and legacy recorded SQL tools, not by Priority sync.
   database:
     # This host is reachable from sub-monitor through app_sub2api-network.
     host: "sub2api-postgres"

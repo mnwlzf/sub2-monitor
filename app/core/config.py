@@ -60,6 +60,10 @@ class Sub2APIDatabaseSettings(BaseModel):
 
 class Sub2APISettings(BaseModel):
     database: Sub2APIDatabaseSettings = Field(default_factory=Sub2APIDatabaseSettings)
+    admin_base_url: str | None = None
+    admin_api_key: str | None = None
+    auto_schedulable_enabled: bool = False
+    auto_schedulable_failure_threshold: int = Field(default=3, ge=1, le=100)
 
 
 class Settings(BaseSettings):

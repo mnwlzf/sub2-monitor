@@ -1659,6 +1659,69 @@ body {
   overflow: hidden;
 }
 
+.priority-sync-detail {
+  display: grid;
+  gap: 12px;
+  padding: 12px 18px;
+  background: #f8fafc;
+}
+
+.priority-sync-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.priority-sync-detail-grid div,
+.priority-sync-account-list,
+.priority-sync-code-grid > div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.priority-sync-detail span,
+.priority-sync-account-list > span,
+.priority-sync-code-grid span {
+  color: #64748b;
+  font-size: 12px;
+}
+
+.priority-sync-detail strong {
+  overflow-wrap: anywhere;
+  color: #0f172a;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.priority-sync-account-tags {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.priority-sync-code-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.priority-sync-code-grid pre {
+  max-height: 180px;
+  margin: 0;
+  padding: 10px;
+  overflow: auto;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #334155;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .sql-log-toolbar {
   display: flex;
   align-items: center;

@@ -101,9 +101,11 @@ class MonitorScheduler:
             self._last_priority_sync_at = now
             try:
                 with SessionLocal() as db:
+                    sub2api_settings = get_settings().sub2api
                     await refresh_and_sync_sub2api_account_priorities(
                         db,
-                        database=get_settings().sub2api.database,
+                        database=sub2api_settings.database,
+                        sub2api_settings=sub2api_settings,
                     )
             except Exception:  # noqa: BLE001
                 logger.exception("scheduled sub2api account priority sync failed")

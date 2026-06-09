@@ -17,6 +17,8 @@ from app.models.all import (  # noqa: F401
     NotificationSetting,
     PlatformSnapshot,
     RelayPlatform,
+    Sub2APIMonitorFailureState,
+    Sub2APIMonitorSuspendedAccount,
     User,
 )
 from app.services.auth import bootstrap_first_user, delete_expired_sessions

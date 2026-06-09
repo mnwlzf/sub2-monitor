@@ -6,21 +6,28 @@ from sqlalchemy.orm import sessionmaker
 
 import app.models.all  # noqa: F401
 from app.api.sub2api import get_sql_log, list_sql_logs
-from app.core.config import Sub2APIDatabaseSettings
+from app.core.config import Sub2APIDatabaseSettings, Sub2APISettings
 from app.core.database import Base
 from app.core.security import encrypt_secret
 from app.models.monitor import PlatformAccountMonitor, PlatformGroupMonitor
 from app.models.platform import PlatformStatus, RelayPlatform
-from app.models.sub2api import Sub2APISQLLog
+from app.models.sub2api import (
+    Sub2APIMonitorFailureState,
+    Sub2APIMonitorSuspendedAccount,
+    Sub2APISQLLog,
+)
 from app.models.user import User
 from app.services.priority_sync import (
     PRIORITY_SYNC_PRIORITY_STEP,
-    PRIORITY_SYNC_SQL,
     build_priority_sync_plan,
     refresh_and_sync_sub2api_account_priorities,
     sync_sub2api_account_priorities,
 )
 from app.services.sub2api_database import create_sql_log, execute_recorded_sub2api_write
+from app.services.sub2api_schedulable import (
+    record_sub2api_monitor_failure,
+    record_sub2api_monitor_success,
+)
 
 
 def make_session():
@@ -413,18 +420,39 @@ def test_priority_sync_refresh_error_names_excluded_platform(monkeypatch) -> Non
         db.close()
 
 
-def test_priority_sync_sql_targets_sub2api_accounts_url_fields() -> None:
-    assert PRIORITY_SYNC_PRIORITY_STEP == 5
-    assert "UPDATE accounts" in PRIORITY_SYNC_SQL
-    assert "SET priority = %(priority)s" in PRIORITY_SYNC_SQL
-    assert "credentials->>'api_key'" not in PRIORITY_SYNC_SQL
-    assert "credentials->>'base_url'" in PRIORITY_SYNC_SQL
-    assert "extra->>'custom_base_url'" in PRIORITY_SYNC_SQL
-    assert "extra->>'custom_base_url_enabled'" in PRIORITY_SYNC_SQL
-
-
-def test_priority_sync_logs_failed_sql_when_target_database_is_unconfigured() -> None:
+def test_priority_sync_updates_priority_through_sub2api_admin_api(monkeypatch) -> None:
     db = make_session()
+    calls: list[tuple[list[int], dict[str, object]]] = []
+
+    class FakeAdminClient:
+        def __init__(self, settings):  # noqa: ANN001
+            self.settings = settings
+
+        async def list_accounts(self):
+            return [
+                {
+                    "id": 101,
+                    "name": "matched",
+                    "credentials": {"base_url": "https://relay.example.com/"},
+                    "extra": {},
+                },
+                {
+                    "id": 102,
+                    "name": "other",
+                    "credentials": {"base_url": "https://other.example.com"},
+                    "extra": {},
+                },
+            ]
+
+        async def bulk_update_accounts(self, account_ids, updates):  # noqa: ANN001
+            ids = list(account_ids)
+            calls.append((ids, dict(updates)))
+            return {"success": len(ids), "failed": 0, "success_ids": ids, "failed_ids": []}
+
+    monkeypatch.setattr(
+        "app.services.priority_sync.Sub2APIAdminClient",
+        FakeAdminClient,
+    )
     try:
         user = User(username="admin", password_hash="hash")
         platform = RelayPlatform(
@@ -461,41 +489,49 @@ def test_priority_sync_logs_failed_sql_when_target_database_is_unconfigured() ->
         db.commit()
         db.refresh(user)
 
-        run = sync_sub2api_account_priorities(
-            db,
-            database=Sub2APIDatabaseSettings(user="", password="", dbname="sub2api"),
-            user=user,
+        run = asyncio.run(
+            sync_sub2api_account_priorities(
+                db,
+                database=Sub2APIDatabaseSettings(user="", password="", dbname="sub2api"),
+                sub2api_settings=Sub2APISettings(
+                    admin_base_url="https://sub2api.example.com",
+                    admin_api_key="admin-key",
+                ),
+                user=user,
+            )
         )
 
-        assert run.status == "failed"
+        assert PRIORITY_SYNC_PRIORITY_STEP == 5
+        assert run.status == "succeeded"
         assert run.total_items == 1
-        assert run.failed_items == 1
+        assert run.succeeded_items == 1
         assert run.executed_by_username == "admin"
-        assert run.items[0]["status"] == "failed"
+        assert run.target_database == "Sub2API Admin API (https://sub2api.example.com)"
+        assert run.items[0]["status"] == "succeeded"
         assert run.items[0]["priority"] == 5
-        assert run.items[0]["error_message"] == "Sub2API database is not configured"
-
-        logs = db.scalars(select(Sub2APISQLLog)).all()
-        assert len(logs) == 1
-        assert logs[0].operation == "sync_account_priority"
-        assert logs[0].status == "failed"
-        assert logs[0].executed_by_username == "admin"
-        assert logs[0].sql_params_json is not None
-        log_params = json.loads(logs[0].sql_params_json)
-        assert log_params["base_url"] == "https://relay.example.com"
-        assert "api_key" not in log_params
+        assert run.items[0]["matched_accounts"] == 1
+        assert run.items[0]["updated_accounts"] == 1
+        assert run.items[0]["sql_log_id"] is None
+        assert "获得 Priority 5" in run.items[0]["change_reason"]
+        assert run.items[0]["admin_api_method"] == "POST"
+        assert run.items[0]["admin_api_path"] == "/api/v1/admin/accounts/bulk-update"
+        assert run.items[0]["admin_api_payload"] == {"account_ids": [101], "priority": 5}
+        assert run.items[0]["admin_api_response"]["success_ids"] == [101]
+        assert run.items[0]["matched_account_items"][0]["id"] == 101
+        assert run.items[0]["matched_account_items"][0]["priority_before"] is None
+        assert calls == [([101], {"priority": 5})]
+        assert db.scalars(select(Sub2APISQLLog)).all() == []
     finally:
         db.close()
 
 
-def test_priority_sync_rejects_non_sub2api_target_database() -> None:
+def test_priority_sync_fails_when_admin_api_is_unconfigured() -> None:
     db = make_session()
     try:
         platform = RelayPlatform(
-            name="Wrong DB Sync Target",
+            name="Sync Target",
             base_url="https://relay.example.com/",
             provider_type="fake",
-            api_key_encrypted=encrypt_secret("sk-wrong-db"),
             rate_cron="*/10 * * * *",
             balance_cron="*/10 * * * *",
             status=PlatformStatus.unknown,
@@ -525,20 +561,195 @@ def test_priority_sync_rejects_non_sub2api_target_database() -> None:
         )
         db.commit()
 
-        run = sync_sub2api_account_priorities(
-            db,
-            database=Sub2APIDatabaseSettings(
-                host="sub2api-postgres",
-                user="newapi",
-                password="secret",
-                dbname="newapi",
-            ),
+        run = asyncio.run(
+            sync_sub2api_account_priorities(
+                db,
+                database=Sub2APIDatabaseSettings(user="", password="", dbname="sub2api"),
+            )
         )
 
-        expected = "Sub2API account priority sync must target database 'sub2api', got 'newapi'"
+        expected = "Sub2API Admin API is not configured"
         assert run.status == "failed"
         assert run.error_message == expected
         assert run.items[0]["status"] == "failed"
         assert run.items[0]["error_message"] == expected
+        assert db.scalars(select(Sub2APISQLLog)).all() == []
+    finally:
+        db.close()
+
+
+def test_auto_schedulable_suspends_matching_schedulable_accounts(monkeypatch) -> None:
+    db = make_session()
+    calls: list[tuple[list[int], bool]] = []
+
+    class FakeAdminClient:
+        def __init__(self, settings):  # noqa: ANN001
+            self.settings = settings
+
+        async def list_accounts(self):
+            return [
+                {
+                    "id": 101,
+                    "name": "matched",
+                    "schedulable": True,
+                    "credentials": {"base_url": "https://relay.example.com/"},
+                },
+                {
+                    "id": 102,
+                    "name": "manual-off",
+                    "schedulable": False,
+                    "credentials": {"base_url": "https://relay.example.com"},
+                },
+                {
+                    "id": 103,
+                    "name": "other",
+                    "schedulable": True,
+                    "credentials": {"base_url": "https://other.example.com"},
+                },
+            ]
+
+        async def bulk_set_schedulable(self, account_ids, schedulable):  # noqa: ANN001
+            ids = list(account_ids)
+            calls.append((ids, schedulable))
+            return {"success": len(ids), "failed": 0, "success_ids": ids, "failed_ids": []}
+
+    monkeypatch.setattr(
+        "app.services.sub2api_schedulable.Sub2APIAdminClient",
+        FakeAdminClient,
+    )
+    settings = Sub2APISettings(
+        admin_base_url="https://sub2api.example.com",
+        admin_api_key="admin-key",
+        auto_schedulable_enabled=True,
+        auto_schedulable_failure_threshold=2,
+    )
+
+    try:
+        asyncio.run(
+            record_sub2api_monitor_failure(
+                db,
+                platform_id=7,
+                platform_name="Relay",
+                base_url="https://relay.example.com/",
+                error_message="first failure",
+                settings=settings,
+            )
+        )
+        assert calls == []
+
+        asyncio.run(
+            record_sub2api_monitor_failure(
+                db,
+                platform_id=7,
+                platform_name="Relay",
+                base_url="https://relay.example.com/",
+                error_message="second failure",
+                settings=settings,
+            )
+        )
+
+        assert calls == [([101], False)]
+        state = db.scalar(select(Sub2APIMonitorFailureState))
+        assert state is not None
+        assert state.consecutive_failures == 2
+        assert state.paused is True
+        suspended = db.scalars(select(Sub2APIMonitorSuspendedAccount)).all()
+        assert len(suspended) == 1
+        assert suspended[0].account_id == 101
+        assert suspended[0].account_name == "matched"
+        assert suspended[0].restored is False
+    finally:
+        db.close()
+
+
+def test_auto_schedulable_success_restores_monitor_suspended_accounts(monkeypatch) -> None:
+    db = make_session()
+    calls: list[tuple[list[int], bool]] = []
+
+    class FakeAdminClient:
+        def __init__(self, settings):  # noqa: ANN001
+            self.settings = settings
+
+        async def bulk_set_schedulable(self, account_ids, schedulable):  # noqa: ANN001
+            ids = list(account_ids)
+            calls.append((ids, schedulable))
+            return {"success": len(ids), "failed": 0, "success_ids": ids, "failed_ids": []}
+
+    monkeypatch.setattr(
+        "app.services.sub2api_schedulable.Sub2APIAdminClient",
+        FakeAdminClient,
+    )
+    settings = Sub2APISettings(
+        admin_base_url="https://sub2api.example.com/api/v1",
+        admin_api_key="admin-key",
+        auto_schedulable_enabled=True,
+        auto_schedulable_failure_threshold=2,
+    )
+    try:
+        db.add(
+            Sub2APIMonitorFailureState(
+                platform_id=7,
+                platform_name="Relay",
+                base_url="https://relay.example.com",
+                consecutive_failures=3,
+                last_error="failed",
+                paused=True,
+            )
+        )
+        db.add(
+            Sub2APIMonitorSuspendedAccount(
+                platform_id=7,
+                platform_name="Relay",
+                base_url="https://relay.example.com",
+                account_id=101,
+                account_name="matched",
+                restored=False,
+            )
+        )
+        db.add(
+            Sub2APIMonitorSuspendedAccount(
+                platform_id=8,
+                platform_name="Other",
+                base_url="https://other.example.com",
+                account_id=201,
+                account_name="other",
+                restored=False,
+            )
+        )
+        db.commit()
+
+        asyncio.run(
+            record_sub2api_monitor_success(
+                db,
+                platform_id=7,
+                platform_name="Relay",
+                base_url="https://relay.example.com/",
+                settings=settings,
+            )
+        )
+
+        assert calls == [([101], True)]
+        state = db.scalar(
+            select(Sub2APIMonitorFailureState).where(
+                Sub2APIMonitorFailureState.platform_id == 7,
+            )
+        )
+        assert state is not None
+        assert state.consecutive_failures == 0
+        assert state.paused is False
+        restored = db.scalar(
+            select(Sub2APIMonitorSuspendedAccount).where(
+                Sub2APIMonitorSuspendedAccount.account_id == 101,
+            )
+        )
+        assert restored is not None
+        assert restored.restored is True
+        untouched = db.scalar(
+            select(Sub2APIMonitorSuspendedAccount).where(
+                Sub2APIMonitorSuspendedAccount.account_id == 201,
+            )
+        )
+        assert untouched is not None
+        assert untouched.restored is False
     finally:
         db.close()

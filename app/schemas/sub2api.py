@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class Sub2APIDatabaseConfigResponse(BaseModel):
@@ -77,6 +77,14 @@ class Sub2APIPrioritySyncItem(BaseModel):
     updated_accounts: int | None
     sql_log_id: int | None
     error_message: str | None
+    change_reason: str | None = None
+    matched_account_items: list[dict] = Field(default_factory=list)
+    updated_account_ids: list[int] = Field(default_factory=list)
+    failed_account_ids: list[int] = Field(default_factory=list)
+    admin_api_method: str | None = None
+    admin_api_path: str | None = None
+    admin_api_payload: dict | None = None
+    admin_api_response: dict | None = None
 
 
 class Sub2APIPrioritySyncRunResponse(BaseModel):

@@ -14,7 +14,12 @@ from app.models.snapshot import (
     GroupRateSnapshot,
     PlatformSnapshot,
 )
-from app.models.sub2api import Sub2APIPrioritySyncRun, Sub2APISQLLog
+from app.models.sub2api import (
+    Sub2APIMonitorFailureState,
+    Sub2APIMonitorSuspendedAccount,
+    Sub2APIPrioritySyncRun,
+    Sub2APISQLLog,
+)
 from app.models.user import User
 
 __all__ = [
@@ -33,5 +38,7 @@ __all__ = [
     "RelayPlatform",
     "Sub2APIPrioritySyncRun",
     "Sub2APISQLLog",
+    "Sub2APIMonitorFailureState",
+    "Sub2APIMonitorSuspendedAccount",
     "User",
 ]

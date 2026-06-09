@@ -137,5 +137,6 @@ async def run_priority_sync(
     return await refresh_and_sync_sub2api_account_priorities(
         db,
         database=settings.sub2api.database,
+        sub2api_settings=settings.sub2api,
         user=user,
     )

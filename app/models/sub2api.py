@@ -3,7 +3,7 @@ from datetime import datetime
 import json
 from typing import Any
 
-from sqlalchemy import DateTime, Integer, String, Text
+from sqlalchemy import Boolean, DateTime, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.database import Base
@@ -60,3 +60,33 @@ class Sub2APIPrioritySyncRun(Base):
     @items.setter
     def items(self, value: list[dict[str, Any]]) -> None:
         self.items_json = json.dumps(value, ensure_ascii=False, default=str) if value else None
+
+
+class Sub2APIMonitorFailureState(Base):
+    __tablename__ = "sub2api_monitor_failure_states"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    platform_id: Mapped[int] = mapped_column(Integer, unique=True, index=True, nullable=False)
+    platform_name: Mapped[str | None] = mapped_column(String(80))
+    base_url: Mapped[str] = mapped_column(String(255), nullable=False)
+    consecutive_failures: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    last_error: Mapped[str | None] = mapped_column(Text)
+    paused: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
+class Sub2APIMonitorSuspendedAccount(Base):
+    __tablename__ = "sub2api_monitor_suspended_accounts"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    platform_id: Mapped[int] = mapped_column(Integer, index=True, nullable=False)
+    platform_name: Mapped[str | None] = mapped_column(String(80))
+    base_url: Mapped[str] = mapped_column(String(255), nullable=False)
+    account_id: Mapped[int] = mapped_column(Integer, index=True, nullable=False)
+    account_name: Mapped[str | None] = mapped_column(String(255))
+    restored: Mapped[bool] = mapped_column(Boolean, default=False, index=True, nullable=False)
+    pause_error: Mapped[str | None] = mapped_column(Text)
+    restore_error: Mapped[str | None] = mapped_column(Text)
+    paused_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+    restored_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

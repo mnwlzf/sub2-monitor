@@ -154,6 +154,56 @@
             class="sql-log-table priority-sync-table"
             :row-key="prioritySyncRowKey"
           >
+            <el-table-column type="expand" width="42">
+              <template #default="{ row }">
+                <div class="priority-sync-detail">
+                  <div class="priority-sync-detail-grid">
+                    <div>
+                      <span>变更原因</span>
+                      <strong>{{ row.change_reason || row.error_message || '-' }}</strong>
+                    </div>
+                    <div>
+                      <span>Admin API</span>
+                      <strong>{{ adminApiLabel(row) }}</strong>
+                    </div>
+                    <div>
+                      <span>成功账号</span>
+                      <strong>{{ accountIdList(row.updated_account_ids) }}</strong>
+                    </div>
+                    <div>
+                      <span>失败账号</span>
+                      <strong>{{ accountIdList(row.failed_account_ids) }}</strong>
+                    </div>
+                  </div>
+
+                  <div class="priority-sync-account-list">
+                    <span>匹配账号</span>
+                    <div v-if="row.matched_account_items.length" class="priority-sync-account-tags">
+                      <el-tag
+                        v-for="account in row.matched_account_items"
+                        :key="String(account.id)"
+                        effect="plain"
+                        size="small"
+                      >
+                        {{ accountLabel(account) }}
+                      </el-tag>
+                    </div>
+                    <strong v-else>-</strong>
+                  </div>
+
+                  <div class="priority-sync-code-grid">
+                    <div>
+                      <span>请求 Payload</span>
+                      <pre>{{ formatJson(row.admin_api_payload) }}</pre>
+                    </div>
+                    <div>
+                      <span>响应</span>
+                      <pre>{{ formatJson(row.admin_api_response) }}</pre>
+                    </div>
+                  </div>
+                </div>
+              </template>
+            </el-table-column>
             <el-table-column label="状态" width="92">
               <template #default="{ row }">
                 <el-tag :type="prioritySyncStatusTag(row.status)" effect="light" size="small">
@@ -208,7 +258,7 @@
                 <span class="sql-error-cell">{{ row.error_message || '-' }}</span>
               </template>
             </el-table-column>
-            <el-table-column align="right" label="SQL" width="86">
+            <el-table-column align="right" label="详情" width="86">
               <template #default="{ row }">
                 <el-button
                   :disabled="!row.sql_log_id"
@@ -216,7 +266,7 @@
                   type="primary"
                   @click="row.sql_log_id && openLog(row.sql_log_id)"
                 >
-                  详情
+                  SQL
                 </el-button>
               </template>
             </el-table-column>
@@ -565,6 +615,32 @@ function selectedGroupLabel(row: Sub2APIPrioritySyncItem) {
 
 function prioritySyncRowKey(row: Sub2APIPrioritySyncItem) {
   return `${row.platform_id}:${row.normalized_base_url}:${row.status}`
+}
+
+function adminApiLabel(row: Sub2APIPrioritySyncItem) {
+  if (!row.admin_api_method && !row.admin_api_path) {
+    return '-'
+  }
+  return `${row.admin_api_method || ''} ${row.admin_api_path || ''}`.trim()
+}
+
+function accountIdList(value: number[]) {
+  return value.length ? value.join(', ') : '-'
+}
+
+function accountLabel(account: Record<string, unknown>) {
+  const id = account.id ?? '-'
+  const name = account.name ? ` / ${String(account.name)}` : ''
+  const priorityBefore = account.priority_before ?? '-'
+  const schedulable = account.schedulable === true ? '可调度' : account.schedulable === false ? '不可调度' : '-'
+  return `#${id}${name}，原 Priority ${priorityBefore}，${schedulable}`
+}
+
+function formatJson(value: Record<string, unknown> | null) {
+  if (!value) {
+    return '-'
+  }
+  return JSON.stringify(value, null, 2)
 }
 
 function formatMultiplier(value: number | null) {

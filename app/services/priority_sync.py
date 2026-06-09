@@ -4,7 +4,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
-from app.core.config import Sub2APIDatabaseSettings
+from app.core.config import Sub2APIDatabaseSettings, Sub2APISettings
 from app.core.security import utcnow
 from app.models.monitor import (
     PlatformAccountMonitor,
@@ -15,40 +15,20 @@ from app.models.platform import RelayPlatform
 from app.models.sub2api import Sub2APIPrioritySyncRun
 from app.models.user import User
 from app.services.monitoring import run_platform_monitor
-from app.services.sub2api_database import (
-    create_sql_log,
-    target_database_label,
-    update_sql_log_result,
+from app.services.sub2api_admin import Sub2APIAdminClient, Sub2APIAdminSettings
+from app.services.sub2api_database import target_database_label
+from app.services.sub2api_schedulable import (
+    account_base_urls,
+    account_id,
+    account_name,
+    bulk_success_ids,
+    matches_platform_base_url,
 )
 
 logger = logging.getLogger(__name__)
 
 PRIORITY_SYNC_OPERATION = "sync_account_priority"
-PRIORITY_SYNC_TARGET_DATABASE = "sub2api"
 PRIORITY_SYNC_PRIORITY_STEP = 5
-PRIORITY_SYNC_SQL = """
-WITH matched AS (
-    SELECT id
-    FROM accounts
-    WHERE deleted_at IS NULL
-      AND (
-        trim(trailing '/' FROM coalesce(credentials->>'base_url', '')) = trim(trailing '/' FROM %(base_url)s)
-        OR (
-          coalesce(extra->>'custom_base_url_enabled', 'false') = 'true'
-          AND trim(trailing '/' FROM coalesce(extra->>'custom_base_url', '')) = trim(trailing '/' FROM %(base_url)s)
-        )
-      )
-),
-updated AS (
-    UPDATE accounts
-    SET priority = %(priority)s
-    WHERE id IN (SELECT id FROM matched)
-    RETURNING id
-)
-SELECT
-    (SELECT count(*) FROM matched) AS matched_accounts,
-    (SELECT count(*) FROM updated) AS updated_accounts
-"""
 
 
 def platform_label(item: dict[str, Any]) -> str:
@@ -62,20 +42,6 @@ def platform_label(item: dict[str, Any]) -> str:
 def refresh_error_detail(item: dict[str, Any]) -> str:
     error = str(item.get("error_message") or "未提供错误详情").strip()
     return f"{platform_label(item)}：{error}"
-
-
-def priority_sync_database_error(database: Sub2APIDatabaseSettings) -> str | None:
-    configured_dbname = (database.dbname or "").strip()
-    if database.dsn:
-        from urllib.parse import urlsplit
-
-        configured_dbname = urlsplit(database.dsn).path.strip("/") or configured_dbname
-    if configured_dbname and configured_dbname != PRIORITY_SYNC_TARGET_DATABASE:
-        return (
-            "Sub2API account priority sync must target database "
-            f"{PRIORITY_SYNC_TARGET_DATABASE!r}, got {configured_dbname!r}"
-        )
-    return None
 
 
 async def refresh_enabled_platforms_for_priority_sync(db: Session) -> list[dict[str, Any]]:
@@ -130,16 +96,42 @@ async def refresh_and_sync_sub2api_account_priorities(
     db: Session,
     *,
     database: Sub2APIDatabaseSettings,
+    sub2api_settings: Sub2APISettings | None = None,
     user: User | None = None,
 ) -> Sub2APIPrioritySyncRun:
     refresh_results = await refresh_enabled_platforms_for_priority_sync(db)
+    if sub2api_settings is not None:
+        from app.services.sub2api_schedulable import (
+            record_sub2api_monitor_failure,
+            record_sub2api_monitor_success,
+        )
+
+        for item in refresh_results:
+            if item["status"] == "failed":
+                await record_sub2api_monitor_failure(
+                    db,
+                    platform_id=int(item["platform_id"]),
+                    platform_name=item.get("platform_name"),
+                    base_url=str(item.get("base_url") or ""),
+                    error_message=refresh_error_detail(item),
+                    settings=sub2api_settings,
+                )
+            else:
+                await record_sub2api_monitor_success(
+                    db,
+                    platform_id=int(item["platform_id"]),
+                    platform_name=item.get("platform_name"),
+                    base_url=str(item.get("base_url") or ""),
+                    settings=sub2api_settings,
+                )
     failed_refreshes = [item for item in refresh_results if item["status"] == "failed"]
     excluded_platforms = {
         int(item["platform_id"]): refresh_error_detail(item) for item in failed_refreshes
     }
-    run = sync_sub2api_account_priorities(
+    run = await sync_sub2api_account_priorities(
         db,
         database=database,
+        sub2api_settings=sub2api_settings,
         user=user,
         excluded_platforms=excluded_platforms,
     )
@@ -160,13 +152,6 @@ async def refresh_and_sync_sub2api_account_priorities(
 
 def normalize_base_url(value: str | None) -> str:
     return (value or "").strip().rstrip("/")
-
-
-def priority_sql_params(item: dict[str, Any]) -> dict[str, Any]:
-    return {
-        "base_url": item["normalized_base_url"],
-        "priority": item["priority"],
-    }
 
 
 def load_priority_sync_platforms(db: Session) -> list[RelayPlatform]:
@@ -392,12 +377,12 @@ def build_priority_sync_plan(
 def create_priority_sync_run(
     db: Session,
     *,
-    database: Sub2APIDatabaseSettings,
+    target: str,
     items: list[dict[str, Any]],
     user: User | None = None,
 ) -> Sub2APIPrioritySyncRun:
     run = Sub2APIPrioritySyncRun(
-        target_database=target_database_label(database),
+        target_database=target,
         status="pending",
         total_items=len(items),
         skipped_items=sum(1 for item in items if item["status"] == "skipped"),
@@ -435,53 +420,52 @@ def finish_priority_sync_run(
     return run
 
 
-def failed_sql_logs_for_items(
-    db: Session,
-    *,
-    database: Sub2APIDatabaseSettings,
-    items: list[dict[str, Any]],
-    error_message: str,
-    user: User | None = None,
-) -> None:
+def fail_planned_priority_items(items: list[dict[str, Any]], error_message: str) -> None:
     for item in items:
         if item["status"] != "planned":
             continue
-        log = create_sql_log(
-            db,
-            operation=PRIORITY_SYNC_OPERATION,
-            database=database,
-            sql_text=PRIORITY_SYNC_SQL,
-            sql_params=priority_sql_params(item),
-            user=user,
-        )
-        update_sql_log_result(db, log, status="failed", error_message=error_message)
-        item["sql_log_id"] = log.id
         item["status"] = "failed"
         item["error_message"] = error_message
+        item["change_reason"] = error_message
 
 
-def sync_sub2api_account_priorities(
+def priority_sync_target_label(
+    *,
+    database: Sub2APIDatabaseSettings,
+    sub2api_settings: Sub2APISettings | None,
+) -> str:
+    base_url = (sub2api_settings.admin_base_url if sub2api_settings else None) or ""
+    if base_url.strip():
+        return f"Sub2API Admin API ({base_url.strip().rstrip('/')})"
+    return target_database_label(database)
+
+
+async def sync_sub2api_account_priorities(
     db: Session,
     *,
     database: Sub2APIDatabaseSettings,
+    sub2api_settings: Sub2APISettings | None = None,
     user: User | None = None,
     excluded_platforms: dict[int, str] | None = None,
 ) -> Sub2APIPrioritySyncRun:
     items = build_priority_sync_plan(db, excluded_platforms=excluded_platforms)
-    run = create_priority_sync_run(db, database=database, items=items, user=user)
+    run = create_priority_sync_run(
+        db,
+        target=priority_sync_target_label(database=database, sub2api_settings=sub2api_settings),
+        items=items,
+        user=user,
+    )
     planned_items = [item for item in items if item["status"] == "planned"]
     if not planned_items:
         return finish_priority_sync_run(db, run, items=items, status="skipped")
 
-    if not database.is_configured:
-        error_message = "Sub2API database is not configured"
-        failed_sql_logs_for_items(
-            db,
-            database=database,
-            items=items,
-            error_message=error_message,
-            user=user,
-        )
+    admin_settings = Sub2APIAdminSettings(
+        base_url=sub2api_settings.admin_base_url if sub2api_settings else None,
+        api_key=sub2api_settings.admin_api_key if sub2api_settings else None,
+    )
+    if not admin_settings.is_configured:
+        error_message = "Sub2API Admin API is not configured"
+        fail_planned_priority_items(items, error_message)
         return finish_priority_sync_run(
             db,
             run,
@@ -490,94 +474,12 @@ def sync_sub2api_account_priorities(
             error_message=error_message,
         )
 
-    database_error = priority_sync_database_error(database)
-    if database_error:
-        failed_sql_logs_for_items(
-            db,
-            database=database,
-            items=items,
-            error_message=database_error,
-            user=user,
-        )
-        return finish_priority_sync_run(
-            db,
-            run,
-            items=items,
-            status="failed",
-            error_message=database_error,
-        )
-
+    client = Sub2APIAdminClient(admin_settings)
     try:
-        import psycopg
-    except ImportError:
-        error_message = "psycopg is not installed"
-        failed_sql_logs_for_items(
-            db,
-            database=database,
-            items=items,
-            error_message=error_message,
-            user=user,
-        )
-        return finish_priority_sync_run(
-            db,
-            run,
-            items=items,
-            status="failed",
-            error_message=error_message,
-        )
-
-    try:
-        with psycopg.connect(
-            database.postgresql_dsn(),
-            connect_timeout=database.connect_timeout_seconds,
-        ) as conn:
-            for item in planned_items:
-                log = create_sql_log(
-                    db,
-                    operation=PRIORITY_SYNC_OPERATION,
-                    database=database,
-                    sql_text=PRIORITY_SYNC_SQL,
-                    sql_params=priority_sql_params(item),
-                    user=user,
-                )
-                item["sql_log_id"] = log.id
-                try:
-                    with conn.cursor() as cursor:
-                        cursor.execute(PRIORITY_SYNC_SQL, priority_sql_params(item))
-                        matched_accounts, updated_accounts = cursor.fetchone()
-                    conn.commit()
-                except Exception as exc:  # noqa: BLE001
-                    conn.rollback()
-                    error = str(exc)
-                    item["status"] = "failed"
-                    item["error_message"] = error
-                    update_sql_log_result(db, log, status="failed", error_message=error)
-                    logger.exception(
-                        "sub2api priority sync item failed run_id=%s platform_id=%s base_url=%s",
-                        run.id,
-                        item["platform_id"],
-                        item["normalized_base_url"],
-                    )
-                    continue
-
-                item["status"] = "succeeded"
-                item["matched_accounts"] = int(matched_accounts or 0)
-                item["updated_accounts"] = int(updated_accounts or 0)
-                update_sql_log_result(
-                    db,
-                    log,
-                    status="succeeded",
-                    affected_rows=item["updated_accounts"],
-                )
+        accounts = await client.list_accounts()
     except Exception as exc:  # noqa: BLE001
         error_message = str(exc)
-        failed_sql_logs_for_items(
-            db,
-            database=database,
-            items=items,
-            error_message=error_message,
-            user=user,
-        )
+        fail_planned_priority_items(items, error_message)
         return finish_priority_sync_run(
             db,
             run,
@@ -585,8 +487,97 @@ def sync_sub2api_account_priorities(
             status="failed",
             error_message=error_message,
         )
+
+    for item in planned_items:
+        item["change_reason"] = priority_change_reason(item)
+        item["admin_api_method"] = "POST"
+        item["admin_api_path"] = "/api/v1/admin/accounts/bulk-update"
+        matching_accounts = [
+            sub2api_account_summary(account, item["normalized_base_url"])
+            for account in accounts
+            if matches_platform_base_url(account, item["normalized_base_url"])
+            and account_id(account) is not None
+        ]
+        item["matched_account_items"] = matching_accounts
+        target_ids = [
+            int(account["id"])
+            for account in matching_accounts
+            if isinstance(account.get("id"), int)
+        ]
+        item["matched_accounts"] = len(target_ids)
+        item["admin_api_payload"] = {"account_ids": target_ids, "priority": item["priority"]}
+        if not target_ids:
+            item["status"] = "succeeded"
+            item["updated_accounts"] = 0
+            item["updated_account_ids"] = []
+            item["failed_account_ids"] = []
+            item["admin_api_response"] = None
+            continue
+        try:
+            result = await client.bulk_update_accounts(
+                target_ids,
+                {"priority": item["priority"]},
+            )
+        except Exception as exc:  # noqa: BLE001
+            error = str(exc)
+            item["status"] = "failed"
+            item["error_message"] = error
+            item["admin_api_response"] = {"error": error}
+            item["updated_account_ids"] = []
+            item["failed_account_ids"] = target_ids
+            logger.exception(
+                "sub2api priority sync item failed run_id=%s platform_id=%s base_url=%s",
+                run.id,
+                item["platform_id"],
+                item["normalized_base_url"],
+            )
+            continue
+
+        success_ids = bulk_success_ids(result, target_ids)
+        failed_ids = [account_id_value for account_id_value in target_ids if account_id_value not in success_ids]
+        item["updated_accounts"] = len(success_ids)
+        item["updated_account_ids"] = sorted(success_ids)
+        item["failed_account_ids"] = failed_ids
+        item["admin_api_response"] = result
+        if int(result.get("failed") or 0) > 0:
+            item["status"] = "failed" if not success_ids else "succeeded"
+            item["error_message"] = (
+                "Sub2API Admin API bulk-update partially failed"
+                if success_ids
+                else "Sub2API Admin API bulk-update failed"
+            )
+            continue
+        item["status"] = "succeeded"
 
     status = "succeeded"
     if any(item["status"] == "failed" for item in items):
         status = "failed" if not any(item["status"] == "succeeded" for item in items) else "partial"
     return finish_priority_sync_run(db, run, items=items, status=status)
+
+
+def priority_change_reason(item: dict[str, Any]) -> str:
+    group = item.get("selected_group")
+    group_label = ""
+    if isinstance(group, dict):
+        group_name = str(group.get("name") or group.get("external_group_id") or "").strip()
+        effective_rate = group.get("effective_rate_multiplier")
+        if group_name:
+            group_label = f"，最低有效倍率分组：{group_name}（{effective_rate}）"
+    return (
+        f"按启用账号绑定分组的有效倍率排序，平台 {item['platform_name']} "
+        f"获得 Priority {item['priority']}{group_label}"
+    )
+
+
+def sub2api_account_summary(account: dict[str, Any], matched_base_url: str) -> dict[str, Any]:
+    return {
+        "id": account_id(account),
+        "name": account_name(account),
+        "platform": account.get("platform"),
+        "type": account.get("type"),
+        "status": account.get("status"),
+        "schedulable": account.get("schedulable"),
+        "priority_before": account.get("priority"),
+        "matched_base_url": matched_base_url,
+        "account_base_urls": sorted(account_base_urls(account)),
+    }

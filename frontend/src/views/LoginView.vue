@@ -7,7 +7,21 @@
           <span>Sub2 Monitor</span>
         </div>
         <h1>中转平台监控</h1>
-        <p>登录后查看为 sub2api 提供密钥的平台服务数据。</p>
+        <p>集中查看平台余额、账号消耗、分组倍率、渠道价格差异和 Sub2API Priority 同步状态。</p>
+        <div class="login-signal-grid">
+          <div>
+            <span>成本</span>
+            <strong>余额 / 消耗</strong>
+          </div>
+          <div>
+            <span>价格</span>
+            <strong>分组 / 渠道倍率</strong>
+          </div>
+          <div>
+            <span>风险</span>
+            <strong>异常 / 低余额</strong>
+          </div>
+        </div>
       </div>
 
       <el-form ref="formRef" :model="form" :rules="rules" class="login-form" @submit.prevent="submit">
@@ -78,4 +92,3 @@ async function submit() {
   }
 }
 </script>
-

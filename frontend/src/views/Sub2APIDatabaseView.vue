@@ -10,6 +10,14 @@
         </el-button>
       </section>
 
+    <section class="database-command-strip">
+      <article v-for="item in databaseSummaryCards" :key="item.key" :class="['database-command-card', item.tone]">
+        <span>{{ item.label }}</span>
+        <strong>{{ item.value }}</strong>
+        <em>{{ item.detail }}</em>
+      </article>
+    </section>
+
     <section class="database-status-grid">
       <article class="database-status-panel">
         <div class="database-panel-title">
@@ -116,7 +124,7 @@
       </div>
 
       <div class="priority-sync-body">
-        <div class="database-kv-grid priority-sync-summary">
+        <div class="priority-sync-run-summary">
           <div>
             <span>最近状态</span>
             <strong>{{ prioritySyncRun ? prioritySyncStatusText(prioritySyncRun.status) : '-' }}</strong>
@@ -338,6 +346,46 @@ const probeTitle = computed(() => {
   }
   return status.value.probe.ok ? '只读探测通过' : '只读探测失败'
 })
+const prioritySyncFailedAccounts = computed(() => {
+  return prioritySyncRun.value?.items.reduce((sum, item) => sum + item.failed_account_ids.length, 0) ?? 0
+})
+const prioritySyncSuccessRate = computed(() => {
+  const run = prioritySyncRun.value
+  if (!run || !run.matched_accounts) {
+    return '-'
+  }
+  return `${Math.round(((run.updated_accounts ?? 0) / run.matched_accounts) * 100)}%`
+})
+const databaseSummaryCards = computed(() => [
+  {
+    key: 'connection',
+    label: '连接状态',
+    value: statusLabel.value,
+    detail: status.value?.config.configured ? `${status.value.config.host ?? '-'}:${status.value.config.port ?? '-'}` : '请先配置数据库',
+    tone: statusTagType.value === 'success' ? 'ok' : statusTagType.value === 'danger' ? 'bad' : 'warn',
+  },
+  {
+    key: 'sync',
+    label: '最近同步',
+    value: prioritySyncRun.value ? prioritySyncStatusText(prioritySyncRun.value.status) : '-',
+    detail: formatTime(prioritySyncRun.value?.completed_at ?? null),
+    tone: prioritySyncRun.value?.status === 'succeeded' ? 'ok' : prioritySyncRun.value?.status === 'failed' ? 'bad' : 'warn',
+  },
+  {
+    key: 'match',
+    label: '匹配 / 更新',
+    value: `${prioritySyncRun.value?.matched_accounts ?? '-'} / ${prioritySyncRun.value?.updated_accounts ?? '-'}`,
+    detail: `成功率 ${prioritySyncSuccessRate.value}`,
+    tone: prioritySyncRun.value?.status === 'partial' ? 'warn' : 'neutral',
+  },
+  {
+    key: 'failed',
+    label: '失败账号',
+    value: String(prioritySyncFailedAccounts.value),
+    detail: `计划项 ${prioritySyncRun.value?.total_items ?? '-'}`,
+    tone: prioritySyncFailedAccounts.value > 0 ? 'bad' : 'ok',
+  },
+])
 
 async function loadStatus() {
   statusLoading.value = true

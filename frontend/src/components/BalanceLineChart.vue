@@ -1,5 +1,10 @@
 <template>
-  <div ref="chartEl" class="balance-line-chart" />
+  <div class="chart-shell">
+    <div ref="chartEl" class="balance-line-chart" />
+    <div v-if="sampledPoints.length === 0" class="chart-empty-state">
+      暂无余额采样点
+    </div>
+  </div>
 </template>
 
 <script setup lang="ts">

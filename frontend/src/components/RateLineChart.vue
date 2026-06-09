@@ -1,5 +1,10 @@
 <template>
-  <div ref="chartEl" class="rate-line-chart" />
+  <div class="chart-shell">
+    <div ref="chartEl" class="rate-line-chart" />
+    <div v-if="chartSeries.every((row) => row.points.length === 0)" class="chart-empty-state">
+      暂无倍率采样点
+    </div>
+  </div>
 </template>
 
 <script setup lang="ts">

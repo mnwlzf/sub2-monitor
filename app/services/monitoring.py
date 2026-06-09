@@ -182,6 +182,24 @@ def dedupe_errors(errors: list[str | None]) -> list[str]:
     return deduped
 
 
+def configure_platform_proxies(platform: RelayPlatform) -> list[str]:
+    proxy_urls = load_platform_proxy_urls(get_settings().sub2api.database, platform.base_url)
+    setattr(platform, "sub2api_proxy_url", proxy_urls[0] if proxy_urls else None)
+    enabled_account_index = 0
+    for account in platform.account_monitors:
+        if not account.enabled:
+            continue
+        proxy_url = (
+            proxy_urls[enabled_account_index % len(proxy_urls)]
+            if proxy_urls
+            else None
+        )
+        enabled_account_index += 1
+        setattr(account, "sub2api_proxy_url", proxy_url)
+        account.last_proxy_url = masked_proxy_url(proxy_url)
+    return proxy_urls
+
+
 async def run_platform_balance_monitor(db: Session, platform_id: int) -> RelayPlatform:
     return await retry_platform_monitor(db, platform_id, _run_platform_balance_monitor_once)
 
@@ -203,23 +221,10 @@ async def _run_platform_balance_monitor_once(db: Session, platform_id: int) -> R
     )
 
     previous_newapi_login_site_url: str | None = None
-    sub2api_proxy_urls = (
-        load_platform_proxy_urls(get_settings().sub2api.database, platform.base_url)
-        if platform.provider_type == "newapi" and platform.site_strategy == "sub2api"
-        else []
-    )
-    enabled_account_index = 0
+    configure_platform_proxies(platform)
     for account in platform.account_monitors:
         if not account.enabled:
             continue
-        proxy_url = (
-            sub2api_proxy_urls[enabled_account_index % len(sub2api_proxy_urls)]
-            if sub2api_proxy_urls
-            else None
-        )
-        enabled_account_index += 1
-        setattr(account, "sub2api_proxy_url", proxy_url)
-        account.last_proxy_url = masked_proxy_url(proxy_url)
         newapi_login_site_url = newapi_account_login_site_url(strategy, platform, account)
         if (
             previous_newapi_login_site_url is not None
@@ -375,6 +380,7 @@ async def run_platform_rate_monitor(db: Session, platform_id: int) -> RelayPlatf
 
 async def _run_platform_rate_monitor_once(db: Session, platform_id: int) -> RelayPlatform:
     platform = load_monitor_platform(db, platform_id)
+    configure_platform_proxies(platform)
 
     strategy = provider_registry.get(platform.provider_type)
     errors: list[str] = []

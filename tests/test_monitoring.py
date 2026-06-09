@@ -1104,7 +1104,7 @@ def test_newapi_unified_monitor_collects_balances_and_rates_once(monkeypatch) ->
         db.close()
 
 
-def test_sub2api_account_monitor_persists_last_proxy_url(monkeypatch) -> None:
+def test_newapi_account_monitor_persists_last_proxy_url_for_any_site_strategy(monkeypatch) -> None:
     provider = FakeNewApiUnifiedProvider()
     monkeypatch.setitem(provider_registry._strategies, "newapi", provider)
     monkeypatch.setattr(
@@ -1117,10 +1117,10 @@ def test_sub2api_account_monitor_persists_last_proxy_url(monkeypatch) -> None:
     db = make_session()
     try:
         platform = RelayPlatform(
-            name="Sub2API Proxy Debug",
+            name="Yunjin Proxy Debug",
             base_url="https://sub2api.example.com",
             provider_type="newapi",
-            site_strategy="sub2api",
+            site_strategy="yunjin",
             rate_cron="*/10 * * * *",
             balance_cron="*/10 * * * *",
             status=PlatformStatus.unknown,

@@ -28,6 +28,16 @@ def account_proxy_kwargs(account: PlatformAccountMonitor | None) -> dict[str, st
     return {"proxy": proxy_url} if proxy_url else {}
 
 
+def platform_proxy_url(platform: RelayPlatform | None) -> str | None:
+    value = getattr(platform, "sub2api_proxy_url", None)
+    return str(value).strip() if value else None
+
+
+def platform_proxy_kwargs(platform: RelayPlatform | None) -> dict[str, str]:
+    proxy_url = platform_proxy_url(platform)
+    return {"proxy": proxy_url} if proxy_url else {}
+
+
 @dataclass(frozen=True)
 class AccountBalanceResult:
     balance: float | None = None
@@ -136,7 +146,8 @@ class ProviderStrategy(ABC):
     ) -> tuple[int, Any, int]:
         base_url = platform.base_url.rstrip("/")
         url = f"{base_url}/{path.lstrip('/')}"
-        proxy_kwargs = {"proxy": proxy_url} if proxy_url else {}
+        resolved_proxy_url = proxy_url or platform_proxy_url(platform)
+        proxy_kwargs = {"proxy": resolved_proxy_url} if resolved_proxy_url else {}
         async with httpx.AsyncClient(timeout=self.timeout_seconds, **proxy_kwargs) as client:
             response = await client.get(url, headers=self.auth_headers(platform))
         try:
@@ -425,6 +436,7 @@ class GenericNewApiSiteStrategy(NewApiSiteStrategy):
         async with httpx.AsyncClient(
             base_url=self.site_url(platform),
             headers=headers,
+            **platform_proxy_kwargs(platform),
             timeout=provider.timeout_seconds,
         ) as client:
             response, pricing_endpoint = await self.get_first_available(
@@ -591,6 +603,7 @@ class GenericNewApiSiteStrategy(NewApiSiteStrategy):
                 "Referer": f"{site_url}login",
                 **headers,
             },
+            **platform_proxy_kwargs(platform),
             timeout=provider.timeout_seconds,
         ) as client:
             response = await client.get(self.GROUPS_ENDPOINT)
@@ -1434,6 +1447,7 @@ class NewApiStrategy(ProviderStrategy):
         async with httpx.AsyncClient(
             base_url=self.site_url(platform),
             headers=headers,
+            **platform_proxy_kwargs(platform),
             timeout=self.timeout_seconds,
         ) as client:
             channels_response = await client.get(self.RATIO_SYNC_CHANNELS_ENDPOINT)
@@ -1585,7 +1599,8 @@ class NewApiStrategy(ProviderStrategy):
         base_url = platform.base_url.rstrip("/")
         url = f"{base_url}/{path.lstrip('/')}"
         headers = await self.resolve_management_headers(platform)
-        proxy_kwargs = {"proxy": proxy_url} if proxy_url else {}
+        resolved_proxy_url = proxy_url or platform_proxy_url(platform)
+        proxy_kwargs = {"proxy": resolved_proxy_url} if resolved_proxy_url else {}
         async with httpx.AsyncClient(timeout=self.timeout_seconds, **proxy_kwargs) as client:
             response = await client.get(url, headers=headers)
         try:
@@ -2093,6 +2108,7 @@ class NewApiStrategy(ProviderStrategy):
         async with httpx.AsyncClient(
             base_url=self.site_url(platform),
             headers=headers,
+            **platform_proxy_kwargs(platform),
             timeout=self.timeout_seconds,
         ) as client:
             try:
@@ -2363,6 +2379,7 @@ class NewApiStrategy(ProviderStrategy):
         return httpx.AsyncClient(
             base_url=self.site_url(platform),
             headers=self.management_headers(platform),
+            **platform_proxy_kwargs(platform),
             timeout=self.timeout_seconds,
         )
 

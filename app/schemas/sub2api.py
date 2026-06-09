@@ -81,6 +81,7 @@ class Sub2APIPrioritySyncItem(BaseModel):
     matched_account_items: list[dict] = Field(default_factory=list)
     updated_account_ids: list[int] = Field(default_factory=list)
     failed_account_ids: list[int] = Field(default_factory=list)
+    account_lookup_source: str | None = None
     admin_api_method: str | None = None
     admin_api_path: str | None = None
     admin_api_payload: dict | None = None

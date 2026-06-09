@@ -29,6 +29,31 @@ logger = logging.getLogger(__name__)
 
 PRIORITY_SYNC_OPERATION = "sync_account_priority"
 PRIORITY_SYNC_PRIORITY_STEP = 5
+PRIORITY_SYNC_ACCOUNT_LOOKUP_SQL = """
+SELECT
+    id,
+    name,
+    platform,
+    type,
+    status,
+    schedulable,
+    priority,
+    CASE
+        WHEN trim(trailing '/' FROM coalesce(credentials->>'base_url', '')) = trim(trailing '/' FROM %(base_url)s)
+            THEN trim(trailing '/' FROM coalesce(credentials->>'base_url', ''))
+        ELSE trim(trailing '/' FROM coalesce(extra->>'custom_base_url', ''))
+    END AS matched_base_url
+FROM accounts
+WHERE deleted_at IS NULL
+  AND (
+    trim(trailing '/' FROM coalesce(credentials->>'base_url', '')) = trim(trailing '/' FROM %(base_url)s)
+    OR (
+      coalesce(extra->>'custom_base_url_enabled', 'false') = 'true'
+      AND trim(trailing '/' FROM coalesce(extra->>'custom_base_url', '')) = trim(trailing '/' FROM %(base_url)s)
+    )
+  )
+ORDER BY id ASC
+"""
 
 
 def platform_label(item: dict[str, Any]) -> str:
@@ -440,6 +465,44 @@ def priority_sync_target_label(
     return target_database_label(database)
 
 
+def load_priority_sync_target_accounts(
+    database: Sub2APIDatabaseSettings,
+    normalized_base_url: str,
+) -> list[dict[str, Any]]:
+    if not database.is_configured:
+        raise RuntimeError("Sub2API database is not configured; cannot resolve account IDs")
+
+    try:
+        import psycopg
+    except ImportError as exc:
+        raise RuntimeError("psycopg is not installed") from exc
+
+    with psycopg.connect(
+        database.postgresql_dsn(),
+        connect_timeout=database.connect_timeout_seconds,
+    ) as conn:
+        conn.read_only = True
+        with conn.cursor() as cursor:
+            cursor.execute(PRIORITY_SYNC_ACCOUNT_LOOKUP_SQL, {"base_url": normalized_base_url})
+            rows = cursor.fetchall()
+
+    return [
+        {
+            "id": int(row[0]),
+            "name": row[1],
+            "platform": row[2],
+            "type": row[3],
+            "status": row[4],
+            "schedulable": row[5],
+            "priority_before": row[6],
+            "matched_base_url": normalize_base_url(row[7]),
+            "account_base_urls": [normalize_base_url(row[7])] if row[7] else [],
+            "lookup_source": "database",
+        }
+        for row in rows
+    ]
+
+
 async def sync_sub2api_account_priorities(
     db: Session,
     *,
@@ -475,29 +538,44 @@ async def sync_sub2api_account_priorities(
         )
 
     client = Sub2APIAdminClient(admin_settings)
-    try:
-        accounts = await client.list_accounts()
-    except Exception as exc:  # noqa: BLE001
-        error_message = str(exc)
-        fail_planned_priority_items(items, error_message)
-        return finish_priority_sync_run(
-            db,
-            run,
-            items=items,
-            status="failed",
-            error_message=error_message,
-        )
+    admin_accounts: list[dict[str, Any]] | None = None
 
     for item in planned_items:
         item["change_reason"] = priority_change_reason(item)
         item["admin_api_method"] = "POST"
         item["admin_api_path"] = "/api/v1/admin/accounts/bulk-update"
-        matching_accounts = [
-            sub2api_account_summary(account, item["normalized_base_url"])
-            for account in accounts
-            if matches_platform_base_url(account, item["normalized_base_url"])
-            and account_id(account) is not None
-        ]
+        item["account_lookup_source"] = "database"
+        try:
+            matching_accounts = load_priority_sync_target_accounts(
+                database,
+                item["normalized_base_url"],
+            )
+        except Exception as exc:  # noqa: BLE001
+            if admin_accounts is None:
+                try:
+                    admin_accounts = await client.list_accounts()
+                except Exception:
+                    admin_accounts = None
+            if admin_accounts is None:
+                error = str(exc)
+                item["status"] = "failed"
+                item["error_message"] = error
+                item["change_reason"] = f"账号 ID 查询失败：{error}"
+                item["matched_account_items"] = []
+                item["matched_accounts"] = 0
+                item["updated_accounts"] = 0
+                item["updated_account_ids"] = []
+                item["failed_account_ids"] = []
+                item["admin_api_payload"] = None
+                item["admin_api_response"] = None
+                continue
+            item["account_lookup_source"] = "admin_api_list_fallback"
+            matching_accounts = [
+                sub2api_account_summary(account, item["normalized_base_url"])
+                for account in admin_accounts
+                if matches_platform_base_url(account, item["normalized_base_url"])
+                and account_id(account) is not None
+            ]
         item["matched_account_items"] = matching_accounts
         target_ids = [
             int(account["id"])

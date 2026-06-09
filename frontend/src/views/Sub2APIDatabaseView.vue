@@ -167,6 +167,10 @@
                       <strong>{{ adminApiLabel(row) }}</strong>
                     </div>
                     <div>
+                      <span>账号 ID 来源</span>
+                      <strong>{{ accountLookupSourceLabel(row.account_lookup_source) }}</strong>
+                    </div>
+                    <div>
                       <span>成功账号</span>
                       <strong>{{ accountIdList(row.updated_account_ids) }}</strong>
                     </div>
@@ -622,6 +626,13 @@ function adminApiLabel(row: Sub2APIPrioritySyncItem) {
     return '-'
   }
   return `${row.admin_api_method || ''} ${row.admin_api_path || ''}`.trim()
+}
+
+function accountLookupSourceLabel(source: string | null) {
+  return {
+    database: 'Sub2API PostgreSQL',
+    admin_api_list_fallback: 'Admin API 列表回退',
+  }[source || ''] ?? source ?? '-'
 }
 
 function accountIdList(value: number[]) {

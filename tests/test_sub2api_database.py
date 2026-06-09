@@ -525,6 +525,109 @@ def test_priority_sync_updates_priority_through_sub2api_admin_api(monkeypatch) -
         db.close()
 
 
+def test_priority_sync_resolves_account_ids_from_sub2api_database(monkeypatch) -> None:
+    db = make_session()
+    calls: list[tuple[list[int], dict[str, object]]] = []
+
+    class FakeAdminClient:
+        def __init__(self, settings):  # noqa: ANN001
+            self.settings = settings
+
+        async def list_accounts(self):
+            raise AssertionError("database lookup should avoid listing accounts")
+
+        async def bulk_update_accounts(self, account_ids, updates):  # noqa: ANN001
+            ids = list(account_ids)
+            calls.append((ids, dict(updates)))
+            return {"success": len(ids), "failed": 0, "success_ids": ids, "failed_ids": []}
+
+    def fake_load_target_accounts(database, normalized_base_url):  # noqa: ANN001
+        assert database.is_configured is True
+        assert normalized_base_url == "https://relay.example.com"
+        return [
+            {
+                "id": 201,
+                "name": "database matched",
+                "platform": "openai",
+                "type": "chat",
+                "status": "active",
+                "schedulable": True,
+                "priority_before": 25,
+                "matched_base_url": "https://relay.example.com",
+                "account_base_urls": ["https://relay.example.com"],
+                "lookup_source": "database",
+            }
+        ]
+
+    monkeypatch.setattr(
+        "app.services.priority_sync.Sub2APIAdminClient",
+        FakeAdminClient,
+    )
+    monkeypatch.setattr(
+        "app.services.priority_sync.load_priority_sync_target_accounts",
+        fake_load_target_accounts,
+    )
+    try:
+        platform = RelayPlatform(
+            name="Database Sync Target",
+            base_url="https://relay.example.com/",
+            provider_type="fake",
+            rate_cron="*/10 * * * *",
+            balance_cron="*/10 * * * *",
+            status=PlatformStatus.unknown,
+        )
+        db.add(platform)
+        db.flush()
+        account = PlatformAccountMonitor(
+            platform_id=platform.id,
+            name="Main",
+            external_account_id="main",
+            enabled=True,
+        )
+        account.key_summaries = (
+            {"id": "101", "name": "main-key", "group_id": "7", "group_name": "codex"},
+        )
+        db.add_all(
+            [
+                account,
+                PlatformGroupMonitor(
+                    platform_id=platform.id,
+                    name="codex",
+                    external_group_id="7",
+                    enabled=True,
+                    rate_multiplier=0.08,
+                ),
+            ]
+        )
+        db.commit()
+
+        run = asyncio.run(
+            sync_sub2api_account_priorities(
+                db,
+                database=Sub2APIDatabaseSettings(
+                    host="sub2api-postgres",
+                    user="newapi",
+                    password="secret",
+                    dbname="sub2api",
+                ),
+                sub2api_settings=Sub2APISettings(
+                    admin_base_url="https://sub2api.example.com",
+                    admin_api_key="admin-key",
+                ),
+            )
+        )
+
+        assert run.status == "succeeded"
+        assert run.items[0]["account_lookup_source"] == "database"
+        assert run.items[0]["matched_accounts"] == 1
+        assert run.items[0]["updated_accounts"] == 1
+        assert run.items[0]["admin_api_payload"] == {"account_ids": [201], "priority": 5}
+        assert run.items[0]["matched_account_items"][0]["priority_before"] == 25
+        assert calls == [([201], {"priority": 5})]
+    finally:
+        db.close()
+
+
 def test_priority_sync_fails_when_admin_api_is_unconfigured() -> None:
     db = make_session()
     try:

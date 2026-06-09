@@ -361,6 +361,7 @@ export interface Sub2APIPrioritySyncItem {
   matched_account_items: Array<Record<string, unknown>>
   updated_account_ids: number[]
   failed_account_ids: number[]
+  account_lookup_source: string | null
   admin_api_method: string | null
   admin_api_path: string | null
   admin_api_payload: Record<string, unknown> | null

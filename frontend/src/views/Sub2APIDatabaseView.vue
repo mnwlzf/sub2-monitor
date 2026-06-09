@@ -157,19 +157,56 @@
             <el-table-column type="expand" width="42">
               <template #default="{ row }">
                 <div class="priority-sync-detail">
-                  <div class="priority-sync-detail-grid">
-                    <div>
+                  <div class="priority-sync-detail-head">
+                    <div class="priority-sync-reason">
                       <span>变更原因</span>
                       <strong>{{ row.change_reason || row.error_message || '-' }}</strong>
                     </div>
-                    <div>
-                      <span>Admin API</span>
-                      <strong>{{ adminApiLabel(row) }}</strong>
+                    <div class="priority-sync-metrics">
+                      <div>
+                        <span>账号 ID 来源</span>
+                        <strong>{{ accountLookupSourceLabel(row.account_lookup_source) }}</strong>
+                      </div>
+                      <div>
+                        <span>成功 / 失败</span>
+                        <strong>{{ row.updated_account_ids.length }} / {{ row.failed_account_ids.length }}</strong>
+                      </div>
+                      <div>
+                        <span>Admin API</span>
+                        <strong>{{ adminApiLabel(row) }}</strong>
+                      </div>
                     </div>
-                    <div>
-                      <span>账号 ID 来源</span>
-                      <strong>{{ accountLookupSourceLabel(row.account_lookup_source) }}</strong>
+                  </div>
+
+                  <div class="priority-sync-account-list">
+                    <div class="priority-sync-section-title">
+                      <span>匹配账号</span>
+                      <strong>{{ row.matched_accounts ?? 0 }} 个匹配，{{ row.updated_accounts ?? 0 }} 个更新</strong>
                     </div>
+                    <div v-if="row.matched_account_items.length" class="priority-sync-account-table">
+                      <div class="priority-sync-account-row account-head">
+                        <span>ID</span>
+                        <span>名称</span>
+                        <span>原 Priority</span>
+                        <span>调度</span>
+                        <span>状态</span>
+                      </div>
+                      <div
+                        v-for="account in row.matched_account_items"
+                        :key="String(account.id)"
+                        class="priority-sync-account-row"
+                      >
+                        <strong>#{{ account.id ?? '-' }}</strong>
+                        <span>{{ accountName(account) }}</span>
+                        <span>{{ account.priority_before ?? '-' }}</span>
+                        <span>{{ schedulableLabel(account.schedulable) }}</span>
+                        <span>{{ account.status ?? '-' }}</span>
+                      </div>
+                    </div>
+                    <strong v-else class="priority-sync-empty">-</strong>
+                  </div>
+
+                  <div class="priority-sync-id-strip">
                     <div>
                       <span>成功账号</span>
                       <strong>{{ accountIdList(row.updated_account_ids) }}</strong>
@@ -178,21 +215,6 @@
                       <span>失败账号</span>
                       <strong>{{ accountIdList(row.failed_account_ids) }}</strong>
                     </div>
-                  </div>
-
-                  <div class="priority-sync-account-list">
-                    <span>匹配账号</span>
-                    <div v-if="row.matched_account_items.length" class="priority-sync-account-tags">
-                      <el-tag
-                        v-for="account in row.matched_account_items"
-                        :key="String(account.id)"
-                        effect="plain"
-                        size="small"
-                      >
-                        {{ accountLabel(account) }}
-                      </el-tag>
-                    </div>
-                    <strong v-else>-</strong>
                   </div>
 
                   <div class="priority-sync-code-grid">
@@ -220,7 +242,7 @@
                 {{ row.priority ?? '-' }}
               </template>
             </el-table-column>
-            <el-table-column label="平台 / base_url" width="360">
+            <el-table-column label="平台 / base_url" min-width="260">
               <template #default="{ row }">
                 <div class="priority-sync-main">
                   <strong>{{ row.platform_name }}</strong>
@@ -228,7 +250,7 @@
                 </div>
               </template>
             </el-table-column>
-            <el-table-column label="最低有效倍率" width="220">
+            <el-table-column label="最低有效倍率" width="180">
               <template #default="{ row }">
                 <div class="priority-sync-rate">
                   <strong>{{ formatMultiplier(row.effective_rate_multiplier) }}</strong>
@@ -236,7 +258,7 @@
                 </div>
               </template>
             </el-table-column>
-            <el-table-column label="候选分组" width="420">
+            <el-table-column label="候选分组" min-width="260">
               <template #default="{ row }">
                 <div class="priority-sync-groups">
                   <el-tag
@@ -257,7 +279,7 @@
                 {{ row.matched_accounts ?? '-' }} / {{ row.updated_accounts ?? '-' }}
               </template>
             </el-table-column>
-            <el-table-column label="错误" width="260">
+            <el-table-column label="错误" min-width="160">
               <template #default="{ row }">
                 <span class="sql-error-cell">{{ row.error_message || '-' }}</span>
               </template>
@@ -639,12 +661,18 @@ function accountIdList(value: number[]) {
   return value.length ? value.join(', ') : '-'
 }
 
-function accountLabel(account: Record<string, unknown>) {
-  const id = account.id ?? '-'
-  const name = account.name ? ` / ${String(account.name)}` : ''
-  const priorityBefore = account.priority_before ?? '-'
-  const schedulable = account.schedulable === true ? '可调度' : account.schedulable === false ? '不可调度' : '-'
-  return `#${id}${name}，原 Priority ${priorityBefore}，${schedulable}`
+function accountName(account: Record<string, unknown>) {
+  return account.name ? String(account.name) : '-'
+}
+
+function schedulableLabel(value: unknown) {
+  if (value === true) {
+    return '可调度'
+  }
+  if (value === false) {
+    return '不可调度'
+  }
+  return '-'
 }
 
 function formatJson(value: Record<string, unknown> | null) {

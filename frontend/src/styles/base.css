@@ -1661,43 +1661,122 @@ body {
 
 .priority-sync-detail {
   display: grid;
-  gap: 12px;
-  padding: 12px 18px;
+  gap: 10px;
+  min-width: 0;
+  padding: 12px 16px 14px;
   background: #f8fafc;
 }
 
-.priority-sync-detail-grid {
+.priority-sync-detail-head {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 10px;
+  grid-template-columns: minmax(280px, 1.6fr) minmax(360px, 1fr);
+  gap: 12px;
+  align-items: stretch;
 }
 
-.priority-sync-detail-grid div,
+.priority-sync-reason,
+.priority-sync-metrics,
 .priority-sync-account-list,
+.priority-sync-id-strip,
 .priority-sync-code-grid > div {
+  min-width: 0;
+  border: 1px solid #e2e8f0;
+  border-radius: 7px;
+  background: #ffffff;
+}
+
+.priority-sync-reason {
   display: grid;
+  align-content: start;
+  gap: 4px;
+  padding: 10px 12px;
+}
+
+.priority-sync-metrics,
+.priority-sync-id-strip {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.priority-sync-id-strip {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.priority-sync-metrics > div,
+.priority-sync-id-strip > div {
+  display: grid;
+  align-content: start;
   gap: 4px;
   min-width: 0;
+  padding: 10px 12px;
+  border-left: 1px solid #edf2f7;
+}
+
+.priority-sync-metrics > div:first-child,
+.priority-sync-id-strip > div:first-child {
+  border-left: 0;
+}
+
+.priority-sync-section-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border-bottom: 1px solid #edf2f7;
 }
 
 .priority-sync-detail span,
-.priority-sync-account-list > span,
+.priority-sync-section-title span,
 .priority-sync-code-grid span {
   color: #64748b;
   font-size: 12px;
 }
 
-.priority-sync-detail strong {
+.priority-sync-detail strong,
+.priority-sync-section-title strong {
   overflow-wrap: anywhere;
   color: #0f172a;
   font-size: 13px;
   font-weight: 600;
 }
 
-.priority-sync-account-tags {
-  display: flex;
-  gap: 6px;
-  flex-wrap: wrap;
+.priority-sync-account-table {
+  display: grid;
+  max-height: 178px;
+  overflow: auto;
+}
+
+.priority-sync-account-row {
+  display: grid;
+  grid-template-columns: 82px minmax(160px, 1fr) 92px 88px 86px;
+  gap: 10px;
+  align-items: center;
+  min-width: 620px;
+  padding: 8px 12px;
+  border-top: 1px solid #f1f5f9;
+  color: #334155;
+  font-size: 12px;
+}
+
+.priority-sync-account-row:first-child {
+  border-top: 0;
+}
+
+.priority-sync-account-row.account-head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: #f8fafc;
+  color: #64748b;
+  font-weight: 700;
+}
+
+.priority-sync-account-row span,
+.priority-sync-account-row strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .priority-sync-code-grid {
@@ -1707,19 +1786,22 @@ body {
 }
 
 .priority-sync-code-grid pre {
-  max-height: 180px;
+  max-height: 136px;
   margin: 0;
   padding: 10px;
   overflow: auto;
-  border: 1px solid #e2e8f0;
-  border-radius: 6px;
-  background: #ffffff;
+  border-top: 1px solid #edf2f7;
+  background: #fbfdff;
   color: #334155;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 12px;
   line-height: 1.5;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
+  white-space: pre;
+}
+
+.priority-sync-code-grid > div > span {
+  display: block;
+  padding: 9px 10px 7px;
 }
 
 .sql-log-toolbar {
@@ -1741,6 +1823,10 @@ body {
 .sql-log-table {
   min-width: 1480px;
   width: 100%;
+}
+
+.priority-sync-table {
+  min-width: 1080px;
 }
 
 .database-table-scroll {
@@ -1971,6 +2057,15 @@ body {
     flex-wrap: wrap;
     justify-content: flex-start;
   }
+
+  .priority-sync-detail-head,
+  .priority-sync-code-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .priority-sync-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 @media (max-width: 460px) {
@@ -1988,8 +2083,27 @@ body {
   .database-kv-grid,
   .database-kv-grid.compact,
   .priority-sync-summary,
+  .priority-sync-metrics,
+  .priority-sync-id-strip,
   .sql-log-detail-grid {
     grid-template-columns: 1fr;
+  }
+
+  .priority-sync-metrics > div,
+  .priority-sync-id-strip > div {
+    border-top: 1px solid #edf2f7;
+    border-left: 0;
+  }
+
+  .priority-sync-metrics > div:first-child,
+  .priority-sync-id-strip > div:first-child {
+    border-top: 0;
+  }
+
+  .priority-sync-section-title {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 4px;
   }
 
   .embedded-account-values {

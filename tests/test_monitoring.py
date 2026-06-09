@@ -3,6 +3,7 @@ from datetime import datetime
 from types import SimpleNamespace
 
 import httpx
+import pytest
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 
@@ -243,10 +244,33 @@ class FakeNewApiUnifiedProvider:
         return "insufficient privileges" in message.lower()
 
 
+class FlakyNewApiUnifiedProvider(FakeNewApiUnifiedProvider):
+    def __init__(self, failures_before_success: int) -> None:
+        super().__init__()
+        self.failures_before_success = failures_before_success
+
+    async def fetch_group_catalog(self, platform: RelayPlatform):
+        self.group_catalog_calls += 1
+        if self.group_catalog_calls <= self.failures_before_success:
+            raise ValueError("temporary group catalog failure")
+        return [
+            DiscoveredGroupRateResult(
+                external_group_id="7",
+                name="codex",
+                rate_multiplier=0.12,
+            )
+        ]
+
+
 def make_session():
     engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False})
     Base.metadata.create_all(bind=engine)
     return sessionmaker(bind=engine, autoflush=False, autocommit=False)()
+
+
+@pytest.fixture(autouse=True)
+def no_monitor_retry_delay(monkeypatch) -> None:
+    monkeypatch.setattr("app.services.monitoring.MONITOR_RETRY_DELAY_SECONDS", 0)
 
 
 def test_today_quota_usage_is_attached_to_dashboard_platform_and_accounts() -> None:
@@ -956,6 +980,42 @@ def test_newapi_unified_monitor_without_accounts_collects_rates_only(monkeypatch
         db.close()
 
 
+def test_run_platform_monitor_retries_until_public_monitor_succeeds(monkeypatch) -> None:
+    provider = FlakyNewApiUnifiedProvider(failures_before_success=2)
+    monkeypatch.setitem(provider_registry._strategies, "newapi", provider)
+
+    async def no_sleep(delay: float) -> None:
+        return None
+
+    monkeypatch.setattr("app.services.monitoring.asyncio.sleep", no_sleep)
+    db = make_session()
+    try:
+        platform = RelayPlatform(
+            name="NewApi Retry",
+            base_url="https://newapi.example.com",
+            provider_type="newapi",
+            site_strategy="generic",
+            rate_cron="*/10 * * * *",
+            balance_cron="*/10 * * * *",
+            status=PlatformStatus.unknown,
+        )
+        db.add(platform)
+        db.commit()
+
+        result = asyncio.run(run_platform_monitor(db, platform.id))
+
+        assert provider.group_catalog_calls == 3
+        assert result.status == PlatformStatus.healthy
+        assert result.last_error is None
+        refreshed = db.get(RelayPlatform, platform.id)
+        assert refreshed is not None
+        assert refreshed.status == PlatformStatus.healthy
+        assert refreshed.last_error is None
+        assert len(refreshed.discovered_group_rates) == 1
+    finally:
+        db.close()
+
+
 def test_newapi_channel_catalog_insufficient_privileges_does_not_degrade_platform(monkeypatch) -> None:
     provider = FakeNewApiUnifiedProvider(
         channel_error="Unauthorized, insufficient privileges",
@@ -1061,7 +1121,9 @@ def test_balance_monitor_empty_exception_message_uses_exception_type(monkeypatch
         assert account.last_error == "账号监控失败（Primary / user-1）：EmptyMessageError: EmptyMessageError()"
         refreshed = db.get(RelayPlatform, platform.id)
         assert refreshed is not None
-        assert refreshed.last_error == "账号监控失败（Primary / user-1）：EmptyMessageError: EmptyMessageError()"
+        assert refreshed.last_error == (
+            "采集尝试 3 次后仍失败：账号监控失败（Primary / user-1）：EmptyMessageError: EmptyMessageError()"
+        )
     finally:
         db.close()
 
@@ -1100,7 +1162,7 @@ def test_balance_monitor_empty_httpx_exception_includes_request_url(monkeypatch)
         assert "request=GET https://www.kldai.cc/api/v1/auth/login" in account.last_error
         refreshed = db.get(RelayPlatform, platform.id)
         assert refreshed is not None
-        assert refreshed.last_error == account.last_error
+        assert refreshed.last_error == f"采集尝试 3 次后仍失败：{account.last_error}"
     finally:
         db.close()
 

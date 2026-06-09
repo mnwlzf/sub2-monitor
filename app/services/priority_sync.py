@@ -14,7 +14,7 @@ from app.models.monitor import (
 from app.models.platform import RelayPlatform
 from app.models.sub2api import Sub2APIPrioritySyncRun
 from app.models.user import User
-from app.services.monitoring import error_text, run_platform_monitor
+from app.services.monitoring import run_platform_monitor
 from app.services.sub2api_database import (
     create_sql_log,
     target_database_label,
@@ -99,7 +99,7 @@ async def refresh_enabled_platforms_for_priority_sync(db: Session) -> list[dict[
                     "platform_name": platform.name,
                     "base_url": platform.base_url,
                     "status": "failed",
-                    "error_message": error_text(exc),
+                    "error_message": str(exc),
                 }
             )
             continue

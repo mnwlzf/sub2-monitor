@@ -38,6 +38,9 @@ from app.services.provider_strategy import (
 
 logger = logging.getLogger(__name__)
 
+MONITOR_MAX_ATTEMPTS = 3
+MONITOR_RETRY_DELAY_SECONDS = 5
+
 
 @dataclass(frozen=True)
 class GroupCatalogItem:
@@ -68,20 +71,67 @@ def error_text(error: BaseException | str | None) -> str:
 
 
 async def run_platform_monitor(db: Session, platform_id: int) -> RelayPlatform:
+    return await retry_platform_monitor(db, platform_id, _run_platform_monitor_once)
+
+
+async def retry_platform_monitor(db: Session, platform_id: int, runner) -> RelayPlatform:
+    last_platform: RelayPlatform | None = None
+    last_error: str | None = None
+    for attempt in range(1, MONITOR_MAX_ATTEMPTS + 1):
+        try:
+            platform = await runner(db, platform_id)
+        except Exception as exc:  # noqa: BLE001
+            db.rollback()
+            last_error = error_text(exc)
+            logger.warning(
+                "platform monitor attempt failed platform_id=%s attempt=%s/%s error=%s",
+                platform_id,
+                attempt,
+                MONITOR_MAX_ATTEMPTS,
+                last_error,
+                exc_info=True,
+            )
+        else:
+            last_platform = platform
+            if not platform.last_error:
+                return platform
+            last_error = platform.last_error
+            logger.warning(
+                "platform monitor attempt degraded platform_id=%s attempt=%s/%s error=%s",
+                platform_id,
+                attempt,
+                MONITOR_MAX_ATTEMPTS,
+                last_error,
+            )
+
+        if attempt < MONITOR_MAX_ATTEMPTS:
+            await asyncio.sleep(MONITOR_RETRY_DELAY_SECONDS)
+
+    if last_platform is not None:
+        last_platform.last_error = f"采集尝试 {MONITOR_MAX_ATTEMPTS} 次后仍失败：{last_error or '未提供错误详情'}"
+        update_platform_status(last_platform, [last_platform.last_error])
+        db.add(last_platform)
+        db.commit()
+        db.refresh(last_platform)
+        return last_platform
+    raise RuntimeError(f"平台采集尝试 {MONITOR_MAX_ATTEMPTS} 次后失败：{last_error or '未提供错误详情'}")
+
+
+async def _run_platform_monitor_once(db: Session, platform_id: int) -> RelayPlatform:
     platform = load_monitor_platform(db, platform_id)
     if platform.provider_type != "newapi":
-        platform = await run_platform_balance_monitor(db, platform_id)
-        platform = await run_platform_rate_monitor(db, platform_id)
+        platform = await _run_platform_balance_monitor_once(db, platform_id)
+        platform = await _run_platform_rate_monitor_once(db, platform_id)
         return platform
 
     errors: list[str] = []
     has_accounts = has_enabled_login_or_balance_accounts(platform)
     if has_accounts:
-        platform = await run_platform_balance_monitor(db, platform_id)
+        platform = await _run_platform_balance_monitor_once(db, platform_id)
         if platform.last_error:
             errors.extend(platform.last_error.splitlines())
 
-    platform = await run_platform_rate_monitor(db, platform_id)
+    platform = await _run_platform_rate_monitor_once(db, platform_id)
     if platform.last_error:
         errors.extend(platform.last_error.splitlines())
 
@@ -131,6 +181,10 @@ def dedupe_errors(errors: list[str | None]) -> list[str]:
 
 
 async def run_platform_balance_monitor(db: Session, platform_id: int) -> RelayPlatform:
+    return await retry_platform_monitor(db, platform_id, _run_platform_balance_monitor_once)
+
+
+async def _run_platform_balance_monitor_once(db: Session, platform_id: int) -> RelayPlatform:
     platform = load_monitor_platform(db, platform_id)
 
     strategy = provider_registry.get(platform.provider_type)
@@ -300,6 +354,10 @@ def is_optional_newapi_channel_privilege_error(
 
 
 async def run_platform_rate_monitor(db: Session, platform_id: int) -> RelayPlatform:
+    return await retry_platform_monitor(db, platform_id, _run_platform_rate_monitor_once)
+
+
+async def _run_platform_rate_monitor_once(db: Session, platform_id: int) -> RelayPlatform:
     platform = load_monitor_platform(db, platform_id)
 
     strategy = provider_registry.get(platform.provider_type)

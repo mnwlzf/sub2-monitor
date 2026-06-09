@@ -9,44 +9,69 @@
         </div>
 
         <div v-if="activeEmbeddedView === 'overview'" class="embedded-panel-list">
-          <section class="stats-grid embedded-stats-grid">
-            <div class="stat-card">
-              <span>平台总数</span>
-              <strong>{{ stats?.total_platforms ?? '-' }}</strong>
+          <section class="ops-summary">
+            <div class="ops-summary-main">
+              <div>
+                <span>今日总消耗</span>
+                <strong>{{ formatMoney(stats?.today_quota_used ?? null) }}</strong>
+                <em>平台 / 账号 / 分组统一监控口径</em>
+              </div>
+              <div class="ops-summary-actions">
+                <el-button
+                  :disabled="errorSummaryItems.length === 0"
+                  :type="errorSummaryItems.length > 0 ? 'danger' : 'primary'"
+                  plain
+                  @click="errorDialogVisible = true"
+                >
+                  异常 {{ errorSummaryItems.length }}
+                </el-button>
+                <el-button :icon="Refresh" :loading="monitoring" type="primary" @click="runAllEnabledMonitors">
+                  全部采集
+                </el-button>
+              </div>
             </div>
-            <div class="stat-card">
-              <span>启用平台</span>
-              <strong>{{ stats?.enabled_platforms ?? '-' }}</strong>
+            <div class="ops-kpi-grid">
+              <div v-for="item in overviewKpis" :key="item.key" class="ops-kpi" :class="item.tone">
+                <span>{{ item.label }}</span>
+                <strong>{{ item.value }}</strong>
+                <em>{{ item.detail }}</em>
+              </div>
             </div>
-            <div class="stat-card">
-              <span>健康</span>
-              <strong class="ok">{{ stats?.healthy_platforms ?? '-' }}</strong>
-            </div>
-            <div class="stat-card">
-              <span>异常</span>
-              <strong class="bad">{{ (stats?.degraded_platforms ?? 0) + (stats?.down_platforms ?? 0) }}</strong>
-              <el-button
-                :disabled="errorSummaryItems.length === 0"
-                link
-                size="small"
-                type="danger"
-                @click="errorDialogVisible = true"
-              >
-                查看明细
-              </el-button>
-            </div>
-            <div class="stat-card">
-              <span>账号监控</span>
-              <strong>{{ stats?.account_monitor_count ?? '-' }}</strong>
-            </div>
-            <div class="stat-card">
-              <span>今日总消耗</span>
-              <strong>{{ formatMoney(stats?.today_quota_used ?? null) }}</strong>
-            </div>
-            <div class="stat-card">
-              <span>分组监控</span>
-              <strong>{{ stats?.group_monitor_count ?? '-' }}</strong>
-            </div>
+          </section>
+
+          <section class="ops-focus-grid">
+            <article class="ops-focus-card">
+              <span>最高消耗平台</span>
+              <strong>{{ topSpendingPlatform?.name ?? '-' }}</strong>
+              <div class="ops-focus-values">
+                <small>今日 {{ formatMoney(topSpendingPlatform?.today_quota_used ?? null) }}</small>
+                <small>余额 {{ formatMoney(topSpendingPlatform?.balance ?? null) }}</small>
+              </div>
+            </article>
+            <article class="ops-focus-card">
+              <span>最低余额账号</span>
+              <strong>{{ lowestBalanceAccount?.account.name ?? '-' }}</strong>
+              <div class="ops-focus-values">
+                <small>{{ lowestBalanceAccount?.platform.name ?? '-' }}</small>
+                <small>{{ formatMoney(lowestBalanceAccount?.account.balance ?? null) }}</small>
+              </div>
+            </article>
+            <article class="ops-focus-card">
+              <span>分组倍率差</span>
+              <strong>{{ formatMultiplier(groupRateSpread.spread) }}</strong>
+              <div class="ops-focus-values">
+                <small>最低 {{ groupRateSpread.lowLabel }}</small>
+                <small>最高 {{ groupRateSpread.highLabel }}</small>
+              </div>
+            </article>
+            <article class="ops-focus-card">
+              <span>渠道倍率差</span>
+              <strong>{{ formatMultiplier(channelRateSpread.spread) }}</strong>
+              <div class="ops-focus-values">
+                <small>最低 {{ channelRateSpread.lowLabel }}</small>
+                <small>最高 {{ channelRateSpread.highLabel }}</small>
+              </div>
+            </article>
           </section>
 
           <section v-for="group in previewPlatformGroups" :key="group.key" class="embedded-provider-group">
@@ -1105,6 +1130,112 @@ const previewPlatformGroups = computed(() => {
 const errorSummaryItems = computed(() => {
   return platforms.value.flatMap((platform) => platformErrorSummaryItems(platform))
 })
+const downOrDegradedCount = computed(() => (stats.value?.degraded_platforms ?? 0) + (stats.value?.down_platforms ?? 0))
+const monitoredAccountRows = computed(() => {
+  return platforms.value.flatMap((platform) =>
+    platform.account_monitors.map((account) => ({ platform, account })),
+  )
+})
+const enabledPlatformCount = computed(() => platforms.value.filter((row) => row.enabled).length)
+const topSpendingPlatform = computed(() => {
+  return platforms.value
+    .filter((row) => row.today_quota_used !== null)
+    .slice()
+    .sort((a, b) => (b.today_quota_used ?? 0) - (a.today_quota_used ?? 0))[0] ?? null
+})
+const lowestBalanceAccount = computed(() => {
+  return monitoredAccountRows.value
+    .filter((row) => row.account.enabled && row.account.balance !== null)
+    .slice()
+    .sort((a, b) => (a.account.balance ?? 0) - (b.account.balance ?? 0))[0] ?? null
+})
+const totalAccountBalance = computed(() => {
+  const values = monitoredAccountRows.value
+    .map((row) => row.account.balance)
+    .filter((value): value is number => value !== null)
+  return values.length ? values.reduce((sum, value) => sum + value, 0) : null
+})
+const totalAccountTodayUsed = computed(() => {
+  const values = monitoredAccountRows.value
+    .map((row) => row.account.today_quota_used)
+    .filter((value): value is number => value !== null)
+  return values.length ? values.reduce((sum, value) => sum + value, 0) : null
+})
+const lowBalanceAccountCount = computed(() => {
+  return monitoredAccountRows.value.filter((row) => {
+    const threshold = row.platform.low_balance_threshold
+    return row.account.enabled && threshold !== null && row.account.balance !== null && row.account.balance <= threshold
+  }).length
+})
+
+type RateSpread = {
+  spread: number | null
+  lowLabel: string
+  highLabel: string
+}
+
+const groupRateSpread = computed<RateSpread>(() => {
+  const rows = platforms.value.flatMap((platform) =>
+    uniqueDiscoveredGroupRates(platform.discovered_group_rates)
+      .filter((rate) => rate.effective_rate_multiplier !== null)
+      .map((rate) => ({ platform, rate, value: rate.effective_rate_multiplier as number })),
+  )
+  return buildRateSpread(rows, (row) => `${row.platform.name} / ${row.rate.name}`)
+})
+const channelRateSpread = computed<RateSpread>(() => {
+  const rows = platforms.value.flatMap((platform) =>
+    uniqueDiscoveredChannelRates(platform.discovered_channel_rates)
+      .filter((rate) => rate.rate_multiplier !== null)
+      .map((rate) => ({ platform, rate, value: rate.rate_multiplier as number })),
+  )
+  return buildRateSpread(rows, (row) => `${row.platform.name} / ${row.rate.name}`)
+})
+const overviewKpis = computed(() => [
+  {
+    key: 'platforms',
+    label: '平台',
+    value: `${stats.value?.enabled_platforms ?? enabledPlatformCount.value} / ${stats.value?.total_platforms ?? platforms.value.length}`,
+    detail: `${stats.value?.healthy_platforms ?? 0} 健康，${downOrDegradedCount.value} 异常`,
+    tone: downOrDegradedCount.value > 0 ? 'warn' : 'ok',
+  },
+  {
+    key: 'accounts',
+    label: '账号监控',
+    value: String(stats.value?.account_monitor_count ?? monitoredAccountRows.value.length),
+    detail: `余额合计 ${formatMoney(totalAccountBalance.value)}`,
+    tone: lowBalanceAccountCount.value > 0 ? 'warn' : 'neutral',
+  },
+  {
+    key: 'spend',
+    label: '账号今日消耗',
+    value: formatMoney(totalAccountTodayUsed.value),
+    detail: `平台口径 ${formatMoney(stats.value?.today_quota_used ?? null)}`,
+    tone: 'neutral',
+  },
+  {
+    key: 'risk',
+    label: '余额风险',
+    value: String(lowBalanceAccountCount.value),
+    detail: lowestBalanceAccount.value
+      ? `${lowestBalanceAccount.value.platform.name} / ${lowestBalanceAccount.value.account.name}`
+      : '暂无触发阈值',
+    tone: lowBalanceAccountCount.value > 0 ? 'bad' : 'ok',
+  },
+  {
+    key: 'groups',
+    label: '分组监控',
+    value: String(stats.value?.group_monitor_count ?? '-'),
+    detail: `倍率差 ${formatMultiplier(groupRateSpread.value.spread)}`,
+    tone: groupRateSpread.value.spread !== null && groupRateSpread.value.spread > 1 ? 'warn' : 'neutral',
+  },
+  {
+    key: 'latency',
+    label: '平均延迟',
+    value: formatLatency(stats.value?.average_latency_ms ?? null),
+    detail: `异常明细 ${errorSummaryItems.value.length}`,
+    tone: errorSummaryItems.value.length > 0 ? 'bad' : 'neutral',
+  },
+])
 
 const form = reactive<PlatformPayload>({
   name: '',
@@ -1538,6 +1669,26 @@ async function runMonitor(row: RelayPlatform) {
   }
 }
 
+async function runAllEnabledMonitors() {
+  const targets = platforms.value.filter((row) => row.enabled)
+  if (targets.length === 0) {
+    ElMessage.info('暂无启用平台')
+    return
+  }
+  monitoring.value = true
+  try {
+    for (const row of targets) {
+      monitoringPlatformId.value = row.id
+      await runPlatformMonitor(row.id)
+    }
+    ElMessage.success(`已完成 ${targets.length} 个平台采集`)
+    await load()
+  } finally {
+    monitoringPlatformId.value = null
+    monitoring.value = false
+  }
+}
+
 async function runDetailBalanceMonitor() {
   if (!detail.value) {
     return
@@ -1738,6 +1889,30 @@ function formatMultiplier(value: number | null) {
     return '-'
   }
   return Number(value.toFixed(6)).toString()
+}
+
+function formatLatency(value: number | null) {
+  if (value === null) {
+    return '-'
+  }
+  if (value >= 1000) {
+    return `${Number((value / 1000).toFixed(2))}s`
+  }
+  return `${Math.round(value)}ms`
+}
+
+function buildRateSpread<T extends { value: number }>(rows: T[], label: (row: T) => string): RateSpread {
+  if (rows.length === 0) {
+    return { spread: null, lowLabel: '-', highLabel: '-' }
+  }
+  const sorted = rows.slice().sort((a, b) => a.value - b.value)
+  const low = sorted[0]
+  const high = sorted[sorted.length - 1]
+  return {
+    spread: high.value - low.value,
+    lowLabel: `${formatMultiplier(low.value)} ${label(low)}`,
+    highLabel: `${formatMultiplier(high.value)} ${label(high)}`,
+  }
 }
 
 function formatRateConversion(row: RelayPlatform) {

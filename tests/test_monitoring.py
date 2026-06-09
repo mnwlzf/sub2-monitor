@@ -12,6 +12,7 @@ import app.services.notification as notification_service
 from app.api.platforms import (
     attach_today_quota_usage,
     build_account_balance_points,
+    clear_platform_error,
     dashboard,
     get_embedded_histories,
     list_platform_details,
@@ -21,6 +22,7 @@ from app.models.monitor import PlatformAccountMonitor, PlatformGroupMonitor
 from app.models.notification import NotificationRecipient, NotificationSetting
 from app.models.platform import PlatformStatus, RelayPlatform
 from app.models.snapshot import AccountBalanceSnapshot, DiscoveredChannelRateSnapshot, GroupRateSnapshot
+from app.schemas.platform import PlatformErrorClearRequest
 from app.services.monitoring import (
     run_platform_balance_monitor,
     run_platform_monitor,
@@ -344,6 +346,48 @@ def test_today_quota_usage_is_attached_to_dashboard_platform_and_accounts() -> N
         assert account_a.today_quota_used == 3.5
         assert account_b.today_quota_used == 3
         assert dashboard(db).today_quota_used == 6.5
+    finally:
+        db.close()
+
+
+def test_clear_platform_error_clears_platform_status_and_account_error() -> None:
+    db = make_session()
+    try:
+        platform = RelayPlatform(
+            name="Broken",
+            base_url="https://relay.example.com",
+            provider_type="fake",
+            rate_cron="*/10 * * * *",
+            balance_cron="*/10 * * * *",
+            status=PlatformStatus.degraded,
+            last_error="platform failed",
+        )
+        db.add(platform)
+        db.flush()
+        account = PlatformAccountMonitor(
+            platform_id=platform.id,
+            name="Account",
+            external_account_id="account",
+            enabled=True,
+            last_error="account failed",
+        )
+        db.add(account)
+        db.commit()
+
+        clear_platform_error(
+            PlatformErrorClearRequest(source="platform", target_id=platform.id),
+            db=db,
+        )
+        clear_platform_error(
+            PlatformErrorClearRequest(source="account", target_id=account.id),
+            db=db,
+        )
+
+        db.refresh(platform)
+        db.refresh(account)
+        assert platform.last_error is None
+        assert platform.status == PlatformStatus.healthy
+        assert account.last_error is None
     finally:
         db.close()
 

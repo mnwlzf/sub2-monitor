@@ -675,7 +675,19 @@
               <strong>{{ item.platformName }}</strong>
               <span>{{ item.source }}</span>
             </div>
-            <el-tag size="small" type="danger" effect="light">{{ item.providerLabel }}</el-tag>
+            <div class="error-summary-actions">
+              <el-tag size="small" type="danger" effect="light">{{ item.providerLabel }}</el-tag>
+              <el-button
+                :icon="Delete"
+                :loading="clearingErrorKey === item.key"
+                link
+                size="small"
+                type="danger"
+                @click="clearError(item)"
+              >
+                删除
+              </el-button>
+            </div>
           </div>
           <pre>{{ item.message }}</pre>
           <div class="error-summary-meta">
@@ -948,6 +960,7 @@ import { useRoute } from 'vue-router'
 import BalanceLineChart from '@/components/BalanceLineChart.vue'
 import RateLineChart from '@/components/RateLineChart.vue'
 import {
+  clearPlatformError,
   createAccountMonitor,
   createGroupMonitor,
   createNotificationRecipient,
@@ -1013,6 +1026,7 @@ const savingNotification = ref(false)
 const testingNotification = ref(false)
 const dialogVisible = ref(false)
 const errorDialogVisible = ref(false)
+const clearingErrorKey = ref<string | null>(null)
 const detailVisible = ref(false)
 const accountDialogVisible = ref(false)
 const groupDialogVisible = ref(false)
@@ -1496,6 +1510,17 @@ async function remove(row: RelayPlatform) {
   await load()
 }
 
+async function clearError(item: ErrorSummaryItem) {
+  clearingErrorKey.value = item.key
+  try {
+    await clearPlatformError(item.sourceType, item.targetId)
+    ElMessage.success('异常信息已删除')
+    await load()
+  } finally {
+    clearingErrorKey.value = null
+  }
+}
+
 async function runMonitor(row: RelayPlatform) {
   monitoringPlatformId.value = row.id
   try {
@@ -1754,6 +1779,8 @@ type OverviewDiscoveredChannelRate = DiscoveredChannelRate & {
 
 type ErrorSummaryItem = {
   key: string
+  sourceType: string
+  targetId: number
   platformName: string
   providerLabel: string
   source: string
@@ -1768,6 +1795,8 @@ function platformErrorSummaryItems(platform: PlatformDetail): ErrorSummaryItem[]
   if (platform.last_error) {
     items.push({
       key: `platform:${platform.id}`,
+      sourceType: 'platform',
+      targetId: platform.id,
       platformName: platform.name,
       providerLabel: provider,
       source: '平台',
@@ -1780,6 +1809,8 @@ function platformErrorSummaryItems(platform: PlatformDetail): ErrorSummaryItem[]
     if (!account.last_error) continue
     items.push({
       key: `account:${account.id}`,
+      sourceType: 'account',
+      targetId: account.id,
       platformName: platform.name,
       providerLabel: provider,
       source: '账号余额',
@@ -1792,6 +1823,8 @@ function platformErrorSummaryItems(platform: PlatformDetail): ErrorSummaryItem[]
     if (!group.last_error) continue
     items.push({
       key: `group:${group.id}`,
+      sourceType: 'group',
+      targetId: group.id,
       platformName: platform.name,
       providerLabel: provider,
       source: '监控分组',
@@ -1804,6 +1837,8 @@ function platformErrorSummaryItems(platform: PlatformDetail): ErrorSummaryItem[]
     if (!groupRate.last_error) continue
     items.push({
       key: `discovered-group:${groupRate.id}`,
+      sourceType: 'discovered_group',
+      targetId: groupRate.id,
       platformName: platform.name,
       providerLabel: provider,
       source: '发现分组',
@@ -1816,6 +1851,8 @@ function platformErrorSummaryItems(platform: PlatformDetail): ErrorSummaryItem[]
     if (!channel.last_error) continue
     items.push({
       key: `channel:${channel.id}`,
+      sourceType: 'channel',
+      targetId: channel.id,
       platformName: platform.name,
       providerLabel: provider,
       source: '渠道倍率',

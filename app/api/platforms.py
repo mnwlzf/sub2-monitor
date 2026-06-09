@@ -11,7 +11,12 @@ from sqlalchemy.orm import Session, selectinload
 from app.core.config import Settings, get_settings
 from app.core.database import get_db
 from app.core.security import encrypt_secret, utcnow
-from app.models.monitor import PlatformAccountMonitor, PlatformGroupMonitor
+from app.models.monitor import (
+    PlatformAccountMonitor,
+    PlatformDiscoveredChannelRate,
+    PlatformDiscoveredGroupRate,
+    PlatformGroupMonitor,
+)
 from app.models.platform import PlatformStatus, RelayPlatform
 from app.models.snapshot import (
     AccountBalanceSnapshot,
@@ -31,6 +36,7 @@ from app.schemas.platform import (
     GroupMonitorResponse,
     GroupMonitorUpdate,
     MonitorRunResponse,
+    PlatformErrorClearRequest,
     PlatformCreate,
     PlatformDetailResponse,
     PlatformResponse,
@@ -281,6 +287,44 @@ def delete_platform(platform_id: int, db: Session = Depends(get_db)) -> dict[str
     if platform is None:
         raise HTTPException(status_code=404, detail="Platform not found")
     db.delete(platform)
+    db.commit()
+    return {"ok": True}
+
+
+@router.delete("/platform-errors")
+def clear_platform_error(payload: PlatformErrorClearRequest, db: Session = Depends(get_db)) -> dict[str, bool]:
+    source = payload.source
+    target_id = payload.target_id
+    if source == "platform":
+        row = db.get(RelayPlatform, target_id)
+        if row is None:
+            raise HTTPException(status_code=404, detail="Platform not found")
+        row.last_error = None
+        if row.status in {PlatformStatus.degraded, PlatformStatus.down}:
+            row.status = PlatformStatus.healthy
+    elif source == "account":
+        row = db.get(PlatformAccountMonitor, target_id)
+        if row is None:
+            raise HTTPException(status_code=404, detail="Account monitor not found")
+        row.last_error = None
+    elif source == "group":
+        row = db.get(PlatformGroupMonitor, target_id)
+        if row is None:
+            raise HTTPException(status_code=404, detail="Group monitor not found")
+        row.last_error = None
+    elif source == "discovered_group":
+        row = db.get(PlatformDiscoveredGroupRate, target_id)
+        if row is None:
+            raise HTTPException(status_code=404, detail="Discovered group not found")
+        row.last_error = None
+    elif source == "channel":
+        row = db.get(PlatformDiscoveredChannelRate, target_id)
+        if row is None:
+            raise HTTPException(status_code=404, detail="Channel not found")
+        row.last_error = None
+    else:
+        raise HTTPException(status_code=422, detail="Unsupported error source")
+    db.add(row)
     db.commit()
     return {"ok": True}
 

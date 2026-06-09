@@ -476,18 +476,30 @@ export async function deletePlatform(id: number) {
   await http.delete(`/platforms/${id}`)
 }
 
+export async function clearPlatformError(source: string, targetId: number) {
+  await http.delete('/platform-errors', {
+    data: { source, target_id: targetId },
+  })
+}
+
 export async function runPlatformMonitor(id: number) {
-  const { data } = await http.post<MonitorRunResult>(`/platforms/${id}/monitor/run`)
+  const { data } = await http.post<MonitorRunResult>(`/platforms/${id}/monitor/run`, null, {
+    timeout: 30000,
+  })
   return data
 }
 
 export async function runPlatformBalanceMonitor(id: number) {
-  const { data } = await http.post<MonitorRunResult>(`/platforms/${id}/monitor/balance/run`)
+  const { data } = await http.post<MonitorRunResult>(`/platforms/${id}/monitor/balance/run`, null, {
+    timeout: 30000,
+  })
   return data
 }
 
 export async function runPlatformRateMonitor(id: number) {
-  const { data } = await http.post<MonitorRunResult>(`/platforms/${id}/monitor/rate/run`)
+  const { data } = await http.post<MonitorRunResult>(`/platforms/${id}/monitor/rate/run`, null, {
+    timeout: 30000,
+  })
   return data
 }
 

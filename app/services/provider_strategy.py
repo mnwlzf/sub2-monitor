@@ -67,7 +67,7 @@ class ProviderStrategy(ABC):
     label: str
     description: str
 
-    def __init__(self, timeout_seconds: float = 15.0) -> None:
+    def __init__(self, timeout_seconds: float = 30.0) -> None:
         self.timeout_seconds = timeout_seconds
 
     @abstractmethod
@@ -1333,7 +1333,7 @@ class NewApiStrategy(ProviderStrategy):
 
     def __init__(
         self,
-        timeout_seconds: float = 15.0,
+        timeout_seconds: float = 30.0,
         site_strategies: NewApiSiteStrategyRegistry | None = None,
     ) -> None:
         super().__init__(timeout_seconds)

@@ -454,6 +454,13 @@ body {
   gap: 12px;
 }
 
+.error-summary-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
 .error-summary-head strong,
 .error-summary-head span {
   display: block;

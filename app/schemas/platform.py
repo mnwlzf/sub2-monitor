@@ -134,6 +134,11 @@ class SnapshotCreate(BaseModel):
     error_message: str | None = None
 
 
+class PlatformErrorClearRequest(BaseModel):
+    source: str
+    target_id: int
+
+
 class AccountMonitorBase(BaseModel):
     name: str = Field(min_length=1, max_length=120)
     external_account_id: str = Field(min_length=1, max_length=120)

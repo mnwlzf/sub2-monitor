@@ -7,7 +7,7 @@ import httpx
 import app.services.provider_strategy as provider_module
 from app.core.config import Sub2APIDatabaseSettings
 from app.core.security import encrypt_secret
-from app.services.sub2api_proxy import load_platform_proxy_urls, proxy_url_from_row
+from app.services.sub2api_proxy import load_platform_proxy_urls, masked_proxy_url, proxy_url_from_row
 from app.services.provider_strategy import NewApiStrategy, Sub2ApiStrategy, GenericNewApiSiteStrategy
 
 
@@ -743,6 +743,15 @@ def test_sub2api_proxy_url_from_row_escapes_credentials() -> None:
         ("socks5", "154.219.108.160", 12222, "lnyolcy", "w1?7jZb:RZYE#rE#5iev")
     ) == "socks5://lnyolcy:w1%3F7jZb%3ARZYE%23rE%235iev@154.219.108.160:12222"
     assert proxy_url_from_row(("ftp", "127.0.0.1", 1080, None, None)) is None
+
+
+def test_masked_proxy_url_keeps_debuggable_address_without_password() -> None:
+    assert (
+        masked_proxy_url("socks5://user%40example.com:p%3Aa%23s@127.0.0.1:1080")
+        == "socks5://user%40example.com:<masked>@127.0.0.1:1080"
+    )
+    assert masked_proxy_url("http://proxy.example.com:8080") == "http://proxy.example.com:8080"
+    assert masked_proxy_url(None) is None
 
 
 def test_load_platform_proxy_urls_matches_platform_base_url(monkeypatch) -> None:

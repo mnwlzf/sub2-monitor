@@ -36,7 +36,7 @@ from app.services.provider_strategy import (
     provider_registry,
 )
 from app.core.config import get_settings
-from app.services.sub2api_proxy import load_platform_proxy_urls
+from app.services.sub2api_proxy import load_platform_proxy_urls, masked_proxy_url
 
 logger = logging.getLogger(__name__)
 
@@ -219,6 +219,7 @@ async def _run_platform_balance_monitor_once(db: Session, platform_id: int) -> R
         )
         enabled_account_index += 1
         setattr(account, "sub2api_proxy_url", proxy_url)
+        account.last_proxy_url = masked_proxy_url(proxy_url)
         newapi_login_site_url = newapi_account_login_site_url(strategy, platform, account)
         if (
             previous_newapi_login_site_url is not None

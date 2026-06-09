@@ -74,6 +74,7 @@ def ensure_schema() -> None:
             "username": "ALTER TABLE platform_account_monitors ADD COLUMN username VARCHAR(160)",
             "password_encrypted": "ALTER TABLE platform_account_monitors ADD COLUMN password_encrypted TEXT",
             "key_summaries_json": "ALTER TABLE platform_account_monitors ADD COLUMN key_summaries_json TEXT",
+            "last_proxy_url": "ALTER TABLE platform_account_monitors ADD COLUMN last_proxy_url TEXT",
         }
         with engine.begin() as conn:
             for column, statement in account_column_sql.items():

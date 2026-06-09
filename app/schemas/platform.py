@@ -181,6 +181,7 @@ class AccountMonitorResponse(BaseModel):
     quota_limit: float | None
     today_quota_used: float | None = None
     key_summaries: list[AccountKeySummary] = Field(default_factory=list)
+    last_proxy_url: str | None
     last_error: str | None
     checked_at: datetime | None
     created_at: datetime

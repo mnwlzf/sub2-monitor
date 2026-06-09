@@ -112,6 +112,7 @@ export interface AccountMonitor {
   quota_limit: number | null
   today_quota_used: number | null
   key_summaries: AccountKeySummary[]
+  last_proxy_url: string | null
   last_error: string | null
   checked_at: string | null
   created_at: string

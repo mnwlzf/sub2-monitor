@@ -1,7 +1,7 @@
 import logging
 from dataclasses import dataclass
 from typing import Any
-from urllib.parse import quote
+from urllib.parse import quote, unquote, urlsplit, urlunsplit
 
 from app.core.config import Sub2APIDatabaseSettings
 from app.services.sub2api_schedulable import normalize_base_url
@@ -61,6 +61,27 @@ def proxy_url_from_row(row: tuple[Any, ...]) -> str | None:
             auth = f"{auth}:{quote(password, safe='')}"
         auth = f"{auth}@"
     return f"{protocol}://{auth}{host}:{int(port)}"
+
+
+def masked_proxy_url(proxy_url: str | None) -> str | None:
+    text = str(proxy_url or "").strip()
+    if not text:
+        return None
+    parts = urlsplit(text)
+    if not parts.scheme or not parts.hostname:
+        return text
+
+    host = parts.hostname
+    if ":" in host and not host.startswith("["):
+        host = f"[{host}]"
+    port = f":{parts.port}" if parts.port else ""
+    auth = ""
+    if parts.username:
+        auth = quote(unquote(parts.username), safe="")
+        if parts.password:
+            auth = f"{auth}:<masked>"
+        auth = f"{auth}@"
+    return urlunsplit((parts.scheme, f"{auth}{host}{port}", parts.path, parts.query, parts.fragment))
 
 
 def account_proxy_from_row(row: tuple[Any, ...]) -> Sub2APIAccountProxy | None:

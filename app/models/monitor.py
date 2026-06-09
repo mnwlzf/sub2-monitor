@@ -22,6 +22,7 @@ class PlatformAccountMonitor(Base):
     quota_used: Mapped[float | None] = mapped_column(Float)
     quota_limit: Mapped[float | None] = mapped_column(Float)
     key_summaries_json: Mapped[str | None] = mapped_column(Text)
+    last_proxy_url: Mapped[str | None] = mapped_column(Text)
     last_error: Mapped[str | None] = mapped_column(Text)
     checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)

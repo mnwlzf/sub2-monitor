@@ -1104,6 +1104,60 @@ def test_newapi_unified_monitor_collects_balances_and_rates_once(monkeypatch) ->
         db.close()
 
 
+def test_sub2api_account_monitor_persists_last_proxy_url(monkeypatch) -> None:
+    provider = FakeNewApiUnifiedProvider()
+    monkeypatch.setitem(provider_registry._strategies, "newapi", provider)
+    monkeypatch.setattr(
+        "app.services.monitoring.load_platform_proxy_urls",
+        lambda database, base_url: [
+            "socks5://user:secret@127.0.0.1:1080",
+            "http://proxy.example.com:8080",
+        ],
+    )
+    db = make_session()
+    try:
+        platform = RelayPlatform(
+            name="Sub2API Proxy Debug",
+            base_url="https://sub2api.example.com",
+            provider_type="newapi",
+            site_strategy="sub2api",
+            rate_cron="*/10 * * * *",
+            balance_cron="*/10 * * * *",
+            status=PlatformStatus.unknown,
+        )
+        db.add(platform)
+        db.flush()
+        db.add_all(
+            [
+                PlatformAccountMonitor(
+                    platform_id=platform.id,
+                    name="Account A",
+                    external_account_id="a",
+                    enabled=True,
+                ),
+                PlatformAccountMonitor(
+                    platform_id=platform.id,
+                    name="Account B",
+                    external_account_id="b",
+                    enabled=True,
+                ),
+            ]
+        )
+        db.commit()
+
+        asyncio.run(run_platform_monitor(db, platform.id))
+
+        accounts = db.scalars(
+            select(PlatformAccountMonitor).order_by(PlatformAccountMonitor.id.asc())
+        ).all()
+        assert [account.last_proxy_url for account in accounts] == [
+            "socks5://user:<masked>@127.0.0.1:1080",
+            "http://proxy.example.com:8080",
+        ]
+    finally:
+        db.close()
+
+
 def test_newapi_unified_monitor_without_accounts_collects_rates_only(monkeypatch) -> None:
     provider = FakeNewApiUnifiedProvider()
     monkeypatch.setitem(provider_registry._strategies, "newapi", provider)

@@ -130,6 +130,9 @@
                           <span v-if="accountLoginLabel(account)">
                             <em>登录</em>{{ accountLoginLabel(account) }}
                           </span>
+                          <span>
+                            <em>代理</em>{{ accountProxyLabel(account) }}
+                          </span>
                         </div>
                         <div v-if="account.last_error" class="embedded-account-error">
                           {{ account.last_error }}
@@ -746,6 +749,9 @@
             </el-table-column>
             <el-table-column label="最后采集" width="170">
               <template #default="{ row }">{{ formatTime(row.checked_at) }}</template>
+            </el-table-column>
+            <el-table-column label="最近代理" min-width="220" show-overflow-tooltip>
+              <template #default="{ row }">{{ accountProxyLabel(row) }}</template>
             </el-table-column>
             <el-table-column prop="last_error" label="错误" min-width="180" show-overflow-tooltip />
             <el-table-column label="操作" width="90">
@@ -1706,6 +1712,10 @@ function accountLoginLabel(account: AccountMonitor) {
 
 function accountDisplayLabel(account: AccountMonitor) {
   return account.username || account.external_account_id || '-'
+}
+
+function accountProxyLabel(account: AccountMonitor) {
+  return account.last_proxy_url || '直连'
 }
 
 function accountKeySummaryId(key: AccountKeySummary) {

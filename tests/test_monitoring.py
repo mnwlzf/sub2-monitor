@@ -2,6 +2,7 @@ import asyncio
 from datetime import datetime
 from types import SimpleNamespace
 
+import httpx
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 
@@ -79,6 +80,30 @@ class MutableBalanceProvider(FakeBalanceProvider):
         account: PlatformAccountMonitor,
     ) -> AccountBalanceResult:
         return AccountBalanceResult(balance=self.balance)
+
+
+class EmptyMessageError(Exception):
+    def __str__(self) -> str:
+        return ""
+
+
+class EmptyExceptionBalanceProvider(FakeBalanceProvider):
+    async def fetch_account_balance(
+        self,
+        platform: RelayPlatform,
+        account: PlatformAccountMonitor,
+    ) -> AccountBalanceResult:
+        raise EmptyMessageError()
+
+
+class EmptyHttpxExceptionBalanceProvider(FakeBalanceProvider):
+    async def fetch_account_balance(
+        self,
+        platform: RelayPlatform,
+        account: PlatformAccountMonitor,
+    ) -> AccountBalanceResult:
+        request = httpx.Request("GET", "https://www.kldai.cc/api/v1/auth/login")
+        raise httpx.ConnectTimeout("", request=request)
 
 
 class FakeCatalogProvider:
@@ -1000,6 +1025,82 @@ def test_newapi_account_error_identifies_account(monkeypatch) -> None:
         assert refreshed is not None
         assert refreshed.last_error is not None
         assert "Primary / primary@example.com / user-1" in refreshed.last_error
+    finally:
+        db.close()
+
+
+def test_balance_monitor_empty_exception_message_uses_exception_type(monkeypatch) -> None:
+    provider = EmptyExceptionBalanceProvider()
+    monkeypatch.setitem(provider_registry._strategies, "empty-exception-balance", provider)
+    db = make_session()
+    try:
+        platform = RelayPlatform(
+            name="Empty Exception",
+            base_url="https://example.com",
+            provider_type="empty-exception-balance",
+            rate_cron="*/10 * * * *",
+            balance_cron="*/10 * * * *",
+            status=PlatformStatus.unknown,
+        )
+        db.add(platform)
+        db.flush()
+        db.add(
+            PlatformAccountMonitor(
+                platform_id=platform.id,
+                name="Primary",
+                external_account_id="user-1",
+                enabled=True,
+            )
+        )
+        db.commit()
+
+        asyncio.run(run_platform_balance_monitor(db, platform.id))
+
+        account = db.scalar(select(PlatformAccountMonitor))
+        assert account is not None
+        assert account.last_error == "账号监控失败（Primary / user-1）：EmptyMessageError: EmptyMessageError()"
+        refreshed = db.get(RelayPlatform, platform.id)
+        assert refreshed is not None
+        assert refreshed.last_error == "账号监控失败（Primary / user-1）：EmptyMessageError: EmptyMessageError()"
+    finally:
+        db.close()
+
+
+def test_balance_monitor_empty_httpx_exception_includes_request_url(monkeypatch) -> None:
+    provider = EmptyHttpxExceptionBalanceProvider()
+    monkeypatch.setitem(provider_registry._strategies, "empty-httpx-exception-balance", provider)
+    db = make_session()
+    try:
+        platform = RelayPlatform(
+            name="Empty HTTPX Exception",
+            base_url="https://www.kldai.cc",
+            provider_type="empty-httpx-exception-balance",
+            rate_cron="*/10 * * * *",
+            balance_cron="*/10 * * * *",
+            status=PlatformStatus.unknown,
+        )
+        db.add(platform)
+        db.flush()
+        db.add(
+            PlatformAccountMonitor(
+                platform_id=platform.id,
+                name="Primary",
+                external_account_id="user-1",
+                enabled=True,
+            )
+        )
+        db.commit()
+
+        asyncio.run(run_platform_balance_monitor(db, platform.id))
+
+        account = db.scalar(select(PlatformAccountMonitor))
+        assert account is not None
+        assert account.last_error is not None
+        assert "ConnectTimeout" in account.last_error
+        assert "request=GET https://www.kldai.cc/api/v1/auth/login" in account.last_error
+        refreshed = db.get(RelayPlatform, platform.id)
+        assert refreshed is not None
+        assert refreshed.last_error == account.last_error
     finally:
         db.close()
 

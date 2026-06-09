@@ -47,6 +47,26 @@ class GroupCatalogItem:
     rpm_limit: int | None
 
 
+def error_text(error: BaseException | str | None) -> str:
+    def exception_detail(exc: BaseException) -> str:
+        parts = [f"{exc.__class__.__name__}: {repr(exc)}"]
+        request = getattr(exc, "request", None)
+        if request is not None:
+            method = getattr(request, "method", "")
+            url = getattr(request, "url", "")
+            if method or url:
+                parts.append(f"request={method} {url}".strip())
+        if exc.__cause__ is not None:
+            parts.append(f"cause={exception_detail(exc.__cause__)}")
+        elif exc.__context__ is not None:
+            parts.append(f"context={exception_detail(exc.__context__)}")
+        return "；".join(parts)
+
+    if isinstance(error, BaseException):
+        return str(error).strip() or exception_detail(error)
+    return str(error or "").strip()
+
+
 async def run_platform_monitor(db: Session, platform_id: int) -> RelayPlatform:
     platform = load_monitor_platform(db, platform_id)
     if platform.provider_type != "newapi":
@@ -98,11 +118,11 @@ def has_enabled_login_or_balance_accounts(platform: RelayPlatform) -> bool:
     return any(account.enabled for account in platform.account_monitors)
 
 
-def dedupe_errors(errors: list[str]) -> list[str]:
+def dedupe_errors(errors: list[str | None]) -> list[str]:
     deduped: list[str] = []
     seen: set[str] = set()
     for error in errors:
-        error = error.strip()
+        error = error_text(error)
         if not error or error in seen:
             continue
         seen.add(error)
@@ -173,7 +193,7 @@ async def run_platform_balance_monitor(db: Session, platform_id: int) -> RelayPl
                     len(account.key_summaries),
                 )
         except Exception as exc:  # noqa: BLE001
-            account.last_error = account_error_message(account, str(exc))
+            account.last_error = account_error_message(account, error_text(exc))
             errors.append(account.last_error)
             logger.exception(
                 "balance monitor account exception platform_id=%s account_id=%s account_name=%s",
@@ -251,8 +271,9 @@ def newapi_account_login_site_url(
     return site_url(platform)
 
 
-def account_error_message(account: PlatformAccountMonitor, error: str | None) -> str | None:
-    if not error:
+def account_error_message(account: PlatformAccountMonitor, error: str | BaseException | None) -> str | None:
+    message = error_text(error)
+    if not message:
         return None
     parts = [account.name]
     if account.username:
@@ -261,8 +282,8 @@ def account_error_message(account: PlatformAccountMonitor, error: str | None) ->
         parts.append(account.external_account_id)
     target = " / ".join(str(part) for part in parts if part)
     if target:
-        return f"账号监控失败（{target}）：{error}"
-    return f"账号监控失败（账号 #{account.id}）：{error}"
+        return f"账号监控失败（{target}）：{message}"
+    return f"账号监控失败（账号 #{account.id}）：{message}"
 
 
 def is_optional_newapi_channel_privilege_error(
@@ -301,7 +322,7 @@ async def run_platform_rate_monitor(db: Session, platform_id: int) -> RelayPlatf
             key_group_catalog = await key_group_catalog_fetcher(platform)
         except Exception as exc:  # noqa: BLE001
             key_group_catalog = None
-            errors.append(f"密钥绑定分组目录读取失败：{exc}")
+            errors.append(f"密钥绑定分组目录读取失败：{error_text(exc)}")
             logger.exception(
                 "rate monitor key group catalog failed platform_id=%s name=%s",
                 platform.id,
@@ -319,7 +340,8 @@ async def run_platform_rate_monitor(db: Session, platform_id: int) -> RelayPlatf
             discovered_channel_catalog = await channel_catalog_fetcher(platform)
         except Exception as exc:  # noqa: BLE001
             discovered_channel_catalog = None
-            if is_optional_newapi_channel_privilege_error(strategy, platform, str(exc)):
+            message = error_text(exc)
+            if is_optional_newapi_channel_privilege_error(strategy, platform, message):
                 logger.info(
                     "rate monitor channel catalog skipped for insufficient privileges platform_id=%s name=%s error=%s",
                     platform.id,
@@ -327,7 +349,7 @@ async def run_platform_rate_monitor(db: Session, platform_id: int) -> RelayPlatf
                     exc,
                 )
             else:
-                errors.append(f"渠道倍率目录读取失败：{exc}")
+                errors.append(f"渠道倍率目录读取失败：{message}")
                 logger.exception(
                     "rate monitor channel catalog failed platform_id=%s name=%s",
                     platform.id,
@@ -400,7 +422,7 @@ async def run_platform_rate_monitor(db: Session, platform_id: int) -> RelayPlatf
         discovered_catalog = await strategy.fetch_group_catalog(platform)
     except Exception as exc:  # noqa: BLE001
         discovered_catalog = None
-        errors.append(f"分组倍率目录读取失败：{exc}")
+        errors.append(f"分组倍率目录读取失败：{error_text(exc)}")
         logger.exception(
             "rate monitor group catalog failed platform_id=%s name=%s",
             platform.id,
@@ -520,10 +542,10 @@ async def run_platform_rate_monitor(db: Session, platform_id: int) -> RelayPlatf
                 group=group,
                 rate_multiplier=None,
                 rpm_limit=None,
-                error=str(exc),
+                error=error_text(exc),
                 checked_at=checked_at,
             )
-            errors.append(group_error_message(group, str(exc)))
+            errors.append(group_error_message(group, error_text(exc)))
             logger.exception(
                 "rate monitor configured group exception platform_id=%s group_id=%s group_name=%s",
                 platform.id,
@@ -550,17 +572,17 @@ async def run_platform_rate_monitor(db: Session, platform_id: int) -> RelayPlatf
     return platform
 
 
-def channel_error_message(channel: DiscoveredChannelRateResult, error: str | None) -> str:
+def channel_error_message(channel: DiscoveredChannelRateResult, error: str | BaseException | None) -> str:
     target = monitored_target_label(channel.name, channel.external_channel_id)
-    return f"渠道倍率监控失败（{target}）：{error}"
+    return f"渠道倍率监控失败（{target}）：{error_text(error)}"
 
 
 def group_error_message(
     group: DiscoveredGroupRateResult | PlatformGroupMonitor,
-    error: str | None,
+    error: str | BaseException | None,
 ) -> str:
     target = monitored_target_label(group.name, group.external_group_id)
-    return f"分组倍率监控失败（{target}）：{error}"
+    return f"分组倍率监控失败（{target}）：{error_text(error)}"
 
 
 def monitored_target_label(name: str | None, external_id: str | None) -> str:
@@ -621,7 +643,8 @@ def group_catalog_delta(
     return changes
 
 
-def update_platform_status(platform: RelayPlatform, errors: list[str]) -> None:
+def update_platform_status(platform: RelayPlatform, errors: list[str | None]) -> None:
+    errors = dedupe_errors(errors)
     platform.checked_at = utcnow()
     platform.last_error = "\n".join(errors) if errors else None
     platform.status = PlatformStatus.degraded if errors else PlatformStatus.healthy

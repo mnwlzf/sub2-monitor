@@ -147,23 +147,41 @@ def today_quota_usage_by_account(
     }
 
 
+def actual_usage_for_platform(platform: RelayPlatform, usage: float | None) -> float | None:
+    if usage is None or platform.effective_rate_factor is None:
+        return None
+    return usage * platform.effective_rate_factor
+
+
 def attach_today_quota_usage(db: Session, platforms: list[RelayPlatform]) -> None:
     usage_by_account = today_quota_usage_by_account(db, [platform.id for platform in platforms])
     for platform in platforms:
         platform_total = 0.0
+        actual_total = 0.0
         has_value = False
+        has_actual_value = False
         for account in platform.account_monitors:
             usage = usage_by_account.get(account.id)
+            actual_usage = actual_usage_for_platform(platform, usage)
             setattr(account, "today_quota_used", usage)
+            setattr(account, "today_actual_used", actual_usage)
             if usage is not None:
                 platform_total += usage
                 has_value = True
+            if actual_usage is not None:
+                actual_total += actual_usage
+                has_actual_value = True
         setattr(platform, "today_quota_used", platform_total if has_value else None)
+        setattr(platform, "today_actual_used", actual_total if has_actual_value else None)
 
 
 @router.get("/dashboard", response_model=DashboardStats)
 def dashboard(db: Session = Depends(get_db)) -> DashboardStats:
-    platforms = db.scalars(select(RelayPlatform)).all()
+    platforms = list(
+        db.scalars(
+            select(RelayPlatform).options(selectinload(RelayPlatform.account_monitors))
+        ).all()
+    )
     account_monitor_count = len(db.scalars(select(PlatformAccountMonitor.id)).all())
     group_monitor_count = len(db.scalars(select(PlatformGroupMonitor.id)).all())
     latencies = [item.latency_ms for item in platforms if item.latency_ms is not None]
@@ -173,7 +191,13 @@ def dashboard(db: Session = Depends(get_db)) -> DashboardStats:
     model_first_tokens = [
         item.model_first_token_ms for item in platforms if item.model_first_token_ms is not None
     ]
-    today_usages = today_quota_usage_by_account(db)
+    attach_today_quota_usage(db, platforms)
+    today_platform_usages = [
+        platform.today_quota_used for platform in platforms if platform.today_quota_used is not None
+    ]
+    today_actual_usages = [
+        platform.today_actual_used for platform in platforms if platform.today_actual_used is not None
+    ]
     return DashboardStats(
         total_platforms=len(platforms),
         enabled_platforms=sum(1 for item in platforms if item.enabled),
@@ -190,7 +214,8 @@ def dashboard(db: Session = Depends(get_db)) -> DashboardStats:
         average_model_first_token_ms=round(sum(model_first_tokens) / len(model_first_tokens))
         if model_first_tokens
         else None,
-        today_quota_used=sum(today_usages.values()) if today_usages else None,
+        today_quota_used=sum(today_platform_usages) if today_platform_usages else None,
+        today_actual_used=sum(today_actual_usages) if today_actual_usages else None,
     )
 
 

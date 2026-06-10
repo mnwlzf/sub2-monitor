@@ -121,6 +121,7 @@ class PlatformResponse(BaseModel):
     quota_used: float | None
     quota_limit: float | None
     today_quota_used: float | None = None
+    today_actual_used: float | None = None
     low_balance_threshold: float | None
     low_balance_notify_count: int
     latency_ms: int | None
@@ -192,6 +193,7 @@ class AccountMonitorResponse(BaseModel):
     quota_used: float | None
     quota_limit: float | None
     today_quota_used: float | None = None
+    today_actual_used: float | None = None
     key_summaries: list[AccountKeySummary] = Field(default_factory=list)
     last_proxy_url: str | None
     last_error: str | None
@@ -368,3 +370,4 @@ class DashboardStats(BaseModel):
     average_connect_latency_ms: int | None
     average_model_first_token_ms: int | None
     today_quota_used: float | None = None
+    today_actual_used: float | None = None

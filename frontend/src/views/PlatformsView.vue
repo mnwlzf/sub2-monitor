@@ -13,8 +13,8 @@
             <div class="ops-summary-main">
               <div>
                 <span>今日总消耗</span>
-                <strong>{{ formatMoney(stats?.today_quota_used ?? null) }}</strong>
-                <em>平台 / 账号 / 分组统一监控口径</em>
+                <strong>{{ formatUsagePair(stats?.today_quota_used ?? null, stats?.today_actual_used ?? null) }}</strong>
+                <em>平台扣减 / 实际扣减</em>
               </div>
               <div class="ops-summary-actions">
                 <el-button
@@ -44,7 +44,7 @@
               <span>最高消耗平台</span>
               <strong>{{ topSpendingPlatform?.name ?? '-' }}</strong>
               <div class="ops-focus-values">
-                <small>今日 {{ formatMoney(topSpendingPlatform?.today_quota_used ?? null) }}</small>
+                <small>今日 {{ formatUsagePair(topSpendingPlatform?.today_quota_used ?? null, topSpendingPlatform?.today_actual_used ?? null) }}</small>
                 <small>余额 {{ formatMoney(topSpendingPlatform?.balance ?? null) }}</small>
               </div>
             </article>
@@ -120,11 +120,11 @@
                   </div>
                   <div>
                     <span>今日消耗</span>
-                    <strong>{{ formatMoney(row.today_quota_used) }}</strong>
+                    <strong>{{ formatUsagePair(row.today_quota_used, row.today_actual_used) }}</strong>
                   </div>
                   <div>
                     <span>累计消耗</span>
-                    <strong>{{ formatMoney(row.quota_used) }}</strong>
+                    <strong>{{ formatUsagePair(row.quota_used, actualUsage(row, row.quota_used)) }}</strong>
                   </div>
                   <div>
                     <span>额度上限</span>
@@ -181,11 +181,11 @@
                         </div>
                         <div>
                           <span>今日</span>
-                          <strong>{{ formatMoney(account.today_quota_used) }}</strong>
+                          <strong>{{ formatUsagePair(account.today_quota_used, account.today_actual_used) }}</strong>
                         </div>
                         <div>
                           <span>消耗</span>
-                          <strong>{{ formatMoney(account.quota_used) }}</strong>
+                          <strong>{{ formatUsagePair(account.quota_used, actualUsage(row, account.quota_used)) }}</strong>
                         </div>
                       </div>
                       <div class="embedded-account-key-panel">
@@ -805,8 +805,8 @@
             <el-table-column label="余额" width="120">
               <template #default="{ row }">{{ row.balance ?? '-' }}</template>
             </el-table-column>
-            <el-table-column label="已消耗" width="120">
-              <template #default="{ row }">{{ formatMoney(row.quota_used) }}</template>
+            <el-table-column label="已消耗" min-width="150">
+              <template #default="{ row }">{{ formatUsagePair(row.quota_used, actualUsage(detail, row.quota_used)) }}</template>
             </el-table-column>
             <el-table-column label="额度上限" width="120">
               <template #default="{ row }">{{ formatMoney(row.quota_limit) }}</template>
@@ -1186,9 +1186,9 @@ const monitoredAccountRows = computed(() => {
 const enabledPlatformCount = computed(() => platforms.value.filter((row) => row.enabled).length)
 const topSpendingPlatform = computed(() => {
   return platforms.value
-    .filter((row) => row.today_quota_used !== null)
+    .filter((row) => row.today_actual_used !== null || row.today_quota_used !== null)
     .slice()
-    .sort((a, b) => (b.today_quota_used ?? 0) - (a.today_quota_used ?? 0))[0] ?? null
+    .sort((a, b) => (b.today_actual_used ?? b.today_quota_used ?? 0) - (a.today_actual_used ?? a.today_quota_used ?? 0))[0] ?? null
 })
 const lowestBalanceAccount = computed(() => {
   return monitoredAccountRows.value
@@ -1205,6 +1205,12 @@ const totalAccountBalance = computed(() => {
 const totalAccountTodayUsed = computed(() => {
   const values = monitoredAccountRows.value
     .map((row) => row.account.today_quota_used)
+    .filter((value): value is number => value !== null)
+  return values.length ? values.reduce((sum, value) => sum + value, 0) : null
+})
+const totalAccountTodayActualUsed = computed(() => {
+  const values = monitoredAccountRows.value
+    .map((row) => row.account.today_actual_used)
     .filter((value): value is number => value !== null)
   return values.length ? values.reduce((sum, value) => sum + value, 0) : null
 })
@@ -1255,8 +1261,8 @@ const overviewKpis = computed(() => [
   {
     key: 'spend',
     label: '账号今日消耗',
-    value: formatMoney(totalAccountTodayUsed.value),
-    detail: `平台口径 ${formatMoney(stats.value?.today_quota_used ?? null)}`,
+    value: formatUsagePair(totalAccountTodayUsed.value, totalAccountTodayActualUsed.value),
+    detail: `总计 ${formatUsagePair(stats.value?.today_quota_used ?? null, stats.value?.today_actual_used ?? null)}`,
     tone: 'neutral',
   },
   {
@@ -1938,6 +1944,17 @@ function formatMoney(value: number | null) {
     return '-'
   }
   return Number(value.toFixed(6)).toString()
+}
+
+function actualUsage(row: Pick<RelayPlatform, 'effective_rate_factor'> | null, value: number | null) {
+  if (value === null || !row || row.effective_rate_factor === null) {
+    return null
+  }
+  return value * row.effective_rate_factor
+}
+
+function formatUsagePair(platformValue: number | null, actualValue: number | null) {
+  return `${formatMoney(platformValue)} / ${formatMoney(actualValue)}`
 }
 
 function formatMultiplier(value: number | null) {

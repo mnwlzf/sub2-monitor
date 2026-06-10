@@ -314,6 +314,8 @@ def test_today_quota_usage_is_attached_to_dashboard_platform_and_accounts() -> N
             provider_type="fake",
             rate_cron="*/5 * * * *",
             balance_cron="*/10 * * * *",
+            recharge_amount=1,
+            received_amount=2,
             model_test_model="gpt-4o-mini",
             status=PlatformStatus.unknown,
         )
@@ -368,9 +370,14 @@ def test_today_quota_usage_is_attached_to_dashboard_platform_and_accounts() -> N
         attach_today_quota_usage(db, [platform])
 
         assert platform.today_quota_used == 6.5
+        assert platform.today_actual_used == 3.25
         assert account_a.today_quota_used == 3.5
+        assert account_a.today_actual_used == 1.75
         assert account_b.today_quota_used == 3
-        assert dashboard(db).today_quota_used == 6.5
+        assert account_b.today_actual_used == 1.5
+        stats = dashboard(db)
+        assert stats.today_quota_used == 6.5
+        assert stats.today_actual_used == 3.25
     finally:
         db.close()
 

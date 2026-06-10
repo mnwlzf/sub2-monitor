@@ -50,6 +50,7 @@ export interface RelayPlatform {
   quota_used: number | null
   quota_limit: number | null
   today_quota_used: number | null
+  today_actual_used: number | null
   low_balance_threshold: number | null
   low_balance_notify_count: number
   latency_ms: number | null
@@ -97,6 +98,7 @@ export interface DashboardStats {
   average_connect_latency_ms: number | null
   average_model_first_token_ms: number | null
   today_quota_used: number | null
+  today_actual_used: number | null
 }
 
 export interface AccountKeySummary {
@@ -118,6 +120,7 @@ export interface AccountMonitor {
   quota_used: number | null
   quota_limit: number | null
   today_quota_used: number | null
+  today_actual_used: number | null
   key_summaries: AccountKeySummary[]
   last_proxy_url: string | null
   last_error: string | null

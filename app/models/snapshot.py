@@ -17,6 +17,7 @@ class PlatformSnapshot(Base):
     quota_used: Mapped[float | None] = mapped_column(Float)
     quota_limit: Mapped[float | None] = mapped_column(Float)
     latency_ms: Mapped[int | None] = mapped_column(Integer)
+    connect_latency_ms: Mapped[int | None] = mapped_column(Integer)
     error_message: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
 

@@ -47,6 +47,7 @@ class RelayPlatform(Base):
     low_balance_threshold: Mapped[float | None] = mapped_column(Float)
     low_balance_notify_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     latency_ms: Mapped[int | None] = mapped_column(Integer)
+    connect_latency_ms: Mapped[int | None] = mapped_column(Integer)
     last_error: Mapped[str | None] = mapped_column(Text)
     checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)

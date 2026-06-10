@@ -60,11 +60,24 @@ def ensure_schema() -> None:
         "rate_next_run_at": "ALTER TABLE relay_platforms ADD COLUMN rate_next_run_at DATETIME",
         "low_balance_threshold": "ALTER TABLE relay_platforms ADD COLUMN low_balance_threshold FLOAT",
         "low_balance_notify_count": "ALTER TABLE relay_platforms ADD COLUMN low_balance_notify_count INTEGER NOT NULL DEFAULT 0",
+        "connect_latency_ms": "ALTER TABLE relay_platforms ADD COLUMN connect_latency_ms INTEGER",
     }
     with engine.begin() as conn:
-        for column, statement in column_sql.items():
-            if column not in existing_columns:
-                conn.execute(text(statement))
+            for column, statement in column_sql.items():
+                if column not in existing_columns:
+                    conn.execute(text(statement))
+
+    if "platform_snapshots" in table_names:
+        snapshot_columns = {
+            column["name"] for column in inspector.get_columns("platform_snapshots")
+        }
+        snapshot_column_sql = {
+            "connect_latency_ms": "ALTER TABLE platform_snapshots ADD COLUMN connect_latency_ms INTEGER",
+        }
+        with engine.begin() as conn:
+            for column, statement in snapshot_column_sql.items():
+                if column not in snapshot_columns:
+                    conn.execute(text(statement))
 
     if "platform_account_monitors" in table_names:
         account_columns = {

@@ -21,7 +21,12 @@ from app.core.database import Base
 from app.models.monitor import PlatformAccountMonitor, PlatformGroupMonitor
 from app.models.notification import NotificationRecipient, NotificationSetting
 from app.models.platform import PlatformStatus, RelayPlatform
-from app.models.snapshot import AccountBalanceSnapshot, DiscoveredChannelRateSnapshot, GroupRateSnapshot
+from app.models.snapshot import (
+    AccountBalanceSnapshot,
+    DiscoveredChannelRateSnapshot,
+    GroupRateSnapshot,
+    PlatformSnapshot,
+)
 from app.schemas.platform import PlatformErrorClearRequest
 from app.services.monitoring import (
     run_platform_balance_monitor,
@@ -279,6 +284,11 @@ def make_session():
 @pytest.fixture(autouse=True)
 def no_monitor_retry_delay(monkeypatch) -> None:
     monkeypatch.setattr("app.services.monitoring.MONITOR_RETRY_DELAY_SECONDS", 0)
+    monkeypatch.setattr("app.services.monitoring.measure_platform_connect_latency_ms", _fake_connect_latency)
+
+
+async def _fake_connect_latency(platform: RelayPlatform) -> int:
+    return 42
 
 
 def test_today_quota_usage_is_attached_to_dashboard_platform_and_accounts() -> None:
@@ -533,6 +543,12 @@ def test_rate_monitor_persists_configured_group_snapshot_without_catalog(monkeyp
         assert refreshed_group.rate_multiplier == 0.25
         assert refreshed_group.rpm_limit == 120
         assert refreshed_group.checked_at is not None
+        refreshed_platform = db.get(RelayPlatform, platform.id)
+        assert refreshed_platform is not None
+        assert refreshed_platform.connect_latency_ms == 42
+        platform_snapshots = db.scalars(select(PlatformSnapshot)).all()
+        assert len(platform_snapshots) == 1
+        assert platform_snapshots[0].connect_latency_ms == 42
     finally:
         db.close()
 

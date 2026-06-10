@@ -53,6 +53,7 @@ export interface RelayPlatform {
   low_balance_threshold: number | null
   low_balance_notify_count: number
   latency_ms: number | null
+  connect_latency_ms: number | null
   last_error: string | null
   checked_at: string | null
   created_at: string
@@ -89,6 +90,7 @@ export interface DashboardStats {
   account_monitor_count: number
   group_monitor_count: number
   average_latency_ms: number | null
+  average_connect_latency_ms: number | null
   today_quota_used: number | null
 }
 

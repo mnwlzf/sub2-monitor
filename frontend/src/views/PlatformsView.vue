@@ -130,6 +130,10 @@
                     <span>额度上限</span>
                     <strong>{{ formatMoney(row.quota_limit) }}</strong>
                   </div>
+                  <div>
+                    <span>连接耗时</span>
+                    <strong>{{ formatLatency(row.connect_latency_ms) }}</strong>
+                  </div>
                 </div>
                 <div class="embedded-account-panel">
                   <div class="embedded-section-label">账号概览</div>
@@ -1230,10 +1234,15 @@ const overviewKpis = computed(() => [
   },
   {
     key: 'latency',
-    label: '平均延迟',
-    value: formatLatency(stats.value?.average_latency_ms ?? null),
-    detail: `异常明细 ${errorSummaryItems.value.length}`,
-    tone: errorSummaryItems.value.length > 0 ? 'bad' : 'neutral',
+    label: '平均连接',
+    value: formatLatency(stats.value?.average_connect_latency_ms ?? null),
+    detail: `接口平均 ${formatLatency(stats.value?.average_latency_ms ?? null)}`,
+    tone:
+      stats.value?.average_connect_latency_ms !== null &&
+      stats.value?.average_connect_latency_ms !== undefined &&
+      stats.value.average_connect_latency_ms >= 1000
+        ? 'warn'
+        : 'neutral',
   },
 ])
 

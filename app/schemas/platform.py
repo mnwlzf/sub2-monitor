@@ -74,6 +74,7 @@ class PlatformUpdate(BaseModel):
     low_balance_threshold: float | None = Field(default=None, ge=0)
     status: PlatformStatus | None = None
     latency_ms: int | None = Field(default=None, ge=0)
+    connect_latency_ms: int | None = Field(default=None, ge=0)
     last_error: str | None = None
 
     @field_validator("balance_cron", "rate_cron")
@@ -119,6 +120,7 @@ class PlatformResponse(BaseModel):
     low_balance_threshold: float | None
     low_balance_notify_count: int
     latency_ms: int | None
+    connect_latency_ms: int | None
     last_error: str | None
     checked_at: datetime | None
     created_at: datetime
@@ -131,6 +133,7 @@ class SnapshotCreate(BaseModel):
     quota_used: float | None = Field(default=None, ge=0)
     quota_limit: float | None = Field(default=None, ge=0)
     latency_ms: int | None = Field(default=None, ge=0)
+    connect_latency_ms: int | None = Field(default=None, ge=0)
     error_message: str | None = None
 
 
@@ -337,4 +340,5 @@ class DashboardStats(BaseModel):
     account_monitor_count: int
     group_monitor_count: int
     average_latency_ms: int | None
+    average_connect_latency_ms: int | None
     today_quota_used: float | None = None

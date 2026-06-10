@@ -1,9 +1,11 @@
 import asyncio
 import json
 import logging
+import ssl
 from dataclasses import dataclass
 from datetime import datetime
 from time import monotonic
+from urllib.parse import urlsplit
 
 from croniter import croniter
 from sqlalchemy import delete, select
@@ -22,6 +24,7 @@ from app.models.snapshot import (
     DiscoveredChannelRateSnapshot,
     DiscoveredGroupRateSnapshot,
     GroupRateSnapshot,
+    PlatformSnapshot,
 )
 from app.services.notification import (
     GroupCatalogChange,
@@ -42,6 +45,7 @@ logger = logging.getLogger(__name__)
 
 MONITOR_MAX_ATTEMPTS = 3
 MONITOR_RETRY_DELAY_SECONDS = 5
+CONNECT_LATENCY_TIMEOUT_SECONDS = 5.0
 
 
 @dataclass(frozen=True)
@@ -200,6 +204,60 @@ def configure_platform_proxies(platform: RelayPlatform) -> list[str]:
     return proxy_urls
 
 
+async def measure_platform_connect_latency_ms(platform: RelayPlatform) -> int | None:
+    parts = urlsplit(platform.base_url)
+    host = parts.hostname
+    if not host:
+        return None
+    port = parts.port
+    if port is None:
+        port = 443 if parts.scheme == "https" else 80
+
+    ssl_context = ssl.create_default_context() if parts.scheme == "https" else None
+    started_at = monotonic()
+    try:
+        _, writer = await asyncio.wait_for(
+            asyncio.open_connection(host, port, ssl=ssl_context, server_hostname=host if ssl_context else None),
+            timeout=CONNECT_LATENCY_TIMEOUT_SECONDS,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.debug(
+            "connect latency probe failed platform_id=%s base_url=%s error=%s",
+            platform.id,
+            platform.base_url,
+            error_text(exc),
+        )
+        return None
+
+    connect_latency_ms = max(0, round((monotonic() - started_at) * 1000))
+    writer.close()
+    try:
+        await writer.wait_closed()
+    except Exception:  # noqa: BLE001
+        pass
+    return connect_latency_ms
+
+
+async def update_platform_connect_latency(platform: RelayPlatform) -> None:
+    platform.connect_latency_ms = await measure_platform_connect_latency_ms(platform)
+
+
+def add_platform_snapshot(db: Session, platform: RelayPlatform, created_at: datetime | None = None) -> None:
+    db.add(
+        PlatformSnapshot(
+            platform_id=platform.id,
+            status=platform.status,
+            balance=platform.balance,
+            quota_used=platform.quota_used,
+            quota_limit=platform.quota_limit,
+            latency_ms=platform.latency_ms,
+            connect_latency_ms=platform.connect_latency_ms,
+            error_message=platform.last_error,
+            created_at=created_at or platform.checked_at or utcnow(),
+        )
+    )
+
+
 async def run_platform_balance_monitor(db: Session, platform_id: int) -> RelayPlatform:
     return await retry_platform_monitor(db, platform_id, _run_platform_balance_monitor_once)
 
@@ -222,6 +280,7 @@ async def _run_platform_balance_monitor_once(db: Session, platform_id: int) -> R
 
     previous_newapi_login_site_url: str | None = None
     configure_platform_proxies(platform)
+    await update_platform_connect_latency(platform)
     for account in platform.account_monitors:
         if not account.enabled:
             continue
@@ -316,6 +375,7 @@ async def _run_platform_balance_monitor_once(db: Session, platform_id: int) -> R
     platform.balance_last_run_at = now
     platform.balance_next_run_at = croniter(platform.balance_cron, now).get_next(type(now))
     update_platform_status(platform, errors)
+    add_platform_snapshot(db, platform, platform.checked_at or now)
     notify_low_balance(db, platform)
     db.add(platform)
     db.commit()
@@ -381,6 +441,7 @@ async def run_platform_rate_monitor(db: Session, platform_id: int) -> RelayPlatf
 async def _run_platform_rate_monitor_once(db: Session, platform_id: int) -> RelayPlatform:
     platform = load_monitor_platform(db, platform_id)
     configure_platform_proxies(platform)
+    await update_platform_connect_latency(platform)
 
     strategy = provider_registry.get(platform.provider_type)
     errors: list[str] = []
@@ -638,6 +699,7 @@ async def _run_platform_rate_monitor_once(db: Session, platform_id: int) -> Rela
     platform.rate_next_run_at = croniter(platform.rate_cron, now).get_next(type(now))
     notify_group_rate_changes(db, platform, rate_changes, group_catalog_changes)
     update_platform_status(platform, errors)
+    add_platform_snapshot(db, platform, platform.checked_at or now)
     db.add(platform)
     db.commit()
     db.refresh(platform)

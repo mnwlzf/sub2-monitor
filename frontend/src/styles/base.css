@@ -979,16 +979,54 @@ body {
   line-height: 1.2;
 }
 
+.usage-pair {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.usage-pair span {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 6px;
+  align-items: baseline;
+  min-width: 0;
+  color: #0f172a;
+  line-height: 1.25;
+}
+
+.usage-pair em {
+  color: #64748b;
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 700;
+}
+
+.usage-pair.summary {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, max-content));
+  column-gap: 18px;
+  row-gap: 2px;
+  font-size: 26px;
+}
+
+.usage-pair.summary span {
+  grid-template-columns: auto auto;
+}
+
+.usage-pair.table {
+  font-size: 13px;
+}
+
 .ops-summary-main em,
 .ops-kpi em {
   display: block;
-  overflow: hidden;
   margin-top: 3px;
   color: #94a3b8;
   font-size: 12px;
   font-style: normal;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  line-height: 1.35;
 }
 
 .ops-summary-actions {
@@ -1173,12 +1211,9 @@ body {
 .embedded-platform-metrics strong {
   display: block;
   margin-top: 4px;
-  overflow: hidden;
   color: #0f172a;
   font-size: 16px;
   line-height: 1.25;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .embedded-platform-metrics .timestamp strong {
@@ -1306,13 +1341,10 @@ body {
 
 .embedded-account-values strong {
   display: block;
-  overflow: hidden;
   margin-top: 3px;
   color: #0f172a;
   font-size: 15px;
   line-height: 1.25;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .embedded-group-rate-list {

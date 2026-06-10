@@ -1,4 +1,5 @@
 import asyncio
+import sys
 from datetime import datetime
 from types import SimpleNamespace
 
@@ -18,6 +19,8 @@ from app.api.platforms import (
     list_platform_details,
 )
 from app.core.database import Base
+from app.core.config import Sub2APIDatabaseSettings
+from app.core.security import encrypt_secret
 from app.models.monitor import PlatformAccountMonitor, PlatformGroupMonitor
 from app.models.notification import NotificationRecipient, NotificationSetting
 from app.models.platform import PlatformStatus, RelayPlatform
@@ -29,6 +32,10 @@ from app.models.snapshot import (
 )
 from app.schemas.platform import PlatformErrorClearRequest
 from app.services.monitoring import (
+    ModelFirstTokenResult,
+    Sub2APIModelTestAccount,
+    load_sub2api_model_test_account,
+    measure_platform_model_first_token_ms as real_measure_platform_model_first_token_ms,
     run_platform_balance_monitor,
     run_platform_monitor,
     run_platform_rate_monitor,
@@ -285,10 +292,17 @@ def make_session():
 def no_monitor_retry_delay(monkeypatch) -> None:
     monkeypatch.setattr("app.services.monitoring.MONITOR_RETRY_DELAY_SECONDS", 0)
     monkeypatch.setattr("app.services.monitoring.measure_platform_connect_latency_ms", _fake_connect_latency)
+    monkeypatch.setattr("app.services.monitoring.measure_platform_model_first_token_ms", _fake_first_token)
 
 
 async def _fake_connect_latency(platform: RelayPlatform) -> int:
     return 42
+
+
+async def _fake_first_token(platform: RelayPlatform) -> SimpleNamespace:
+    if not platform.model_test_model:
+        return SimpleNamespace(first_token_ms=None, error=None)
+    return SimpleNamespace(first_token_ms=123, error=None)
 
 
 def test_today_quota_usage_is_attached_to_dashboard_platform_and_accounts() -> None:
@@ -300,6 +314,7 @@ def test_today_quota_usage_is_attached_to_dashboard_platform_and_accounts() -> N
             provider_type="fake",
             rate_cron="*/5 * * * *",
             balance_cron="*/10 * * * *",
+            model_test_model="gpt-4o-mini",
             status=PlatformStatus.unknown,
         )
         db.add(platform)
@@ -507,6 +522,156 @@ def test_platform_details_list_batches_detail_payloads() -> None:
         db.close()
 
 
+def test_load_sub2api_model_test_account_uses_first_matching_account(monkeypatch) -> None:
+    execute_calls: list[tuple[str, object]] = []
+
+    class StubCursor:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return None
+
+        def execute(self, sql, params):
+            execute_calls.append((sql, params))
+
+        def fetchone(self):
+            return (
+                10,
+                "Account A",
+                {"base_url": "https://relay.example.com/", "api_key": "sk-account-a"},
+                "https://relay.example.com",
+            )
+
+    class StubConnection:
+        read_only = False
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return None
+
+        def cursor(self):
+            return StubCursor()
+
+    class StubPsycopg:
+        @staticmethod
+        def connect(*args, **kwargs):
+            assert kwargs["connect_timeout"] == 5
+            return StubConnection()
+
+    monkeypatch.setitem(sys.modules, "psycopg", StubPsycopg)
+    monkeypatch.setattr(
+        "app.services.monitoring.get_settings",
+        lambda: SimpleNamespace(
+            sub2api=SimpleNamespace(
+                database=Sub2APIDatabaseSettings(
+                    host="postgres",
+                    user="sub2api",
+                    password="secret",
+                    dbname="sub2api",
+                )
+            )
+        ),
+    )
+    platform = RelayPlatform(
+        id=1,
+        name="Relay",
+        base_url="https://relay.example.com/",
+        provider_type="fake",
+        rate_cron="*/10 * * * *",
+        balance_cron="*/10 * * * *",
+        status=PlatformStatus.unknown,
+    )
+
+    account, error = load_sub2api_model_test_account(platform)
+
+    assert error is None
+    assert account == Sub2APIModelTestAccount(
+        account_id=10,
+        account_name="Account A",
+        api_key="sk-account-a",
+        matched_base_url="https://relay.example.com",
+    )
+    sql, params = execute_calls[0]
+    assert "ORDER BY id ASC" in sql
+    assert "LIMIT 1" in sql
+    assert params == {"base_url": "https://relay.example.com"}
+
+
+def test_model_first_token_uses_sub2api_account_api_key(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    class StubStream:
+        status_code = 200
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def aiter_lines(self):
+            yield 'data: {"choices":[{"delta":{"content":"o"}}]}'
+
+    class StubAsyncClient:
+        def __init__(self, **kwargs):
+            captured["client_kwargs"] = kwargs
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        def stream(self, method, url, **kwargs):
+            captured["method"] = method
+            captured["url"] = url
+            captured["headers"] = kwargs["headers"]
+            captured["json"] = kwargs["json"]
+            return StubStream()
+
+    monkeypatch.setattr("app.services.monitoring.httpx.AsyncClient", StubAsyncClient)
+    monkeypatch.setattr(
+        "app.services.monitoring.load_sub2api_model_test_account",
+        lambda platform: (
+            Sub2APIModelTestAccount(
+                account_id=10,
+                account_name="Account A",
+                api_key="sk-account-a",
+                matched_base_url="https://relay.example.com",
+            ),
+            None,
+        ),
+    )
+    platform = RelayPlatform(
+        id=1,
+        name="Relay",
+        base_url="https://relay.example.com",
+        provider_type="fake",
+        api_key_encrypted=encrypt_secret("sk-platform"),
+        auth_header_name="Authorization",
+        auth_header_prefix="Bearer",
+        model_test_model="gpt-4o-mini",
+        rate_cron="*/10 * * * *",
+        balance_cron="*/10 * * * *",
+        status=PlatformStatus.unknown,
+    )
+
+    result: ModelFirstTokenResult = asyncio.run(real_measure_platform_model_first_token_ms(platform))
+
+    assert result.error is None
+    assert result.first_token_ms is not None
+    assert captured["url"] == "https://relay.example.com/v1/chat/completions"
+    assert captured["headers"]["Authorization"] == "Bearer sk-account-a"
+    assert captured["json"] == {
+        "model": "gpt-4o-mini",
+        "messages": [{"role": "user", "content": "hi"}],
+        "stream": True,
+    }
+
+
 def test_rate_monitor_persists_configured_group_snapshot_without_catalog(monkeypatch) -> None:
     monkeypatch.setitem(provider_registry._strategies, "fake", FakeProvider())
     db = make_session()
@@ -517,6 +682,7 @@ def test_rate_monitor_persists_configured_group_snapshot_without_catalog(monkeyp
             provider_type="fake",
             rate_cron="*/5 * * * *",
             balance_cron="*/10 * * * *",
+            model_test_model="gpt-4o-mini",
             status=PlatformStatus.unknown,
         )
         db.add(platform)
@@ -546,9 +712,11 @@ def test_rate_monitor_persists_configured_group_snapshot_without_catalog(monkeyp
         refreshed_platform = db.get(RelayPlatform, platform.id)
         assert refreshed_platform is not None
         assert refreshed_platform.connect_latency_ms == 42
+        assert refreshed_platform.model_first_token_ms == 123
         platform_snapshots = db.scalars(select(PlatformSnapshot)).all()
         assert len(platform_snapshots) == 1
         assert platform_snapshots[0].connect_latency_ms == 42
+        assert platform_snapshots[0].model_first_token_ms == 123
     finally:
         db.close()
 

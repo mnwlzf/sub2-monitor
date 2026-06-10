@@ -8,9 +8,11 @@ from time import monotonic
 from urllib.parse import urlsplit
 
 from croniter import croniter
+import httpx
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session, selectinload
 
+from app.core.security import decrypt_secret
 from app.core.security import utcnow
 from app.models.monitor import (
     PlatformAccountMonitor,
@@ -40,12 +42,15 @@ from app.services.provider_strategy import (
 )
 from app.core.config import get_settings
 from app.services.sub2api_proxy import load_platform_proxy_urls, masked_proxy_url
+from app.services.sub2api_schedulable import normalize_base_url
 
 logger = logging.getLogger(__name__)
 
 MONITOR_MAX_ATTEMPTS = 3
 MONITOR_RETRY_DELAY_SECONDS = 5
 CONNECT_LATENCY_TIMEOUT_SECONDS = 5.0
+MODEL_TEST_TIMEOUT_SECONDS = 30.0
+MODEL_TEST_PROMPT = "hi"
 
 
 @dataclass(frozen=True)
@@ -54,6 +59,45 @@ class GroupCatalogItem:
     name: str
     rate_multiplier: float | None
     rpm_limit: int | None
+
+
+@dataclass(frozen=True)
+class ModelFirstTokenResult:
+    first_token_ms: int | None = None
+    error: str | None = None
+
+
+@dataclass(frozen=True)
+class Sub2APIModelTestAccount:
+    account_id: int
+    account_name: str | None
+    api_key: str
+    matched_base_url: str
+
+
+SUB2API_MODEL_TEST_ACCOUNT_SQL = """
+SELECT
+    id,
+    name,
+    credentials,
+    CASE
+        WHEN trim(trailing '/' FROM coalesce(credentials->>'base_url', '')) = trim(trailing '/' FROM %(base_url)s)
+            THEN trim(trailing '/' FROM coalesce(credentials->>'base_url', ''))
+        ELSE trim(trailing '/' FROM coalesce(extra->>'custom_base_url', ''))
+    END AS matched_base_url
+FROM accounts
+WHERE deleted_at IS NULL
+  AND trim(coalesce(credentials->>'api_key', '')) <> ''
+  AND (
+    trim(trailing '/' FROM coalesce(credentials->>'base_url', '')) = trim(trailing '/' FROM %(base_url)s)
+    OR (
+      coalesce(extra->>'custom_base_url_enabled', 'false') = 'true'
+      AND trim(trailing '/' FROM coalesce(extra->>'custom_base_url', '')) = trim(trailing '/' FROM %(base_url)s)
+    )
+  )
+ORDER BY id ASC
+LIMIT 1
+"""
 
 
 def error_text(error: BaseException | str | None) -> str:
@@ -242,6 +286,182 @@ async def update_platform_connect_latency(platform: RelayPlatform) -> None:
     platform.connect_latency_ms = await measure_platform_connect_latency_ms(platform)
 
 
+def model_test_headers(platform: RelayPlatform, api_key: str | None) -> dict[str, str]:
+    if not api_key:
+        return {}
+    value = api_key
+    prefix = (platform.auth_header_prefix or "").strip()
+    if prefix and not api_key.lower().startswith(prefix.lower() + " "):
+        value = f"{prefix} {api_key}"
+    return {
+        platform.auth_header_name or "Authorization": value,
+        "Accept": "text/event-stream",
+        "Content-Type": "application/json",
+    }
+
+
+def platform_model_test_headers(platform: RelayPlatform) -> dict[str, str]:
+    return model_test_headers(platform, decrypt_secret(platform.api_key_encrypted))
+
+
+def credentials_api_key(credentials: object) -> str | None:
+    if not isinstance(credentials, dict):
+        return None
+    api_key = credentials.get("api_key")
+    if api_key is None:
+        return None
+    text = str(api_key).strip()
+    return text or None
+
+
+def sub2api_model_test_account_from_row(row: tuple[object, ...]) -> Sub2APIModelTestAccount | None:
+    api_key = credentials_api_key(row[2] if len(row) > 2 else None)
+    if not api_key:
+        return None
+    return Sub2APIModelTestAccount(
+        account_id=int(row[0]),
+        account_name=str(row[1]) if row[1] is not None else None,
+        api_key=api_key,
+        matched_base_url=normalize_base_url(str(row[3] or "")),
+    )
+
+
+def load_sub2api_model_test_account(
+    platform: RelayPlatform,
+) -> tuple[Sub2APIModelTestAccount | None, str | None]:
+    database = get_settings().sub2api.database
+    normalized_base_url = normalize_base_url(platform.base_url)
+    if not normalized_base_url:
+        return None, "模型测试缺少平台 base_url"
+    if not database.is_configured:
+        return None, "模型测试缺少 Sub2API 数据库配置"
+
+    try:
+        import psycopg
+    except ImportError:
+        return None, "模型测试无法读取 Sub2API 账号：psycopg is not installed"
+
+    try:
+        with psycopg.connect(
+            database.postgresql_dsn(),
+            connect_timeout=database.connect_timeout_seconds,
+        ) as conn:
+            conn.read_only = True
+            with conn.cursor() as cursor:
+                cursor.execute(SUB2API_MODEL_TEST_ACCOUNT_SQL, {"base_url": normalized_base_url})
+                row = cursor.fetchone()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "sub2api model test account lookup failed platform_id=%s base_url=%s error=%s",
+            platform.id,
+            normalized_base_url,
+            exc,
+        )
+        return None, f"模型测试无法读取 Sub2API 账号：{error_text(exc)}"
+
+    if row is None:
+        return None, "模型测试未找到匹配 base_url 且包含 API Key 的 Sub2API 账号"
+    account = sub2api_model_test_account_from_row(row)
+    if account is None:
+        return None, "模型测试匹配到的 Sub2API 账号缺少 credentials.api_key"
+    return account, None
+
+
+def openai_chat_completions_url(base_url: str) -> str:
+    base = base_url.rstrip("/")
+    if base.endswith("/v1"):
+        return f"{base}/chat/completions"
+    return f"{base}/v1/chat/completions"
+
+
+def openai_chat_completions_payload(model: str) -> dict[str, object]:
+    return {
+        "model": model,
+        "messages": [{"role": "user", "content": MODEL_TEST_PROMPT}],
+        "stream": True,
+    }
+
+
+def sse_data_from_line(line: str) -> str | None:
+    line = line.strip()
+    if not line.startswith("data:"):
+        return None
+    return line.removeprefix("data:").strip()
+
+
+def chat_completion_chunk_has_token(data: object) -> bool:
+    if not isinstance(data, dict):
+        return False
+    choices = data.get("choices")
+    if not isinstance(choices, list):
+        return False
+    for choice in choices:
+        if not isinstance(choice, dict):
+            continue
+        delta = choice.get("delta")
+        if isinstance(delta, dict) and isinstance(delta.get("content"), str) and delta["content"]:
+            return True
+        message = choice.get("message")
+        if isinstance(message, dict) and isinstance(message.get("content"), str) and message["content"]:
+            return True
+    return False
+
+
+async def measure_platform_model_first_token_ms(platform: RelayPlatform) -> ModelFirstTokenResult:
+    model = (platform.model_test_model or "").strip()
+    if not model:
+        return ModelFirstTokenResult()
+    account, account_error = load_sub2api_model_test_account(platform)
+    if account_error:
+        return ModelFirstTokenResult(error=account_error)
+    headers = model_test_headers(platform, account.api_key if account else None)
+    if not headers:
+        return ModelFirstTokenResult(error="模型测试缺少 API Key")
+
+    url = openai_chat_completions_url(platform.base_url)
+    started_at = monotonic()
+    try:
+        async with httpx.AsyncClient(timeout=MODEL_TEST_TIMEOUT_SECONDS) as client:
+            async with client.stream(
+                "POST",
+                url,
+                headers=headers,
+                json=openai_chat_completions_payload(model),
+            ) as response:
+                if response.status_code >= 400:
+                    body = await response.aread()
+                    text = body.decode("utf-8", errors="replace").strip()
+                    return ModelFirstTokenResult(
+                        error=f"模型测试 HTTP {response.status_code}: {text[:500]}",
+                    )
+                async for line in response.aiter_lines():
+                    payload = sse_data_from_line(line)
+                    if not payload:
+                        continue
+                    if payload == "[DONE]":
+                        break
+                    try:
+                        data = json.loads(payload)
+                    except json.JSONDecodeError:
+                        continue
+                    if isinstance(data, dict) and isinstance(data.get("error"), dict):
+                        message = data["error"].get("message") or "模型测试返回错误"
+                        return ModelFirstTokenResult(error=str(message))
+                    if chat_completion_chunk_has_token(data):
+                        return ModelFirstTokenResult(
+                            first_token_ms=max(0, round((monotonic() - started_at) * 1000)),
+                        )
+    except Exception as exc:  # noqa: BLE001
+        return ModelFirstTokenResult(error=error_text(exc))
+    return ModelFirstTokenResult(error="模型测试未收到首 token")
+
+
+async def update_platform_model_first_token(platform: RelayPlatform) -> None:
+    result = await measure_platform_model_first_token_ms(platform)
+    platform.model_first_token_ms = result.first_token_ms
+    platform.model_test_error = result.error
+
+
 def add_platform_snapshot(db: Session, platform: RelayPlatform, created_at: datetime | None = None) -> None:
     db.add(
         PlatformSnapshot(
@@ -252,6 +472,8 @@ def add_platform_snapshot(db: Session, platform: RelayPlatform, created_at: date
             quota_limit=platform.quota_limit,
             latency_ms=platform.latency_ms,
             connect_latency_ms=platform.connect_latency_ms,
+            model_first_token_ms=platform.model_first_token_ms,
+            model_test_error=platform.model_test_error,
             error_message=platform.last_error,
             created_at=created_at or platform.checked_at or utcnow(),
         )
@@ -281,6 +503,7 @@ async def _run_platform_balance_monitor_once(db: Session, platform_id: int) -> R
     previous_newapi_login_site_url: str | None = None
     configure_platform_proxies(platform)
     await update_platform_connect_latency(platform)
+    await update_platform_model_first_token(platform)
     for account in platform.account_monitors:
         if not account.enabled:
             continue
@@ -442,6 +665,7 @@ async def _run_platform_rate_monitor_once(db: Session, platform_id: int) -> Rela
     platform = load_monitor_platform(db, platform_id)
     configure_platform_proxies(platform)
     await update_platform_connect_latency(platform)
+    await update_platform_model_first_token(platform)
 
     strategy = provider_registry.get(platform.provider_type)
     errors: list[str] = []

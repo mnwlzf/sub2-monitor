@@ -134,6 +134,13 @@
                     <span>连接耗时</span>
                     <strong>{{ formatLatency(row.connect_latency_ms) }}</strong>
                   </div>
+                  <div>
+                    <span>首 token</span>
+                    <strong>{{ formatLatency(row.model_first_token_ms) }}</strong>
+                  </div>
+                </div>
+                <div v-if="row.model_test_error" class="embedded-account-error">
+                  模型测试失败（{{ row.model_test_model || '未配置模型' }}）：{{ row.model_test_error }}
                 </div>
                 <div class="embedded-account-panel">
                   <div class="embedded-section-label">账号概览</div>
@@ -646,6 +653,10 @@
             show-password
             type="password"
           />
+        </el-form-item>
+        <el-form-item label="测试模型">
+          <el-input v-model="form.model_test_model" placeholder="例如 gpt-4o-mini；留空则不测试首 token" />
+          <div class="form-help">采集时会按站点地址调用 /v1/chat/completions，记录流式首 token 响应时间。</div>
         </el-form-item>
         <el-form-item
           :label="form.provider_type === 'newapi' ? '采集 Cron' : '余额 Cron'"
@@ -1236,7 +1247,7 @@ const overviewKpis = computed(() => [
     key: 'latency',
     label: '平均连接',
     value: formatLatency(stats.value?.average_connect_latency_ms ?? null),
-    detail: `接口平均 ${formatLatency(stats.value?.average_latency_ms ?? null)}`,
+    detail: `首 token ${formatLatency(stats.value?.average_model_first_token_ms ?? null)}`,
     tone:
       stats.value?.average_connect_latency_ms !== null &&
       stats.value?.average_connect_latency_ms !== undefined &&
@@ -1264,6 +1275,7 @@ const form = reactive<PlatformPayload>({
   quota_used: null,
   quota_limit: null,
   low_balance_threshold: null,
+  model_test_model: null,
 })
 
 const accountForm = reactive<AccountMonitorPayload>({
@@ -1331,6 +1343,7 @@ function resetForm() {
     quota_used: null,
     quota_limit: null,
     low_balance_threshold: null,
+    model_test_model: null,
   })
 }
 
@@ -1410,6 +1423,7 @@ function openEdit(row: RelayPlatform) {
     quota_used: row.quota_used,
     quota_limit: row.quota_limit,
     low_balance_threshold: row.low_balance_threshold,
+    model_test_model: row.model_test_model,
   })
   dialogVisible.value = true
 }

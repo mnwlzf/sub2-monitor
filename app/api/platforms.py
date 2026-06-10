@@ -169,6 +169,9 @@ def dashboard(db: Session = Depends(get_db)) -> DashboardStats:
     connect_latencies = [
         item.connect_latency_ms for item in platforms if item.connect_latency_ms is not None
     ]
+    model_first_tokens = [
+        item.model_first_token_ms for item in platforms if item.model_first_token_ms is not None
+    ]
     today_usages = today_quota_usage_by_account(db)
     return DashboardStats(
         total_platforms=len(platforms),
@@ -182,6 +185,9 @@ def dashboard(db: Session = Depends(get_db)) -> DashboardStats:
         average_latency_ms=round(sum(latencies) / len(latencies)) if latencies else None,
         average_connect_latency_ms=round(sum(connect_latencies) / len(connect_latencies))
         if connect_latencies
+        else None,
+        average_model_first_token_ms=round(sum(model_first_tokens) / len(model_first_tokens))
+        if model_first_tokens
         else None,
         today_quota_used=sum(today_usages.values()) if today_usages else None,
     )
@@ -862,6 +868,8 @@ def add_platform_snapshot(
     platform.quota_limit = payload.quota_limit
     platform.latency_ms = payload.latency_ms
     platform.connect_latency_ms = payload.connect_latency_ms
+    platform.model_first_token_ms = payload.model_first_token_ms
+    platform.model_test_error = payload.model_test_error
     platform.last_error = payload.error_message
     platform.checked_at = utcnow()
     db.add(snapshot)

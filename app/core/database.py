@@ -61,11 +61,14 @@ def ensure_schema() -> None:
         "low_balance_threshold": "ALTER TABLE relay_platforms ADD COLUMN low_balance_threshold FLOAT",
         "low_balance_notify_count": "ALTER TABLE relay_platforms ADD COLUMN low_balance_notify_count INTEGER NOT NULL DEFAULT 0",
         "connect_latency_ms": "ALTER TABLE relay_platforms ADD COLUMN connect_latency_ms INTEGER",
+        "model_test_model": "ALTER TABLE relay_platforms ADD COLUMN model_test_model VARCHAR(160)",
+        "model_first_token_ms": "ALTER TABLE relay_platforms ADD COLUMN model_first_token_ms INTEGER",
+        "model_test_error": "ALTER TABLE relay_platforms ADD COLUMN model_test_error TEXT",
     }
     with engine.begin() as conn:
-            for column, statement in column_sql.items():
-                if column not in existing_columns:
-                    conn.execute(text(statement))
+        for column, statement in column_sql.items():
+            if column not in existing_columns:
+                conn.execute(text(statement))
 
     if "platform_snapshots" in table_names:
         snapshot_columns = {
@@ -73,6 +76,8 @@ def ensure_schema() -> None:
         }
         snapshot_column_sql = {
             "connect_latency_ms": "ALTER TABLE platform_snapshots ADD COLUMN connect_latency_ms INTEGER",
+            "model_first_token_ms": "ALTER TABLE platform_snapshots ADD COLUMN model_first_token_ms INTEGER",
+            "model_test_error": "ALTER TABLE platform_snapshots ADD COLUMN model_test_error TEXT",
         }
         with engine.begin() as conn:
             for column, statement in snapshot_column_sql.items():

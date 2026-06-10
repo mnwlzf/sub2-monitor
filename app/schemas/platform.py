@@ -334,9 +334,25 @@ class GroupRateHistorySeries(BaseModel):
     points: list[GroupRateHistoryPoint]
 
 
+class PlatformFirstTokenHistoryPoint(BaseModel):
+    at: datetime
+    model_first_token_ms: int | None
+    connect_latency_ms: int | None
+    status: PlatformStatus
+    model_test_error: str | None
+    error_message: str | None
+
+
+class PlatformFirstTokenHistorySeries(BaseModel):
+    platform_id: int
+    platform_name: str
+    points: list[PlatformFirstTokenHistoryPoint]
+
+
 class EmbeddedHistoryResponse(BaseModel):
     balances: dict[int, list[AccountBalanceHistorySeries]]
     rates: dict[int, list[GroupRateHistorySeries]]
+    first_tokens: dict[int, PlatformFirstTokenHistorySeries]
 
 
 class DashboardStats(BaseModel):

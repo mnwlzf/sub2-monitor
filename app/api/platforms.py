@@ -37,6 +37,7 @@ from app.schemas.platform import (
     GroupMonitorUpdate,
     MonitorRunResponse,
     PlatformErrorClearRequest,
+    PlatformFirstTokenHistorySeries,
     PlatformCreate,
     PlatformDetailResponse,
     PlatformResponse,
@@ -506,7 +507,49 @@ def get_embedded_histories(
     return EmbeddedHistoryResponse(
         balances=build_balance_history_for_platforms(db, platforms, now),
         rates=build_rate_history_for_platforms(db, platforms, now),
+        first_tokens=build_first_token_history_for_platforms(db, platforms, now),
     )
+
+
+def build_first_token_history_for_platforms(
+    db: Session,
+    platforms: list[RelayPlatform],
+    now: datetime,
+) -> dict[int, PlatformFirstTokenHistorySeries]:
+    if not platforms:
+        return {}
+    platform_ids = [platform.id for platform in platforms]
+    since = now - timedelta(days=7)
+    snapshots = db.scalars(
+        select(PlatformSnapshot)
+        .where(
+            PlatformSnapshot.platform_id.in_(platform_ids),
+            PlatformSnapshot.created_at >= since,
+        )
+        .order_by(PlatformSnapshot.platform_id.asc(), PlatformSnapshot.created_at.asc())
+    ).all()
+    by_platform: dict[int, list[PlatformSnapshot]] = {}
+    for snapshot in snapshots:
+        by_platform.setdefault(snapshot.platform_id, []).append(snapshot)
+
+    return {
+        platform.id: PlatformFirstTokenHistorySeries(
+            platform_id=platform.id,
+            platform_name=platform.name,
+            points=[
+                {
+                    "at": snapshot.created_at,
+                    "model_first_token_ms": snapshot.model_first_token_ms,
+                    "connect_latency_ms": snapshot.connect_latency_ms,
+                    "status": snapshot.status,
+                    "model_test_error": snapshot.model_test_error,
+                    "error_message": snapshot.error_message,
+                }
+                for snapshot in by_platform.get(platform.id, [])
+            ],
+        )
+        for platform in platforms
+    }
 
 
 def build_balance_history_for_platforms(

@@ -61,6 +61,13 @@ const menuItems = [
     route: { name: 'platforms', query: { view: 'balances' } },
   },
   {
+    key: 'firstTokens',
+    group: '趋势',
+    label: '首 token 趋势',
+    description: '按平台观察网络响应状态',
+    route: { name: 'platforms', query: { view: 'firstTokens' } },
+  },
+  {
     key: 'rates',
     group: '趋势',
     label: '倍率趋势',

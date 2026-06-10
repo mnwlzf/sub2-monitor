@@ -462,6 +462,13 @@ def test_embedded_histories_batches_balances_and_rates() -> None:
                     rpm_limit=120,
                     created_at=now,
                 ),
+                PlatformSnapshot(
+                    platform_id=platform.id,
+                    status=PlatformStatus.healthy,
+                    connect_latency_ms=42,
+                    model_first_token_ms=123,
+                    created_at=now,
+                ),
             ]
         )
         db.commit()
@@ -474,6 +481,10 @@ def test_embedded_histories_batches_balances_and_rates() -> None:
         latest_rate = [point for point in histories.rates[platform.id][0].points if point.rate_multiplier is not None]
         assert latest_rate[-1].rate_multiplier == 0.25
         assert latest_rate[-1].effective_rate_multiplier == 0.5
+        first_token_series = histories.first_tokens[platform.id]
+        assert first_token_series.platform_name == "Embedded History"
+        assert first_token_series.points[-1].model_first_token_ms == 123
+        assert first_token_series.points[-1].connect_latency_ms == 42
     finally:
         db.close()
 
@@ -518,6 +529,7 @@ def test_platform_details_list_batches_detail_payloads() -> None:
         assert len(details[0].group_monitors) == 1
         assert platform.id in histories.balances
         assert platform.id in histories.rates
+        assert platform.id in histories.first_tokens
     finally:
         db.close()
 

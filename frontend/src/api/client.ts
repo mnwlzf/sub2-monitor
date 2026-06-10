@@ -240,9 +240,25 @@ export interface GroupRateHistorySeries {
   points: GroupRateHistoryPoint[]
 }
 
+export interface PlatformFirstTokenHistoryPoint {
+  at: string
+  model_first_token_ms: number | null
+  connect_latency_ms: number | null
+  status: PlatformStatus
+  model_test_error: string | null
+  error_message: string | null
+}
+
+export interface PlatformFirstTokenHistorySeries {
+  platform_id: number
+  platform_name: string
+  points: PlatformFirstTokenHistoryPoint[]
+}
+
 export interface EmbeddedHistoryResponse {
   balances: Record<number, AccountBalanceHistorySeries[]>
   rates: Record<number, GroupRateHistorySeries[]>
+  first_tokens: Record<number, PlatformFirstTokenHistorySeries>
 }
 
 export interface NotificationSetting {

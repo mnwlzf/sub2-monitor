@@ -342,6 +342,30 @@
           </section>
         </div>
 
+        <div v-else-if="activeEmbeddedView === 'firstTokens'" class="embedded-panel-list">
+          <section v-for="group in previewPlatformGroups" :key="`first-tokens-${group.key}`" class="embedded-provider-group">
+            <div class="embedded-section-label">{{ group.label }}</div>
+            <article v-for="row in group.items" :key="row.id" class="embedded-trends-section embedded-rate-section">
+              <div class="embedded-platform-title compact embedded-rate-header">
+                <div>
+                  <strong>{{ row.name }}</strong>
+                  <span>{{ row.model_test_model ? `测试模型：${row.model_test_model}` : '未配置测试模型' }}</span>
+                </div>
+                <span>最近 7 天首 token</span>
+              </div>
+              <div v-if="platformFirstTokenHistory[row.id]" class="embedded-rate-platform-card">
+                <FirstTokenLineChart :series="platformFirstTokenHistory[row.id]" />
+                <div class="history-axis rate-history-axis">
+                  <span>{{ platformFirstTokenFirstDate(row.id) }}</span>
+                  <span>首 token 趋势 / 当前 {{ formatLatency(row.model_first_token_ms) }}</span>
+                  <span>{{ platformFirstTokenLastDate(row.id) }}</span>
+                </div>
+              </div>
+              <div v-else class="embedded-empty">暂无首 token 趋势</div>
+            </article>
+          </section>
+        </div>
+
         <div v-else-if="activeEmbeddedView === 'rates'" class="embedded-panel-list">
           <section v-for="group in previewPlatformGroups" :key="`rates-${group.key}`" class="embedded-provider-group">
             <div class="embedded-section-label">{{ group.label }}</div>
@@ -1004,6 +1028,7 @@ import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 
 import BalanceLineChart from '@/components/BalanceLineChart.vue'
+import FirstTokenLineChart from '@/components/FirstTokenLineChart.vue'
 import RateLineChart from '@/components/RateLineChart.vue'
 import {
   clearPlatformError,
@@ -1044,6 +1069,7 @@ import {
   type NotificationRecipientPayload,
   type NotificationSetting,
   type NotificationSettingPayload,
+  type PlatformFirstTokenHistorySeries,
   type PlatformDetail,
   type PlatformPayload,
   type PlatformStatus,
@@ -1060,6 +1086,7 @@ const stats = ref<DashboardStats | null>(null)
 const detail = ref<PlatformDetail | null>(null)
 const platformBalanceHistory = ref<Record<number, AccountBalanceHistorySeries[]>>({})
 const platformRateHistory = ref<Record<number, GroupRateHistorySeries[]>>({})
+const platformFirstTokenHistory = ref<Record<number, PlatformFirstTokenHistorySeries>>({})
 const embeddedHistoriesLoaded = ref(false)
 const embeddedHistoriesLoading = ref(false)
 const notificationSetting = ref<NotificationSetting | null>(null)
@@ -1080,9 +1107,9 @@ const editing = ref<RelayPlatform | null>(null)
 const accountEditing = ref<AccountMonitor | null>(null)
 const formRef = ref<FormInstance>()
 const collapsedGroupRatePanels = ref<Array<number | string>>([])
-type EmbeddedViewKey = 'overview' | 'balances' | 'rates' | 'groupRates' | 'notifications' | 'settings'
+type EmbeddedViewKey = 'overview' | 'balances' | 'firstTokens' | 'rates' | 'groupRates' | 'notifications' | 'settings'
 
-const embeddedViewKeys: EmbeddedViewKey[] = ['overview', 'balances', 'rates', 'groupRates', 'notifications', 'settings']
+const embeddedViewKeys: EmbeddedViewKey[] = ['overview', 'balances', 'firstTokens', 'rates', 'groupRates', 'notifications', 'settings']
 const activeEmbeddedView = computed<EmbeddedViewKey>(() => {
   const value = route.query.view
   if (typeof value === 'string' && embeddedViewKeys.includes(value as EmbeddedViewKey)) {
@@ -1102,6 +1129,11 @@ const embeddedMenuItems = [
     key: 'balances',
     label: '余额趋势',
     description: '账号余额按 cron 间隔变化',
+  },
+  {
+    key: 'firstTokens',
+    label: '首 token 趋势',
+    description: '按平台查看模型首 token 网络状态',
   },
   {
     key: 'rates',
@@ -1610,11 +1642,12 @@ async function loadEmbeddedHistories(platformIds: number[]) {
   const histories = await fetchEmbeddedHistories(platformIds)
   platformBalanceHistory.value = histories.balances
   platformRateHistory.value = histories.rates
+  platformFirstTokenHistory.value = histories.first_tokens
   embeddedHistoriesLoaded.value = true
 }
 
 function historyViewNeedsData(view: EmbeddedViewKey) {
-  return view === 'balances' || view === 'rates'
+  return view === 'balances' || view === 'firstTokens' || view === 'rates'
 }
 
 async function ensureEmbeddedHistoriesLoaded() {
@@ -1972,6 +2005,15 @@ function platformRateFirstDate(platformId: number) {
 
 function platformRateLastDate(platformId: number) {
   const series = platformRatePrimarySeries(platformId)
+  return firstDateLabel(series?.points[series.points.length - 1]?.at)
+}
+
+function platformFirstTokenFirstDate(platformId: number) {
+  return firstDateLabel(platformFirstTokenHistory.value[platformId]?.points[0]?.at)
+}
+
+function platformFirstTokenLastDate(platformId: number) {
+  const series = platformFirstTokenHistory.value[platformId]
   return firstDateLabel(series?.points[series.points.length - 1]?.at)
 }
 
